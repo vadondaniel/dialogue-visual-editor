@@ -10,6 +10,7 @@ from typing import Any, Optional
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QColor,
     QCloseEvent,
     QCursor,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QInputDialog,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -110,6 +112,7 @@ DB_FILENAME = ".dialogue_editor_index.sqlite3"
 VERSION_DB_FILENAME = ".dialogue_version_state.sqlite3"
 TRANSLATION_STATE_FILENAME = ".dialogue_translation_state.json"
 UI_STATE_FILENAME = ".dialogue_visual_editor_ui_state.json"
+APP_TITLE = "Dialogue Visual Editor (Code 101/401)"
 
 
 class DialogueVisualEditor(
@@ -123,7 +126,7 @@ class DialogueVisualEditor(
 ):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Dialogue Visual Editor (Code 101/401)")
+        self.setWindowTitle(APP_TITLE)
         self.resize(1320, 820)
 
         self.data_dir: Optional[Path] = None
@@ -157,6 +160,7 @@ class DialogueVisualEditor(
         self._windowskin_text_colors: dict[int, str] = {}
         self._windowskin_text_colors_loaded = False
         self.translation_state_path: Optional[Path] = None
+        self.last_folder_path = ""
         self.ui_state_path = Path(
             __file__).resolve().with_name(UI_STATE_FILENAME)
         self.project_ui_settings_by_folder: dict[str, dict[str, Any]] = {}
@@ -324,6 +328,7 @@ class DialogueVisualEditor(
         self._default_h_scroll_policy = self.scroll_area.horizontalScrollBarPolicy()
         self._update_mode_controls()
         self._load_ui_state()
+        self._update_window_title()
         if self.data_dir is None:
             self.statusBar().showMessage("Open a data folder to start.")
 
@@ -334,7 +339,8 @@ class DialogueVisualEditor(
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        self._build_top_controls(layout)
+        self._init_hidden_settings_controls()
+        self._build_menu_bar()
 
         self.thin_width_spin.valueChanged.connect(
             self._on_layout_constraints_changed)
@@ -342,6 +348,12 @@ class DialogueVisualEditor(
             self._on_layout_constraints_changed)
         self.max_lines_spin.valueChanged.connect(
             self._on_layout_constraints_changed)
+        self.thin_width_spin.valueChanged.connect(
+            self._sync_settings_limits_menu_labels)
+        self.wide_width_spin.valueChanged.connect(
+            self._sync_settings_limits_menu_labels)
+        self.max_lines_spin.valueChanged.connect(
+            self._sync_settings_limits_menu_labels)
         self.infer_speaker_check.toggled.connect(self._rerender_current_file)
         self.hide_control_codes_check.toggled.connect(
             self._on_hide_control_codes_toggled)
@@ -404,6 +416,15 @@ class DialogueVisualEditor(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         file_header_row.addWidget(self.file_header_label)
 
+        file_header_row.addStretch(1)
+        self.next_problem_btn = QPushButton("Next Problem")
+        self.next_problem_btn.setToolTip(
+            "Jump to the next block that exceeds width or max-lines in the current mode."
+        )
+        self.next_problem_btn.clicked.connect(self._jump_to_next_problem)
+        self.next_problem_btn.setEnabled(False)
+        file_header_row.addWidget(self.next_problem_btn)
+
         self.reset_json_btn = QPushButton("Reset JSON")
         self.reset_json_btn.setToolTip(
             "Discard unsaved edits in this JSON and reload it from saved snapshot data.")
@@ -412,9 +433,9 @@ class DialogueVisualEditor(
         self.reset_json_btn.setVisible(False)
         self.reset_json_btn.setEnabled(False)
         file_header_row.addWidget(self.reset_json_btn)
-        file_header_row.addStretch(1)
         header_row_height = max(
             self.file_header_label.sizeHint().height(),
+            self.next_problem_btn.sizeHint().height(),
             self.reset_json_btn.sizeHint().height(),
         )
         self.file_header_label.setMinimumHeight(header_row_height)
@@ -535,147 +556,52 @@ class DialogueVisualEditor(
 
         self._sync_translator_mode_ui()
 
-    def _build_top_controls(self, root_layout: QVBoxLayout) -> None:
-        controls_panel = QWidget()
-        controls_layout = QVBoxLayout(controls_panel)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(6)
-
-        self._build_project_controls_row(controls_layout)
-        self._build_editor_settings_row(controls_layout)
-        self._build_action_controls_row(controls_layout)
-
-        root_layout.addWidget(controls_panel)
-
-    def _build_project_controls_row(self, controls_layout: QVBoxLayout) -> None:
-        project_row = QHBoxLayout()
-        project_row.setContentsMargins(0, 0, 0, 0)
-        project_row.setSpacing(6)
-        project_row.addWidget(QLabel("Data Folder"))
-        self.folder_edit = QLineEdit()
-        self.folder_edit.setPlaceholderText("Select your RPG Maker data folder")
-        project_row.addWidget(self.folder_edit, 1)
-
-        browse_btn = QPushButton("Browse")
-        refresh_btn = QPushButton("Reload")
-        browse_btn.clicked.connect(self._choose_folder)
-        refresh_btn.clicked.connect(self._reload_folder_from_text)
-        project_row.addWidget(browse_btn)
-        project_row.addWidget(refresh_btn)
-
-        self.remember_folder_check = QCheckBox("Remember")
+    def _init_hidden_settings_controls(self) -> None:
+        self.remember_folder_check = QCheckBox(self)
         self.remember_folder_check.setChecked(False)
         self.remember_folder_check.setToolTip(
             "Remember last project folder and reopen it on startup."
         )
         self.remember_folder_check.toggled.connect(self._on_remember_folder_toggled)
-        project_row.addWidget(self.remember_folder_check)
-        controls_layout.addLayout(project_row)
 
-    def _build_editor_settings_row(self, controls_layout: QVBoxLayout) -> None:
-        settings_row = QHBoxLayout()
-        settings_row.setContentsMargins(0, 0, 0, 0)
-        settings_row.setSpacing(8)
-
-        settings_row.addWidget(QLabel("Mode"))
-        self.editor_mode_combo = QComboBox()
+        self.editor_mode_combo = QComboBox(self)
         self.editor_mode_combo.addItem("Plain Edit", "plain")
         self.editor_mode_combo.addItem("Translator Edit", "translator")
         self.editor_mode_combo.setToolTip(
             "Plain Edit modifies JSON directly. Translator Edit keeps source read-only and edits translation data."
         )
-        settings_row.addWidget(self.editor_mode_combo)
 
-        settings_row.addWidget(QLabel("Thin"))
-        self.thin_width_spin = QSpinBox()
+        self.thin_width_spin = QSpinBox(self)
         self.thin_width_spin.setRange(10, 200)
         self.thin_width_spin.setValue(DEFAULT_THIN_WIDTH)
-        settings_row.addWidget(self.thin_width_spin)
 
-        settings_row.addWidget(QLabel("Wide"))
-        self.wide_width_spin = QSpinBox()
+        self.wide_width_spin = QSpinBox(self)
         self.wide_width_spin.setRange(10, 240)
         self.wide_width_spin.setValue(DEFAULT_WIDE_WIDTH)
-        settings_row.addWidget(self.wide_width_spin)
 
-        settings_row.addWidget(QLabel("Max Lines"))
-        self.max_lines_spin = QSpinBox()
+        self.max_lines_spin = QSpinBox(self)
         self.max_lines_spin.setRange(1, 20)
         self.max_lines_spin.setValue(DEFAULT_MAX_LINES)
-        settings_row.addWidget(self.max_lines_spin)
 
-        self.auto_split_check = QCheckBox("Auto-split overflow on save")
+        self.auto_split_check = QCheckBox(self)
         self.auto_split_check.setChecked(True)
-        settings_row.addWidget(self.auto_split_check)
 
-        self.infer_speaker_check = QCheckBox("Infer speaker from line 1")
+        self.infer_speaker_check = QCheckBox(self)
         self.infer_speaker_check.setChecked(False)
         self.infer_speaker_check.setToolTip(
             "Only used when code 101 speaker is empty; tries to detect a speaker from the first text line."
         )
-        settings_row.addWidget(self.infer_speaker_check)
 
-        self.hide_control_codes_check = QCheckBox("Hide control codes unless focused")
+        self.hide_control_codes_check = QCheckBox(self)
         self.hide_control_codes_check.setChecked(True)
         self.hide_control_codes_check.setToolTip(
             "When enabled, control codes are hidden in unfocused dialogue editors and shown when focused."
         )
-        settings_row.addWidget(self.hide_control_codes_check)
 
-        self.backup_check = QCheckBox("Create .bak backup")
+        self.backup_check = QCheckBox(self)
         self.backup_check.setChecked(True)
-        settings_row.addWidget(self.backup_check)
 
-        settings_row.addStretch(1)
-        self.next_problem_btn = QPushButton("Next Problem")
-        self.next_problem_btn.setToolTip(
-            "Jump to the next block that exceeds width or max-lines in the current mode."
-        )
-        self.next_problem_btn.clicked.connect(self._jump_to_next_problem)
-        self.next_problem_btn.setEnabled(False)
-        settings_row.addWidget(self.next_problem_btn)
-        controls_layout.addLayout(settings_row)
-
-    def _build_action_controls_row(self, controls_layout: QVBoxLayout) -> None:
-        actions_row = QHBoxLayout()
-        actions_row.setContentsMargins(0, 0, 0, 0)
-        actions_row.setSpacing(6)
-
-        self.speaker_manager_btn = QPushButton("Speakers")
-        self.speaker_manager_btn.setToolTip(
-            "Rename speakers globally and customize speaker colors."
-        )
-        self.speaker_manager_btn.clicked.connect(self._open_speaker_manager)
-        actions_row.addWidget(self.speaker_manager_btn)
-
-        self.mass_translate_btn = QPushButton("Mass Translate")
-        self.mass_translate_btn.setToolTip(
-            "Build context-aware LLM chunks for dialogues/speakers and paste results back."
-        )
-        self.mass_translate_btn.clicked.connect(self._open_mass_translate_dialog)
-        actions_row.addWidget(self.mass_translate_btn)
-
-        self.audit_btn = QPushButton("Audit")
-        self.audit_btn.setToolTip("Open non-blocking audit tools.")
-        self.audit_btn.clicked.connect(self._open_audit_window)
-        actions_row.addWidget(self.audit_btn)
-
-        actions_row.addStretch(1)
-
-        self.save_btn = QPushButton("Save File")
-        self.save_all_btn = QPushButton("Save All")
-        self.save_btn.setToolTip("Save current edits to the project snapshot database.")
-        self.save_all_btn.setToolTip("Save all edits to the project snapshot database.")
-        self.save_btn.clicked.connect(self._save_current_file)
-        self.save_all_btn.clicked.connect(self._save_all_files)
-        self.save_btn.setEnabled(False)
-        self.save_all_btn.setEnabled(False)
-        actions_row.addWidget(self.save_btn)
-        actions_row.addWidget(self.save_all_btn)
-
-        actions_row.addSpacing(8)
-        actions_row.addWidget(QLabel("Apply Snapshot"))
-        self.apply_version_combo = QComboBox()
+        self.apply_version_combo = QComboBox(self)
         self.apply_version_combo.addItem("Original", "original")
         self.apply_version_combo.addItem("Working", "working")
         self.apply_version_combo.addItem("Translated", "translated")
@@ -683,19 +609,280 @@ class DialogueVisualEditor(
         self.apply_version_combo.setToolTip(
             "Choose which snapshot version to apply to game files."
         )
-        self.apply_version_combo.setEnabled(False)
-        actions_row.addWidget(self.apply_version_combo)
 
-        self.apply_version_btn = QPushButton("Apply To Game Files")
-        self.apply_version_btn.setToolTip(
-            "Write selected snapshot version directly to JSON files in the data folder."
+        self._settings_plain_mode_action: Optional[QAction] = None
+        self._settings_translator_mode_action: Optional[QAction] = None
+        self._settings_thin_width_action: Optional[QAction] = None
+        self._settings_wide_width_action: Optional[QAction] = None
+        self._settings_max_lines_action: Optional[QAction] = None
+        self._settings_toggle_bindings: list[tuple[QAction, QCheckBox]] = []
+        self._apply_to_game_files_actions: list[QAction] = []
+
+        hidden_controls: tuple[QWidget, ...] = (
+            self.remember_folder_check,
+            self.editor_mode_combo,
+            self.thin_width_spin,
+            self.wide_width_spin,
+            self.max_lines_spin,
+            self.auto_split_check,
+            self.infer_speaker_check,
+            self.hide_control_codes_check,
+            self.backup_check,
+            self.apply_version_combo,
         )
-        self.apply_version_btn.clicked.connect(
-            self._apply_selected_snapshot_to_game_files
+        for control in hidden_controls:
+            control.setVisible(False)
+
+    def _build_menu_bar(self) -> None:
+        menu_bar = self.menuBar()
+        menu_bar.clear()
+
+        file_menu = menu_bar.addMenu("File")
+        open_folder_action = QAction("Open Data Folder...", self)
+        open_folder_action.triggered.connect(self._choose_folder)
+        file_menu.addAction(open_folder_action)
+
+        reload_folder_action = QAction("Reload Folder", self)
+        reload_folder_action.triggered.connect(self._reload_folder_from_text)
+        file_menu.addAction(reload_folder_action)
+
+        file_menu.addSeparator()
+        self.save_btn = QAction("Save", self)
+        self.save_btn.setShortcut(QKeySequence.StandardKey.Save)
+        self.save_btn.setEnabled(False)
+        self.save_btn.triggered.connect(self._save_current_file)
+        file_menu.addAction(self.save_btn)
+
+        self.save_all_btn = QAction("Save All", self)
+        self.save_all_btn.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self.save_all_btn.setEnabled(False)
+        self.save_all_btn.triggered.connect(self._save_all_files)
+        file_menu.addAction(self.save_all_btn)
+
+        file_menu.addSeparator()
+        apply_menu = file_menu.addMenu("Apply To Game Files")
+        self._apply_to_game_files_actions = []
+        apply_versions: tuple[tuple[str, str], ...] = (
+            ("Original", "original"),
+            ("Working", "working"),
+            ("Translated", "translated"),
         )
-        self.apply_version_btn.setEnabled(False)
-        actions_row.addWidget(self.apply_version_btn)
-        controls_layout.addLayout(actions_row)
+        for version_label, version_data in apply_versions:
+            apply_action = QAction(f"Apply {version_label}", self)
+            apply_action.setEnabled(False)
+            apply_action.triggered.connect(
+                lambda _checked=False, v=version_data: self._apply_snapshot_version_from_menu(v)
+            )
+            apply_menu.addAction(apply_action)
+            self._apply_to_game_files_actions.append(apply_action)
+
+        file_menu.addSeparator()
+        exit_action = QAction("Exit", self)
+        exit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        tools_menu = menu_bar.addMenu("Tools")
+        speakers_action = QAction("Speakers...", self)
+        speakers_action.triggered.connect(self._open_speaker_manager)
+        tools_menu.addAction(speakers_action)
+
+        mass_translate_action = QAction("Mass Translate...", self)
+        mass_translate_action.triggered.connect(self._open_mass_translate_dialog)
+        tools_menu.addAction(mass_translate_action)
+
+        audit_action = QAction("Audit...", self)
+        audit_action.triggered.connect(self._open_audit_window)
+        tools_menu.addAction(audit_action)
+
+        settings_menu = menu_bar.addMenu("Settings")
+        mode_menu = settings_menu.addMenu("Edit Mode")
+        mode_group = QActionGroup(self)
+        mode_group.setExclusive(True)
+
+        plain_mode_action = QAction("Plain Edit", self)
+        plain_mode_action.setCheckable(True)
+        plain_mode_action.triggered.connect(self._set_plain_edit_mode_from_menu)
+        mode_menu.addAction(plain_mode_action)
+        mode_group.addAction(plain_mode_action)
+
+        translator_mode_action = QAction("Translator Edit", self)
+        translator_mode_action.setCheckable(True)
+        translator_mode_action.triggered.connect(
+            self._set_translator_edit_mode_from_menu
+        )
+        mode_menu.addAction(translator_mode_action)
+        mode_group.addAction(translator_mode_action)
+
+        self._settings_plain_mode_action = plain_mode_action
+        self._settings_translator_mode_action = translator_mode_action
+        self.editor_mode_combo.currentIndexChanged.connect(
+            self._sync_settings_menu_from_controls
+        )
+        self._sync_settings_menu_from_controls()
+
+        limits_menu = settings_menu.addMenu("Layout Constraints")
+        self._settings_thin_width_action = QAction("", self)
+        self._settings_thin_width_action.triggered.connect(
+            self._set_thin_width_from_menu
+        )
+        limits_menu.addAction(self._settings_thin_width_action)
+
+        self._settings_wide_width_action = QAction("", self)
+        self._settings_wide_width_action.triggered.connect(
+            self._set_wide_width_from_menu
+        )
+        limits_menu.addAction(self._settings_wide_width_action)
+
+        self._settings_max_lines_action = QAction("", self)
+        self._settings_max_lines_action.triggered.connect(
+            self._set_max_lines_from_menu
+        )
+        limits_menu.addAction(self._settings_max_lines_action)
+        self._sync_settings_limits_menu_labels()
+
+        settings_menu.addSeparator()
+        auto_split_action = QAction("Auto-split overflow on save", self)
+        self._bind_toggle_menu_action(auto_split_action, self.auto_split_check)
+        settings_menu.addAction(auto_split_action)
+
+        infer_speaker_action = QAction("Infer speaker from line 1", self)
+        self._bind_toggle_menu_action(infer_speaker_action, self.infer_speaker_check)
+        settings_menu.addAction(infer_speaker_action)
+
+        hide_control_codes_action = QAction("Hide control codes unless focused", self)
+        self._bind_toggle_menu_action(
+            hide_control_codes_action, self.hide_control_codes_check
+        )
+        settings_menu.addAction(hide_control_codes_action)
+
+        backup_action = QAction("Create .bak backup", self)
+        self._bind_toggle_menu_action(backup_action, self.backup_check)
+        settings_menu.addAction(backup_action)
+
+        settings_menu.addSeparator()
+        remember_folder_action = QAction("Remember last folder", self)
+        self._bind_toggle_menu_action(
+            remember_folder_action, self.remember_folder_check
+        )
+        settings_menu.addAction(remember_folder_action)
+        self._sync_settings_toggle_actions_from_controls()
+
+    def _bind_toggle_menu_action(self, action: QAction, checkbox: QCheckBox) -> None:
+        action.setCheckable(True)
+        action.setChecked(bool(checkbox.isChecked()))
+        action.toggled.connect(checkbox.setChecked)
+        checkbox.toggled.connect(action.setChecked)
+        self._settings_toggle_bindings.append((action, checkbox))
+
+    def _sync_settings_toggle_actions_from_controls(self) -> None:
+        for action, checkbox in self._settings_toggle_bindings:
+            target_checked = bool(checkbox.isChecked())
+            if action.isChecked() == target_checked:
+                continue
+            action.blockSignals(True)
+            try:
+                action.setChecked(target_checked)
+            finally:
+                action.blockSignals(False)
+
+    def _set_editor_mode_by_data(self, mode_data: str) -> None:
+        idx = self.editor_mode_combo.findData(mode_data)
+        if idx < 0:
+            return
+        if idx != self.editor_mode_combo.currentIndex():
+            self.editor_mode_combo.setCurrentIndex(idx)
+
+    def _set_plain_edit_mode_from_menu(self, checked: bool) -> None:
+        if checked:
+            self._set_editor_mode_by_data("plain")
+
+    def _set_translator_edit_mode_from_menu(self, checked: bool) -> None:
+        if checked:
+            self._set_editor_mode_by_data("translator")
+
+    def _sync_settings_menu_from_controls(self, *_args: Any) -> None:
+        plain_mode_action = self._settings_plain_mode_action
+        translator_mode_action = self._settings_translator_mode_action
+        if plain_mode_action is None or translator_mode_action is None:
+            return
+
+        mode_value = str(self.editor_mode_combo.currentData())
+        plain_mode_action.blockSignals(True)
+        translator_mode_action.blockSignals(True)
+        try:
+            plain_mode_action.setChecked(mode_value == "plain")
+            translator_mode_action.setChecked(mode_value == "translator")
+        finally:
+            plain_mode_action.blockSignals(False)
+            translator_mode_action.blockSignals(False)
+
+    def _sync_settings_limits_menu_labels(self, *_args: Any) -> None:
+        thin_action = self._settings_thin_width_action
+        if thin_action is not None:
+            thin_action.setText(
+                f"Thin Width: {int(self.thin_width_spin.value())}..."
+            )
+        wide_action = self._settings_wide_width_action
+        if wide_action is not None:
+            wide_action.setText(
+                f"Wide Width: {int(self.wide_width_spin.value())}..."
+            )
+        max_lines_action = self._settings_max_lines_action
+        if max_lines_action is not None:
+            max_lines_action.setText(
+                f"Max Lines: {int(self.max_lines_spin.value())}..."
+            )
+
+    def _set_apply_version_by_data(self, version_data: str) -> None:
+        self._set_combo_data_if_present(self.apply_version_combo, version_data)
+
+    def _apply_snapshot_version_from_menu(self, version_data: str) -> None:
+        self._set_apply_version_by_data(version_data)
+        self._apply_selected_snapshot_to_game_files()
+
+    def _set_apply_snapshot_actions_enabled(self, enabled: bool) -> None:
+        for action in self._apply_to_game_files_actions:
+            action.setEnabled(enabled)
+
+    def _prompt_int_for_spin(
+        self,
+        spin: QSpinBox,
+        title: str,
+        label: str,
+    ) -> None:
+        value, accepted = QInputDialog.getInt(
+            self,
+            title,
+            label,
+            int(spin.value()),
+            int(spin.minimum()),
+            int(spin.maximum()),
+            max(1, int(spin.singleStep())),
+        )
+        if accepted and value != spin.value():
+            spin.setValue(value)
+
+    def _set_thin_width_from_menu(self) -> None:
+        self._prompt_int_for_spin(
+            self.thin_width_spin,
+            "Thin Width",
+            "Max characters per line (with face):",
+        )
+
+    def _set_wide_width_from_menu(self) -> None:
+        self._prompt_int_for_spin(
+            self.wide_width_spin,
+            "Wide Width",
+            "Max characters per line (no face):",
+        )
+
+    def _set_max_lines_from_menu(self) -> None:
+        self._prompt_int_for_spin(
+            self.max_lines_spin,
+            "Max Lines",
+            "Maximum dialogue lines per block:",
+        )
 
     def _focused_text_editor(self) -> Optional[QPlainTextEdit]:
         focus = QApplication.focusWidget()
@@ -1311,6 +1498,12 @@ class DialogueVisualEditor(
     def _on_remember_folder_toggled(self, _checked: bool) -> None:
         self._save_ui_state()
 
+    def _update_window_title(self) -> None:
+        if self.data_dir is None:
+            self.setWindowTitle(APP_TITLE)
+            return
+        self.setWindowTitle(f"{APP_TITLE} | {self.data_dir}")
+
     def _project_state_key(self, folder: Path) -> str:
         try:
             return str(folder.resolve())
@@ -1408,6 +1601,9 @@ class DialogueVisualEditor(
             self._applying_project_ui_state = False
 
         self._update_mode_controls()
+        self._sync_settings_menu_from_controls()
+        self._sync_settings_toggle_actions_from_controls()
+        self._sync_settings_limits_menu_labels()
         refresh_file_items = getattr(self, "_refresh_all_file_item_text", None)
         if callable(refresh_file_items):
             refresh_file_items()
@@ -1452,9 +1648,8 @@ class DialogueVisualEditor(
         self.remember_folder_check.blockSignals(True)
         self.remember_folder_check.setChecked(remember_last_folder)
         self.remember_folder_check.blockSignals(False)
-
-        if last_folder:
-            self.folder_edit.setText(last_folder)
+        self._sync_settings_toggle_actions_from_controls()
+        self.last_folder_path = last_folder
 
         if remember_last_folder and last_folder:
             candidate = Path(last_folder)
@@ -1469,7 +1664,7 @@ class DialogueVisualEditor(
             if self.data_dir is not None:
                 last_folder = str(self.data_dir)
             else:
-                last_folder = self.folder_edit.text().strip()
+                last_folder = self.last_folder_path.strip()
 
         payload = {
             "remember_last_folder": remember_last_folder,
@@ -1488,14 +1683,17 @@ class DialogueVisualEditor(
             self, "Select data folder", start_dir)
         if not chosen:
             return
-        self.folder_edit.setText(chosen)
+        self.last_folder_path = chosen
         self._load_data_folder(Path(chosen))
 
     def _reload_folder_from_text(self) -> None:
-        text = self.folder_edit.text().strip()
+        text = str(self.data_dir) if self.data_dir is not None else self.last_folder_path.strip()
         if not text:
-            QMessageBox.warning(self, "Missing folder",
-                                "Please select a folder first.")
+            QMessageBox.warning(
+                self,
+                "Missing folder",
+                "Open a data folder first.",
+            )
             return
         if not self._prompt_unsaved_if_any():
             return
@@ -1690,7 +1888,8 @@ class DialogueVisualEditor(
             self._store_current_project_ui_settings()
 
         self.data_dir = folder.resolve()
-        self.folder_edit.setText(str(self.data_dir))
+        self.last_folder_path = str(self.data_dir)
+        self._update_window_title()
         project_key = self._project_state_key(self.data_dir)
         project_settings = self.project_ui_settings_by_folder.get(project_key)
         if isinstance(project_settings, dict):
@@ -1744,7 +1943,7 @@ class DialogueVisualEditor(
             self.save_btn.setEnabled(False)
             self.save_all_btn.setEnabled(False)
             self.apply_version_combo.setEnabled(False)
-            self.apply_version_btn.setEnabled(False)
+            self._set_apply_snapshot_actions_enabled(False)
             self.next_problem_btn.setEnabled(False)
             self.selected_segment_uid = None
             self.current_reference_map = {}
@@ -1828,7 +2027,7 @@ class DialogueVisualEditor(
             self.save_btn.setEnabled(False)
             self.save_all_btn.setEnabled(False)
             self.apply_version_combo.setEnabled(False)
-            self.apply_version_btn.setEnabled(False)
+            self._set_apply_snapshot_actions_enabled(False)
             self.next_problem_btn.setEnabled(False)
             self.file_header_label.setText(
                 "No readable JSON files found in selected folder.")
@@ -1853,7 +2052,7 @@ class DialogueVisualEditor(
         self.save_btn.setEnabled(True)
         self.save_all_btn.setEnabled(True)
         self.apply_version_combo.setEnabled(True)
-        self.apply_version_btn.setEnabled(True)
+        self._set_apply_snapshot_actions_enabled(True)
         self.next_problem_btn.setEnabled(True)
         self._rebuild_file_list()
 

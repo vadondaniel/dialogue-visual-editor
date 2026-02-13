@@ -7,6 +7,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from ..core.models import (
@@ -36,8 +37,8 @@ class _EditorHostTypingFallback:
 class TranslationStateMixin(_EditorHostTypingFallback):
     # Provided by DialogueVisualEditor at runtime; declared for static analyzers.
     editor_mode_combo: "QComboBox"
-    save_btn: "QPushButton"
-    save_all_btn: "QPushButton"
+    save_btn: "QPushButton | QAction"
+    save_all_btn: "QPushButton | QAction"
     reset_json_btn: "QPushButton"
     auto_split_check: "QCheckBox"
     translation_state_path: Optional[Path]
