@@ -334,168 +334,7 @@ class DialogueVisualEditor(
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        controls_panel = QWidget()
-        controls_layout = QVBoxLayout(controls_panel)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(4)
-
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(6)
-        top_row.addWidget(QLabel("Data Folder:"))
-        self.folder_edit = QLineEdit()
-        self.folder_edit.setPlaceholderText(
-            "Select your RPG Maker data folder")
-        top_row.addWidget(self.folder_edit, 1)
-        browse_btn = QPushButton("Browse")
-        refresh_btn = QPushButton("Reload")
-        self.remember_folder_check = QCheckBox("Remember")
-        self.remember_folder_check.setChecked(False)
-        self.remember_folder_check.setToolTip(
-            "Remember last project folder and reopen it on startup."
-        )
-        browse_btn.clicked.connect(self._choose_folder)
-        refresh_btn.clicked.connect(self._reload_folder_from_text)
-        self.remember_folder_check.toggled.connect(
-            self._on_remember_folder_toggled
-        )
-        top_row.addWidget(browse_btn)
-        top_row.addWidget(refresh_btn)
-        top_row.addWidget(self.remember_folder_check)
-        controls_layout.addLayout(top_row)
-
-        layout_row = QHBoxLayout()
-        layout_row.setContentsMargins(0, 0, 0, 0)
-        layout_row.setSpacing(6)
-        layout_row.addWidget(QLabel("Thin Width"))
-        self.thin_width_spin = QSpinBox()
-        self.thin_width_spin.setRange(10, 200)
-        self.thin_width_spin.setValue(DEFAULT_THIN_WIDTH)
-        layout_row.addWidget(self.thin_width_spin)
-
-        layout_row.addWidget(QLabel("Wide Width"))
-        self.wide_width_spin = QSpinBox()
-        self.wide_width_spin.setRange(10, 240)
-        self.wide_width_spin.setValue(DEFAULT_WIDE_WIDTH)
-        layout_row.addWidget(self.wide_width_spin)
-
-        layout_row.addWidget(QLabel("Max Lines"))
-        self.max_lines_spin = QSpinBox()
-        self.max_lines_spin.setRange(1, 20)
-        self.max_lines_spin.setValue(DEFAULT_MAX_LINES)
-        layout_row.addWidget(self.max_lines_spin)
-
-        layout_row.addWidget(QLabel("Mode"))
-        self.editor_mode_combo = QComboBox()
-        self.editor_mode_combo.addItem("Plain Edit", "plain")
-        self.editor_mode_combo.addItem("Translator Edit", "translator")
-        self.editor_mode_combo.setToolTip(
-            "Plain Edit modifies JSON directly. Translator Edit keeps source read-only and edits translation data."
-        )
-        layout_row.addWidget(self.editor_mode_combo)
-        layout_row.addStretch(1)
-        controls_layout.addLayout(layout_row)
-
-        behavior_row = QHBoxLayout()
-        behavior_row.setContentsMargins(0, 0, 0, 0)
-        behavior_row.setSpacing(10)
-        self.auto_split_check = QCheckBox("Auto-split overflow on save")
-        self.auto_split_check.setChecked(True)
-        behavior_row.addWidget(self.auto_split_check)
-
-        self.infer_speaker_check = QCheckBox("Infer speaker from line 1")
-        self.infer_speaker_check.setChecked(False)
-        self.infer_speaker_check.setToolTip(
-            "Only used when code 101 speaker is empty; tries to detect a speaker from the first text line."
-        )
-        behavior_row.addWidget(self.infer_speaker_check)
-
-        self.hide_control_codes_check = QCheckBox(
-            "Hide control codes unless focused")
-        self.hide_control_codes_check.setChecked(True)
-        self.hide_control_codes_check.setToolTip(
-            "When enabled, control codes are hidden in unfocused dialogue editors and shown when focused."
-        )
-        behavior_row.addWidget(self.hide_control_codes_check)
-
-        self.backup_check = QCheckBox("Create .bak backup")
-        self.backup_check.setChecked(True)
-        behavior_row.addWidget(self.backup_check)
-        behavior_row.addStretch(1)
-        controls_layout.addLayout(behavior_row)
-
-        actions_row = QHBoxLayout()
-        actions_row.setContentsMargins(0, 0, 0, 0)
-        actions_row.setSpacing(6)
-        self.speaker_manager_btn = QPushButton("Speakers")
-        self.speaker_manager_btn.setToolTip(
-            "Rename speakers globally and customize speaker colors.")
-        self.speaker_manager_btn.clicked.connect(self._open_speaker_manager)
-        actions_row.addWidget(self.speaker_manager_btn)
-
-        self.mass_translate_btn = QPushButton("Mass Translate")
-        self.mass_translate_btn.setToolTip(
-            "Build context-aware LLM chunks for dialogues/speakers and paste results back."
-        )
-        self.mass_translate_btn.clicked.connect(
-            self._open_mass_translate_dialog)
-        actions_row.addWidget(self.mass_translate_btn)
-
-        self.audit_btn = QPushButton("Audit")
-        self.audit_btn.setToolTip("Open non-blocking audit tools.")
-        self.audit_btn.clicked.connect(self._open_audit_window)
-        actions_row.addWidget(self.audit_btn)
-
-        self.next_problem_btn = QPushButton("Next Problem")
-        self.next_problem_btn.setToolTip(
-            "Jump to the next block that exceeds width or max-lines in the current mode."
-        )
-        self.next_problem_btn.clicked.connect(self._jump_to_next_problem)
-        self.next_problem_btn.setEnabled(False)
-        actions_row.addWidget(self.next_problem_btn)
-        actions_row.addStretch(1)
-
-        self.save_btn = QPushButton("Save File")
-        self.save_all_btn = QPushButton("Save All")
-        self.save_btn.setToolTip(
-            "Save current edits to the project snapshot database.")
-        self.save_all_btn.setToolTip(
-            "Save all edits to the project snapshot database.")
-        self.save_btn.clicked.connect(self._save_current_file)
-        self.save_all_btn.clicked.connect(self._save_all_files)
-        self.save_btn.setEnabled(False)
-        self.save_all_btn.setEnabled(False)
-        actions_row.addWidget(self.save_btn)
-        actions_row.addWidget(self.save_all_btn)
-        controls_layout.addLayout(actions_row)
-
-        apply_row = QHBoxLayout()
-        apply_row.setContentsMargins(0, 0, 0, 0)
-        apply_row.setSpacing(6)
-        apply_row.addWidget(QLabel("Apply Snapshot"))
-        self.apply_version_combo = QComboBox()
-        self.apply_version_combo.addItem("Original", "original")
-        self.apply_version_combo.addItem("Working", "working")
-        self.apply_version_combo.addItem("Translated", "translated")
-        self.apply_version_combo.setCurrentIndex(1)
-        self.apply_version_combo.setToolTip(
-            "Choose which snapshot version to apply to game files."
-        )
-        self.apply_version_combo.setEnabled(False)
-        apply_row.addWidget(self.apply_version_combo)
-        self.apply_version_btn = QPushButton("Apply To Game Files")
-        self.apply_version_btn.setToolTip(
-            "Write selected snapshot version directly to JSON files in the data folder."
-        )
-        self.apply_version_btn.clicked.connect(
-            self._apply_selected_snapshot_to_game_files
-        )
-        self.apply_version_btn.setEnabled(False)
-        apply_row.addWidget(self.apply_version_btn)
-        apply_row.addStretch(1)
-        controls_layout.addLayout(apply_row)
-
-        layout.addWidget(controls_panel)
+        self._build_top_controls(layout)
 
         self.thin_width_spin.valueChanged.connect(
             self._on_layout_constraints_changed)
@@ -695,6 +534,168 @@ class DialogueVisualEditor(
         splitter.setStretchFactor(1, 4)
 
         self._sync_translator_mode_ui()
+
+    def _build_top_controls(self, root_layout: QVBoxLayout) -> None:
+        controls_panel = QWidget()
+        controls_layout = QVBoxLayout(controls_panel)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(6)
+
+        self._build_project_controls_row(controls_layout)
+        self._build_editor_settings_row(controls_layout)
+        self._build_action_controls_row(controls_layout)
+
+        root_layout.addWidget(controls_panel)
+
+    def _build_project_controls_row(self, controls_layout: QVBoxLayout) -> None:
+        project_row = QHBoxLayout()
+        project_row.setContentsMargins(0, 0, 0, 0)
+        project_row.setSpacing(6)
+        project_row.addWidget(QLabel("Data Folder"))
+        self.folder_edit = QLineEdit()
+        self.folder_edit.setPlaceholderText("Select your RPG Maker data folder")
+        project_row.addWidget(self.folder_edit, 1)
+
+        browse_btn = QPushButton("Browse")
+        refresh_btn = QPushButton("Reload")
+        browse_btn.clicked.connect(self._choose_folder)
+        refresh_btn.clicked.connect(self._reload_folder_from_text)
+        project_row.addWidget(browse_btn)
+        project_row.addWidget(refresh_btn)
+
+        self.remember_folder_check = QCheckBox("Remember")
+        self.remember_folder_check.setChecked(False)
+        self.remember_folder_check.setToolTip(
+            "Remember last project folder and reopen it on startup."
+        )
+        self.remember_folder_check.toggled.connect(self._on_remember_folder_toggled)
+        project_row.addWidget(self.remember_folder_check)
+        controls_layout.addLayout(project_row)
+
+    def _build_editor_settings_row(self, controls_layout: QVBoxLayout) -> None:
+        settings_row = QHBoxLayout()
+        settings_row.setContentsMargins(0, 0, 0, 0)
+        settings_row.setSpacing(8)
+
+        settings_row.addWidget(QLabel("Mode"))
+        self.editor_mode_combo = QComboBox()
+        self.editor_mode_combo.addItem("Plain Edit", "plain")
+        self.editor_mode_combo.addItem("Translator Edit", "translator")
+        self.editor_mode_combo.setToolTip(
+            "Plain Edit modifies JSON directly. Translator Edit keeps source read-only and edits translation data."
+        )
+        settings_row.addWidget(self.editor_mode_combo)
+
+        settings_row.addWidget(QLabel("Thin"))
+        self.thin_width_spin = QSpinBox()
+        self.thin_width_spin.setRange(10, 200)
+        self.thin_width_spin.setValue(DEFAULT_THIN_WIDTH)
+        settings_row.addWidget(self.thin_width_spin)
+
+        settings_row.addWidget(QLabel("Wide"))
+        self.wide_width_spin = QSpinBox()
+        self.wide_width_spin.setRange(10, 240)
+        self.wide_width_spin.setValue(DEFAULT_WIDE_WIDTH)
+        settings_row.addWidget(self.wide_width_spin)
+
+        settings_row.addWidget(QLabel("Max Lines"))
+        self.max_lines_spin = QSpinBox()
+        self.max_lines_spin.setRange(1, 20)
+        self.max_lines_spin.setValue(DEFAULT_MAX_LINES)
+        settings_row.addWidget(self.max_lines_spin)
+
+        self.auto_split_check = QCheckBox("Auto-split overflow on save")
+        self.auto_split_check.setChecked(True)
+        settings_row.addWidget(self.auto_split_check)
+
+        self.infer_speaker_check = QCheckBox("Infer speaker from line 1")
+        self.infer_speaker_check.setChecked(False)
+        self.infer_speaker_check.setToolTip(
+            "Only used when code 101 speaker is empty; tries to detect a speaker from the first text line."
+        )
+        settings_row.addWidget(self.infer_speaker_check)
+
+        self.hide_control_codes_check = QCheckBox("Hide control codes unless focused")
+        self.hide_control_codes_check.setChecked(True)
+        self.hide_control_codes_check.setToolTip(
+            "When enabled, control codes are hidden in unfocused dialogue editors and shown when focused."
+        )
+        settings_row.addWidget(self.hide_control_codes_check)
+
+        self.backup_check = QCheckBox("Create .bak backup")
+        self.backup_check.setChecked(True)
+        settings_row.addWidget(self.backup_check)
+
+        settings_row.addStretch(1)
+        self.next_problem_btn = QPushButton("Next Problem")
+        self.next_problem_btn.setToolTip(
+            "Jump to the next block that exceeds width or max-lines in the current mode."
+        )
+        self.next_problem_btn.clicked.connect(self._jump_to_next_problem)
+        self.next_problem_btn.setEnabled(False)
+        settings_row.addWidget(self.next_problem_btn)
+        controls_layout.addLayout(settings_row)
+
+    def _build_action_controls_row(self, controls_layout: QVBoxLayout) -> None:
+        actions_row = QHBoxLayout()
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(6)
+
+        self.speaker_manager_btn = QPushButton("Speakers")
+        self.speaker_manager_btn.setToolTip(
+            "Rename speakers globally and customize speaker colors."
+        )
+        self.speaker_manager_btn.clicked.connect(self._open_speaker_manager)
+        actions_row.addWidget(self.speaker_manager_btn)
+
+        self.mass_translate_btn = QPushButton("Mass Translate")
+        self.mass_translate_btn.setToolTip(
+            "Build context-aware LLM chunks for dialogues/speakers and paste results back."
+        )
+        self.mass_translate_btn.clicked.connect(self._open_mass_translate_dialog)
+        actions_row.addWidget(self.mass_translate_btn)
+
+        self.audit_btn = QPushButton("Audit")
+        self.audit_btn.setToolTip("Open non-blocking audit tools.")
+        self.audit_btn.clicked.connect(self._open_audit_window)
+        actions_row.addWidget(self.audit_btn)
+
+        actions_row.addStretch(1)
+
+        self.save_btn = QPushButton("Save File")
+        self.save_all_btn = QPushButton("Save All")
+        self.save_btn.setToolTip("Save current edits to the project snapshot database.")
+        self.save_all_btn.setToolTip("Save all edits to the project snapshot database.")
+        self.save_btn.clicked.connect(self._save_current_file)
+        self.save_all_btn.clicked.connect(self._save_all_files)
+        self.save_btn.setEnabled(False)
+        self.save_all_btn.setEnabled(False)
+        actions_row.addWidget(self.save_btn)
+        actions_row.addWidget(self.save_all_btn)
+
+        actions_row.addSpacing(8)
+        actions_row.addWidget(QLabel("Apply Snapshot"))
+        self.apply_version_combo = QComboBox()
+        self.apply_version_combo.addItem("Original", "original")
+        self.apply_version_combo.addItem("Working", "working")
+        self.apply_version_combo.addItem("Translated", "translated")
+        self.apply_version_combo.setCurrentIndex(1)
+        self.apply_version_combo.setToolTip(
+            "Choose which snapshot version to apply to game files."
+        )
+        self.apply_version_combo.setEnabled(False)
+        actions_row.addWidget(self.apply_version_combo)
+
+        self.apply_version_btn = QPushButton("Apply To Game Files")
+        self.apply_version_btn.setToolTip(
+            "Write selected snapshot version directly to JSON files in the data folder."
+        )
+        self.apply_version_btn.clicked.connect(
+            self._apply_selected_snapshot_to_game_files
+        )
+        self.apply_version_btn.setEnabled(False)
+        actions_row.addWidget(self.apply_version_btn)
+        controls_layout.addLayout(actions_row)
 
     def _focused_text_editor(self) -> Optional[QPlainTextEdit]:
         focus = QApplication.focusWidget()
