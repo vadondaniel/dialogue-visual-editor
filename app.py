@@ -4,14 +4,17 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import sys
 from pathlib import Path
+from time import monotonic
 from typing import Any, Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QCloseEvent,
+    QCursor,
     QFont,
     QKeySequence,
+    QKeyEvent,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -265,6 +268,16 @@ class DialogueVisualEditor(
         self._render_blocks_timer.setSingleShot(True)
         self._render_blocks_timer.timeout.connect(
             self._render_next_block_batch)
+        self._middle_autoscroll_active = False
+        self._middle_autoscroll_anchor = QPoint()
+        self._middle_autoscroll_cursor_override_active = False
+        self._middle_autoscroll_press_started_at: Optional[float] = None
+        self._middle_autoscroll_started_from_press = False
+        self._middle_autoscroll_hold_release_threshold_sec = 0.22
+        self._middle_autoscroll_timer = QTimer(self)
+        self._middle_autoscroll_timer.setInterval(16)
+        self._middle_autoscroll_timer.timeout.connect(
+            self._tick_middle_autoscroll)
 
         self._global_undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
         self._global_redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
@@ -278,6 +291,9 @@ class DialogueVisualEditor(
             self._on_global_redo_shortcut)
 
         self._build_ui()
+        app_instance = QApplication.instance()
+        if app_instance is not None:
+            app_instance.installEventFilter(self)
         self._default_v_scroll_policy = self.scroll_area.verticalScrollBarPolicy()
         self._default_h_scroll_policy = self.scroll_area.horizontalScrollBarPolicy()
         self._update_mode_controls()
@@ -498,6 +514,8 @@ class DialogueVisualEditor(
         self.scroll_area.setWidgetResizable(True)
         self.scroll_container, self.blocks_layout = self._create_blocks_container()
         self.scroll_area.setWidget(self.scroll_container)
+        self.scroll_area.viewport().installEventFilter(self)
+        self.scroll_container.installEventFilter(self)
         self.main_render_progress_overlay = self._create_audit_progress_overlay(
             self.scroll_area)
         self.editor_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -614,6 +632,104 @@ class DialogueVisualEditor(
                 return widget
             widget = widget.parentWidget()
         return None
+
+    def _middle_autoscroll_step(self, delta: int) -> int:
+        dead_zone = 10
+        abs_delta = abs(delta)
+        if abs_delta <= dead_zone:
+            return 0
+        direction = 1 if delta > 0 else -1
+        scaled = abs_delta - dead_zone
+        step = min(80, (scaled * scaled) // 140 + 1)
+        return direction * step
+
+    def _start_middle_autoscroll(self, anchor_global: QPoint) -> None:
+        self._middle_autoscroll_anchor = QPoint(anchor_global)
+        self._middle_autoscroll_active = True
+        if not self._middle_autoscroll_cursor_override_active:
+            QApplication.setOverrideCursor(Qt.CursorShape.SizeAllCursor)
+            self._middle_autoscroll_cursor_override_active = True
+        self._middle_autoscroll_timer.start()
+
+    def _stop_middle_autoscroll(self) -> None:
+        if not self._middle_autoscroll_active:
+            return
+        self._middle_autoscroll_active = False
+        self._middle_autoscroll_press_started_at = None
+        self._middle_autoscroll_started_from_press = False
+        self._middle_autoscroll_timer.stop()
+        if self._middle_autoscroll_cursor_override_active:
+            QApplication.restoreOverrideCursor()
+            self._middle_autoscroll_cursor_override_active = False
+
+    def _tick_middle_autoscroll(self) -> None:
+        if not self._middle_autoscroll_active:
+            return
+        current_pos = QCursor.pos()
+        dx = current_pos.x() - self._middle_autoscroll_anchor.x()
+        dy = current_pos.y() - self._middle_autoscroll_anchor.y()
+        step_x = self._middle_autoscroll_step(dx)
+        step_y = self._middle_autoscroll_step(dy)
+        if step_y != 0:
+            vbar = self.scroll_area.verticalScrollBar()
+            vbar.setValue(vbar.value() + step_y)
+        if step_x != 0:
+            hbar = self.scroll_area.horizontalScrollBar()
+            hbar.setValue(hbar.value() + step_x)
+
+    def _point_in_editor_viewport(self, global_pos: QPoint) -> bool:
+        viewport = self.scroll_area.viewport()
+        local_pos = viewport.mapFromGlobal(global_pos)
+        return viewport.rect().contains(local_pos)
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseButtonPress:
+            mouse_event = event
+            button = getattr(mouse_event, "button", lambda: None)()
+            pos_getter = getattr(mouse_event, "globalPosition", None)
+            if callable(pos_getter):
+                anchor = pos_getter().toPoint()
+            else:
+                anchor = QCursor.pos()
+            if button == Qt.MouseButton.MiddleButton and self._point_in_editor_viewport(anchor):
+                if self._middle_autoscroll_active:
+                    self._stop_middle_autoscroll()
+                else:
+                    self._start_middle_autoscroll(anchor)
+                    self._middle_autoscroll_started_from_press = True
+                    self._middle_autoscroll_press_started_at = monotonic()
+                return True
+            if self._middle_autoscroll_active and button in (
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.RightButton,
+                Qt.MouseButton.MiddleButton,
+            ):
+                self._stop_middle_autoscroll()
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            mouse_event = event
+            button = getattr(mouse_event, "button", lambda: None)()
+            if (
+                button == Qt.MouseButton.MiddleButton
+                and self._middle_autoscroll_active
+                and self._middle_autoscroll_started_from_press
+            ):
+                started_at = self._middle_autoscroll_press_started_at
+                held_for = (monotonic() - started_at) if started_at is not None else 0.0
+                self._middle_autoscroll_press_started_at = None
+                self._middle_autoscroll_started_from_press = False
+                if held_for >= self._middle_autoscroll_hold_release_threshold_sec:
+                    self._stop_middle_autoscroll()
+                return True
+        elif self._middle_autoscroll_active and event.type() == QEvent.Type.Wheel:
+            self._stop_middle_autoscroll()
+        return super().eventFilter(watched, event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if self._middle_autoscroll_active and event.key() == Qt.Key.Key_Escape:
+            self._stop_middle_autoscroll()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _update_reset_json_button(self, session: Optional[FileSession]) -> None:
         dirty = bool(session is not None and session.dirty)
@@ -1426,6 +1542,7 @@ class DialogueVisualEditor(
         QTimer.singleShot(0, lambda: scroll_bar.setValue(previous_scroll))
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._stop_middle_autoscroll()
         dirty = [session for session in self.sessions.values()
                  if session.dirty]
         if dirty:
