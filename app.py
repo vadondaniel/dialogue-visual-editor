@@ -50,6 +50,7 @@ try:
         StructuralAction,
         looks_like_name_line,
         natural_sort_key,
+        parse_dialogue_data,
         parse_dialogue_file,
     )
     from .helpers.audit import AuditMixin
@@ -78,6 +79,7 @@ except ImportError:
         StructuralAction,
         looks_like_name_line,
         natural_sort_key,
+        parse_dialogue_data,
         parse_dialogue_file,
     )
     from helpers.audit import AuditMixin
@@ -446,7 +448,9 @@ class DialogueVisualEditor(
         apply_row.addWidget(QLabel("Apply Snapshot"))
         self.apply_version_combo = QComboBox()
         self.apply_version_combo.addItem("Original", "original")
+        self.apply_version_combo.addItem("Working", "working")
         self.apply_version_combo.addItem("Translated", "translated")
+        self.apply_version_combo.setCurrentIndex(1)
         self.apply_version_combo.setToolTip(
             "Choose which snapshot version to apply to game files."
         )
@@ -515,7 +519,7 @@ class DialogueVisualEditor(
 
         self.reset_json_btn = QPushButton("Reset JSON")
         self.reset_json_btn.setToolTip(
-            "Discard unsaved edits in this JSON and reload it from disk.")
+            "Discard unsaved edits in this JSON and reload it from saved snapshot data.")
         self.reset_json_btn.clicked.connect(
             self._on_reset_current_file_requested)
         self.reset_json_btn.setVisible(False)
@@ -1279,7 +1283,102 @@ class DialogueVisualEditor(
             QMessageBox.warning(self, "Missing folder",
                                 "Please select a folder first.")
             return
-        self._load_data_folder(Path(text))
+        if not self._prompt_unsaved_if_any():
+            return
+
+        selected_version_raw = self.apply_version_combo.currentData()
+        if selected_version_raw == "original":
+            selected_version = "original"
+        elif selected_version_raw == "working":
+            selected_version = "working"
+        else:
+            selected_version = "translated"
+
+        if selected_version == "original":
+            selected_label = "Original"
+            import_target_version = "working"
+        elif selected_version == "working":
+            selected_label = "Working"
+            import_target_version = "working"
+        else:
+            selected_label = "Translated"
+            import_target_version = "translated"
+
+        import_target_label = (
+            "Working" if import_target_version == "working" else "Translated"
+        )
+
+        confirm = QMessageBox.question(
+            self,
+            "Reload from game files",
+            (
+                "This will re-read JSON files from disk and overwrite your working snapshot data.\n"
+                "Use with caution.\n\n"
+                f"Selected apply version: {selected_label}\n"
+                f"Default import target: {import_target_label}\n"
+                "Original snapshot is locked and will not be overwritten."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        applied_version = self.version_db.get_applied_version(
+        ) if self.version_db is not None else None
+        if applied_version is not None and applied_version != selected_version:
+            if applied_version == "original":
+                applied_label = "Original"
+                applied_import_target = ""
+            elif applied_version == "working":
+                applied_label = "Working"
+                applied_import_target = "working"
+            else:
+                applied_label = "Translated"
+                applied_import_target = "translated"
+            applied_at = self.version_db.get_applied_version_timestamp(
+            ) if self.version_db is not None else ""
+            serious = QMessageBox(self)
+            serious.setWindowTitle("Version mismatch warning")
+            serious.setIcon(QMessageBox.Icon.Critical)
+            serious.setText(
+                (
+                    "Selected apply version and last applied game-file version do not match.\n\n"
+                    f"Selected: {selected_label}\n"
+                    f"Last applied to files: {applied_label}\n"
+                    f"Last applied timestamp: {applied_at or '(unknown)'}\n\n"
+                    "Choose which snapshot this disk read should overwrite."
+                )
+            )
+            to_selected_btn = serious.addButton(
+                f"Import Into {import_target_label}",
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+            to_applied_btn = None
+            if applied_import_target:
+                applied_target_label = (
+                    "Working" if applied_import_target == "working" else "Translated"
+                )
+                to_applied_btn = serious.addButton(
+                    f"Import Into {applied_target_label}",
+                    QMessageBox.ButtonRole.DestructiveRole,
+                )
+            cancel_btn = serious.addButton(
+                "Cancel", QMessageBox.ButtonRole.RejectRole)
+            serious.exec()
+            clicked = serious.clickedButton()
+            if clicked is cancel_btn:
+                return
+            if to_applied_btn is not None and clicked is to_applied_btn:
+                import_target_version = applied_import_target
+            elif clicked is not to_selected_btn:
+                return
+
+        self._load_data_folder(
+            Path(text),
+            force_disk_import=True,
+            import_target_version=import_target_version,
+        )
 
     def _prompt_unsaved_if_any(self) -> bool:
         dirty = [session for session in self.sessions.values()
@@ -1356,7 +1455,12 @@ class DialogueVisualEditor(
         row = visible_paths.index(target)
         self.file_list.setCurrentRow(row)
 
-    def _load_data_folder(self, folder: Path) -> None:
+    def _load_data_folder(
+        self,
+        folder: Path,
+        force_disk_import: bool = False,
+        import_target_version: str = "working",
+    ) -> None:
         if not folder.exists() or not folder.is_dir():
             QMessageBox.critical(self, "Invalid folder",
                                  f"Not a directory:\n{folder}")
@@ -1426,27 +1530,69 @@ class DialogueVisualEditor(
             return
 
         load_errors: list[str] = []
+        loaded_from_db_count = 0
+        loaded_from_disk_count = 0
         total_blocks = 0
         for path in self.file_paths:
             try:
-                session = parse_dialogue_file(path)
+                rel_path = self._relative_path(path)
+                session: Optional[FileSession] = None
+                loaded_from_db = False
+
+                if not force_disk_import and self.version_db is not None:
+                    payload = self.version_db.get_working_snapshot_payload(
+                        rel_path)
+                    if payload:
+                        try:
+                            decoded = json.loads(payload)
+                            session = parse_dialogue_data(path, decoded)
+                            loaded_from_db = True
+                        except Exception:
+                            session = None
+
+                if session is None:
+                    session = parse_dialogue_file(path)
+
                 self._apply_translation_state_to_session(session)
                 self.sessions[path] = session
                 self.segment_uid_counter = max(
                     self.segment_uid_counter, len(session.segments))
                 total_blocks += len(session.segments)
+
+                if loaded_from_db:
+                    loaded_from_db_count += 1
+                else:
+                    loaded_from_disk_count += 1
+
                 if self.version_db is not None:
                     try:
-                        self.version_db.ensure_original_snapshot(
-                            self._relative_path(path),
-                            session.data,
-                        )
+                        if force_disk_import:
+                            target_version = "translated" if import_target_version == "translated" else "working"
+                            self.version_db.import_from_disk(
+                                rel_path,
+                                session.data,
+                                target_version,
+                            )
+                        elif not loaded_from_db:
+                            self.version_db.ensure_original_snapshot(
+                                rel_path,
+                                session.data,
+                            )
+                            self.version_db.save_working_snapshot(
+                                rel_path,
+                                session.data,
+                            )
+                            self.version_db.save_translated_snapshot(
+                                rel_path,
+                                self._export_translated_data_for_session(
+                                    session),
+                            )
                     except Exception:
                         pass
                 if self.index_db is not None:
                     try:
                         self.index_db.update_file_index(
-                            self._relative_path(path),
+                            rel_path,
                             path.stat().st_mtime,
                             session.segments,
                         )
@@ -1491,11 +1637,13 @@ class DialogueVisualEditor(
         if load_errors:
             self.statusBar().showMessage(
                 f"Loaded {len(self.sessions)} files ({visible_count} shown), "
-                f"{total_blocks} blocks. Skipped {len(load_errors)} unreadable file(s).{infer_suffix}"
+                f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}. "
+                f"Skipped {len(load_errors)} unreadable file(s).{infer_suffix}"
             )
         else:
             self.statusBar().showMessage(
-                f"Loaded {len(self.sessions)} files ({visible_count} shown), {total_blocks} blocks.{infer_suffix}"
+                f"Loaded {len(self.sessions)} files ({visible_count} shown), "
+                f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}.{infer_suffix}"
             )
 
     def _file_path_from_item(self, item: Optional[QListWidgetItem]) -> Optional[Path]:
@@ -1559,7 +1707,19 @@ class DialogueVisualEditor(
             return
         try:
             if force_reload or path not in self.sessions:
-                session = parse_dialogue_file(path)
+                rel_path = self._relative_path(path)
+                session: Optional[FileSession] = None
+                if self.version_db is not None:
+                    payload = self.version_db.get_working_snapshot_payload(
+                        rel_path)
+                    if payload:
+                        try:
+                            decoded = json.loads(payload)
+                            session = parse_dialogue_data(path, decoded)
+                        except Exception:
+                            session = None
+                if session is None:
+                    session = parse_dialogue_file(path)
                 self._apply_translation_state_to_session(session)
                 self.sessions[path] = session
                 self.segment_uid_counter = max(

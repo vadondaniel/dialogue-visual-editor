@@ -14,7 +14,7 @@ from .core.models import (
     SplitOverflowAction,
     StructuralAction,
 )
-from .core.parser import parse_dialogue_file
+from .core.parser import parse_dialogue_data, parse_dialogue_file
 from .core.text_utils import (
     chunk_lines,
     collapse_lines_force,
@@ -51,6 +51,7 @@ __all__ = [
     "fuzzy_compare_text",
     "looks_like_name_line",
     "natural_sort_key",
+    "parse_dialogue_data",
     "parse_dialogue_file",
     "preview_text",
     "similarity_signature",

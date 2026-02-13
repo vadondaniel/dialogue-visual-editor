@@ -15,6 +15,7 @@ class DialogueSegment:
     lines: list[str]
     original_lines: list[str]
     source_lines: list[str] = field(default_factory=list)
+    code401_template: dict[str, Any] = field(default_factory=dict)
     tl_uid: str = ""
     translation_lines: list[str] = field(default_factory=list)
     original_translation_lines: list[str] = field(default_factory=list)

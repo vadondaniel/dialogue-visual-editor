@@ -114,10 +114,7 @@ def _build_system_text_segments(path: Path, data: dict[str, Any]) -> list[Dialog
     return segments
 
 
-def parse_dialogue_file(path: Path) -> FileSession:
-    with path.open("r", encoding="utf-8") as src:
-        data = json.load(src)
-
+def parse_dialogue_data(path: Path, data: Any) -> FileSession:
     bundles: list[CommandBundle] = []
     segments: list[DialogueSegment] = []
     list_counter = 0
@@ -144,13 +141,18 @@ def parse_dialogue_file(path: Path) -> FileSession:
                     if is_command_entry(entry) and entry.get("code") == 101:
                         base_cmd = copy.deepcopy(entry)
                         lines: list[str] = []
+                        code401_template: dict[str, Any] = {}
                         j = i + 1
                         while (
                             j < len(value)
                             and is_command_entry(value[j])
                             and value[j].get("code") == 401
                         ):
-                            lines.append(first_parameter_text(value[j]))
+                            current_line_entry = value[j]
+                            if not code401_template and isinstance(current_line_entry, dict):
+                                code401_template = copy.deepcopy(
+                                    current_line_entry)
+                            lines.append(first_parameter_text(current_line_entry))
                             j += 1
                         if not lines:
                             lines = [""]
@@ -164,6 +166,7 @@ def parse_dialogue_file(path: Path) -> FileSession:
                             lines=list(lines),
                             original_lines=list(lines),
                             source_lines=list(lines),
+                            code401_template=code401_template,
                         )
                         tokens.append(CommandToken(
                             kind="dialogue", segment=segment))
@@ -269,3 +272,9 @@ def parse_dialogue_file(path: Path) -> FileSession:
             setattr(session, "name_index_label", "System")
 
     return session
+
+
+def parse_dialogue_file(path: Path) -> FileSession:
+    with path.open("r", encoding="utf-8") as src:
+        data = json.load(src)
+    return parse_dialogue_data(path, data)

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 from ..core.models import DialogueSegment, FileSession
 from ..core.text_utils import chunk_lines
 
-ApplyVersionKind = Literal["original", "translated"]
+ApplyVersionKind = Literal["original", "working", "translated"]
 
 
 class _EditorHostTypingFallback:
@@ -79,6 +79,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             chunks = [lines]
 
         entries: list[dict[str, Any]] = []
+        line_template = segment.code401_template if isinstance(
+            segment.code401_template, dict) else {}
         for chunk in chunks:
             cmd101 = copy.deepcopy(segment.code101)
             if speaker_override is not None:
@@ -94,8 +96,23 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             if not chunk:
                 chunk = [""]
             for line in chunk:
-                entries.append(
-                    {"code": 401, "indent": indent, "parameters": [line]})
+                if line_template:
+                    line_entry = copy.deepcopy(line_template)
+                    line_entry["code"] = 401
+                    if "indent" not in line_entry:
+                        line_entry["indent"] = indent
+                    params = line_entry.get("parameters")
+                    if not isinstance(params, list):
+                        params = []
+                    if params:
+                        params[0] = line
+                    else:
+                        params.append(line)
+                    line_entry["parameters"] = params
+                    entries.append(line_entry)
+                else:
+                    entries.append(
+                        {"code": 401, "indent": indent, "parameters": [line]})
         return entries
 
     def _collect_change_log(self, session: FileSession) -> list[tuple[str, str, str]]:
@@ -244,12 +261,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         if self.version_db is None:
             raise RuntimeError("Version database is not initialized.")
         rel_path = self._relative_path(session.path)
-        if self._is_translator_mode():
-            translated_data = self._export_translated_data_for_session(session)
-        elif self._session_has_source_changes(session):
-            translated_data = self._build_source_data_for_session(session)
-        else:
-            translated_data = self._export_translated_data_for_session(session)
+        working_data = self._build_source_data_for_session(session)
+        translated_data = self._export_translated_data_for_session(session)
+        self.version_db.save_working_snapshot(rel_path, working_data)
         self.version_db.save_translated_snapshot(rel_path, translated_data)
 
     def _save_session(self, session: FileSession, refresh_current_view: bool = False) -> bool:
@@ -369,7 +383,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         button = QMessageBox.question(
             cast(QWidget, self),
             "Reset current JSON",
-            f"Discard all unsaved changes in '{session.path.name}' and reload from disk?",
+            f"Discard all unsaved changes in '{session.path.name}' and reload from saved snapshot?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -381,7 +395,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         reloaded = self.sessions.get(session.path)
         if reloaded is not None and reloaded is not before and not reloaded.dirty:
             self.statusBar().showMessage(
-                f"Reset {session.path.name} to on-disk state.")
+                f"Reset {session.path.name} to saved snapshot state.")
 
     def _save_all_files(self) -> bool:
         if self._is_translator_mode():
@@ -429,6 +443,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         raw = self.apply_version_combo.currentData()
         if raw == "original":
             return "original"
+        if raw == "working":
+            return "working"
         return "translated"
 
     def _apply_selected_snapshot_to_game_files(self) -> None:
@@ -457,7 +473,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return
 
         version = self._selected_apply_version()
-        version_label = "Original" if version == "original" else "Translated"
+        if version == "original":
+            version_label = "Original"
+        elif version == "working":
+            version_label = "Working"
+        else:
+            version_label = "Translated"
         button = QMessageBox.question(
             cast(QWidget, self),
             "Apply snapshots to game files",
@@ -508,6 +529,11 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         if applied <= 0:
             self.statusBar().showMessage("No files were applied.")
             return
+
+        try:
+            self.version_db.set_applied_version(version)
+        except Exception:
+            pass
 
         current_dir = self.data_dir
         self._load_data_folder(current_dir)
