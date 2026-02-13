@@ -164,10 +164,14 @@ class DialogueVisualEditor(
         }
         self.audit_window: Optional[QDialog] = None
         self.audit_search_query_edit: Optional[QLineEdit] = None
+        self.audit_search_replace_edit: Optional[QLineEdit] = None
+        self.audit_search_case_sensitive_check: Optional[QCheckBox] = None
         self.audit_search_scope_combo: Optional[QComboBox] = None
         self.audit_search_results_list: Optional[QListWidget] = None
         self.audit_search_status_label: Optional[QLabel] = None
         self.audit_search_goto_btn: Optional[QPushButton] = None
+        self.audit_search_replace_selected_btn: Optional[QPushButton] = None
+        self.audit_search_replace_all_btn: Optional[QPushButton] = None
         self.pending_audit_flash_uid: Optional[str] = None
         self.audit_pinned_uid: Optional[str] = None
         self.audit_search_progress_overlay: Optional[QLabel] = None
@@ -191,14 +195,14 @@ class DialogueVisualEditor(
         self.audit_cache_generation = 0
         self.audit_result_batch_size = 16
         self.audit_render_batch_interval_ms = 8
-        self.audit_search_cache_key: Optional[tuple[int, str, str]] = None
+        self.audit_search_cache_key: Optional[tuple[int, str, str, bool]] = None
         self.audit_search_cache_records: list[dict[str, Any]] = []
         self.audit_search_render_records: list[dict[str, Any]] = []
         self.audit_search_render_index = 0
         self.audit_search_render_query = ""
         self.audit_search_render_scope = "original"
         self.audit_search_render_generation = 0
-        self.audit_search_displayed_key: Optional[tuple[int, str, str]] = None
+        self.audit_search_displayed_key: Optional[tuple[int, str, str, bool]] = None
         self.audit_search_display_complete = False
         self.audit_search_render_timer = QTimer(self)
         self.audit_search_render_timer.setSingleShot(True)

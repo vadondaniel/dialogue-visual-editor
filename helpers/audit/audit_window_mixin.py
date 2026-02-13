@@ -73,17 +73,27 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         controls_row = QHBoxLayout()
         controls_row.setContentsMargins(0, 0, 0, 0)
         controls_row.setSpacing(6)
-        controls_row.addWidget(QLabel("Find"))
         query_edit = QLineEdit()
-        query_edit.setPlaceholderText("Search text in loaded files")
-        controls_row.addWidget(query_edit, 1)
+        query_edit.setPlaceholderText("Find...")
+        controls_row.addWidget(query_edit, 2)
 
-        controls_row.addWidget(QLabel("In"))
         scope_combo = QComboBox()
         scope_combo.addItem("Original", "original")
         scope_combo.addItem("Translation", "translation")
         scope_combo.addItem("Both", "both")
         controls_row.addWidget(scope_combo)
+        case_sensitive_check = QCheckBox("Case sensitive")
+        case_sensitive_check.setChecked(False)
+        controls_row.addWidget(case_sensitive_check)
+        replace_edit = QLineEdit()
+        replace_edit.setPlaceholderText("Replace with...")
+        controls_row.addWidget(replace_edit, 2)
+        replace_selected_btn = QPushButton("Replace Sel")
+        replace_all_btn = QPushButton("Replace All")
+        replace_selected_btn.setEnabled(False)
+        replace_all_btn.setEnabled(False)
+        controls_row.addWidget(replace_selected_btn)
+        controls_row.addWidget(replace_all_btn)
         search_layout.addLayout(controls_row)
 
         results_list = QListWidget()
@@ -202,9 +212,13 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_window = dialog
         self.audit_search_query_edit = query_edit
         self.audit_search_scope_combo = scope_combo
+        self.audit_search_replace_edit = replace_edit
+        self.audit_search_case_sensitive_check = case_sensitive_check
         self.audit_search_results_list = results_list
         self.audit_search_status_label = status_label
         self.audit_search_goto_btn = goto_btn
+        self.audit_search_replace_selected_btn = replace_selected_btn
+        self.audit_search_replace_all_btn = replace_all_btn
         self.audit_search_progress_overlay = search_progress_overlay
         self.audit_search_timer = QTimer(dialog)
         self.audit_search_timer.setSingleShot(True)
@@ -253,11 +267,30 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
 
         query_edit.returnPressed.connect(self._run_audit_search)
         query_edit.textChanged.connect(
-            lambda _text: self._schedule_audit_search())
+            lambda _text: (
+                self._schedule_audit_search(),
+                self._refresh_audit_search_replace_preview(),
+            ))
+        replace_edit.textChanged.connect(
+            lambda _text: self._refresh_audit_search_replace_preview()
+        )
         scope_combo.currentIndexChanged.connect(
-            lambda _index: self._schedule_audit_search()
+            lambda _index: (
+                self._schedule_audit_search(),
+                self._refresh_audit_search_replace_preview(),
+            )
+        )
+        case_sensitive_check.toggled.connect(
+            lambda _checked: (
+                self._schedule_audit_search(),
+                self._refresh_audit_search_replace_preview(),
+            )
         )
         goto_btn.clicked.connect(self._go_to_selected_audit_result)
+        replace_selected_btn.clicked.connect(
+            self._replace_selected_audit_search_result
+        )
+        replace_all_btn.clicked.connect(self._replace_all_audit_search_results)
         results_list.itemDoubleClicked.connect(
             lambda _item: self._go_to_selected_audit_result()
         )
@@ -265,8 +298,13 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             lambda _item: self._go_to_selected_audit_result()
         )
         results_list.currentItemChanged.connect(
-            lambda current, _previous: goto_btn.setEnabled(current is not None)
+            lambda current, _previous: (
+                goto_btn.setEnabled(current is not None),
+                replace_selected_btn.setEnabled(current is not None),
+                self._refresh_audit_search_replace_preview(),
+            )
         )
+        replace_edit.returnPressed.connect(self._replace_selected_audit_search_result)
         sanitize_scope_combo.currentIndexChanged.connect(
             lambda _index: self._refresh_audit_sanitize_panel()
         )
@@ -314,6 +352,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
 
         self._refresh_audit_sanitize_panel()
         self._refresh_audit_control_mismatch_panel()
+        self._refresh_audit_search_replace_preview()
 
     def _on_audit_tab_changed(self, _index: int) -> None:
         self._hide_audit_progress_overlay(self.audit_search_progress_overlay)
