@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QPushButton
 
 
-
 class _EditorHostTypingFallback:
     # DialogueVisualEditor provides many attributes/methods consumed by mixins.
     # For static analysis, allow unresolved host members to type as Any.
@@ -50,8 +49,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         right_index = self._find_segment_index_by_uid(session, right.uid)
         if left_index < 0 or right_index != left_index + 1:
             return False
-        left_bundle, left_token_index = self._find_segment_token(session, left.uid)
-        right_bundle, right_token_index = self._find_segment_token(session, right.uid)
+        left_bundle, left_token_index = self._find_segment_token(
+            session, left.uid)
+        right_bundle, right_token_index = self._find_segment_token(
+            session, right.uid)
         if left_bundle is None or right_bundle is None:
             return False
         if left_bundle is not right_bundle:
@@ -61,7 +62,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     def _merged_pair_line_savings(self, left: DialogueSegment, right: DialogueSegment) -> int:
         width = self._segment_line_width(left)
         before = len(left.lines) + len(right.lines)
-        merged = smart_collapse_lines_space_efficient(list(left.lines) + list(right.lines), width)
+        merged = smart_collapse_lines_space_efficient(
+            list(left.lines) + list(right.lines), width)
         return before - len(merged)
 
     def _build_merge_connector_widget(
@@ -110,7 +112,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if segment is None:
             return
         if self._is_translator_mode():
-            segment.translation_lines = self._normalize_translation_lines(lines)
+            segment.translation_lines = self._normalize_translation_lines(
+                lines)
         else:
             segment.lines = list(lines)
             segment.source_lines = list(segment.lines)
@@ -171,7 +174,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         for restored_segment in merged_segments:
             if self._find_segment_index_by_uid(session, restored_segment.uid) >= 0:
                 continue
-            bundle.tokens.insert(insert_token_index, CommandToken(kind="dialogue", segment=restored_segment))
+            bundle.tokens.insert(insert_token_index, CommandToken(
+                kind="dialogue", segment=restored_segment))
             session.segments.insert(insert_segment_index, restored_segment)
             insert_token_index += 1
             insert_segment_index += 1
@@ -213,8 +217,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         ]
 
     def _clear_structural_history_for_path(self, path: Path) -> None:
-        self.structural_undo_stack = [entry for entry in self.structural_undo_stack if entry.path != path]
-        self.structural_redo_stack = [entry for entry in self.structural_redo_stack if entry.path != path]
+        self.structural_undo_stack = [
+            entry for entry in self.structural_undo_stack if entry.path != path]
+        self.structural_redo_stack = [
+            entry for entry in self.structural_redo_stack if entry.path != path]
 
     def _on_insert_after_requested(self, uid: str) -> None:
         if self._is_translator_mode():
@@ -251,12 +257,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             tl_uid=self._new_translation_uid(),
             translation_lines=[""],
             original_translation_lines=[""],
-            translation_speaker=self.speaker_translation_map.get(source_segment.speaker_name, ""),
-            original_translation_speaker=self.speaker_translation_map.get(source_segment.speaker_name, ""),
+            translation_speaker=self.speaker_translation_map.get(
+                source_segment.speaker_name, ""),
+            original_translation_speaker=self.speaker_translation_map.get(
+                source_segment.speaker_name, ""),
             inserted=True,
         )
 
-        bundle.tokens.insert(token_index + 1, CommandToken(kind="dialogue", segment=new_segment))
+        bundle.tokens.insert(
+            token_index + 1, CommandToken(kind="dialogue", segment=new_segment))
         session.segments.insert(source_idx + 1, new_segment)
         insert_action = InsertedBlockAction(
             path=session.path,
@@ -267,12 +276,14 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             segment=new_segment,
         )
         self.structural_undo_stack.append(
-            StructuralAction(kind="insert", path=session.path, data=insert_action)
+            StructuralAction(kind="insert", path=session.path,
+                             data=insert_action)
         )
         self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
-        self._render_session(session, focus_uid=new_segment.uid, preserve_scroll=True)
+        self._render_session(
+            session, focus_uid=new_segment.uid, preserve_scroll=True)
         self.statusBar().showMessage("Inserted a new code 101 block.")
 
     def _on_split_overflow_requested(self, uid: str) -> None:
@@ -312,8 +323,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             original_lines=list(moved_lines),
             source_lines=list(moved_lines),
             tl_uid=self._new_translation_uid(),
-            translation_lines=self._normalize_translation_lines(source_segment.translation_lines[max_lines:]),
-            original_translation_lines=self._normalize_translation_lines(source_segment.translation_lines[max_lines:]),
+            translation_lines=self._normalize_translation_lines(
+                source_segment.translation_lines[max_lines:]),
+            original_translation_lines=self._normalize_translation_lines(
+                source_segment.translation_lines[max_lines:]),
             translation_speaker=source_segment.translation_speaker,
             original_translation_speaker=source_segment.translation_speaker,
             inserted=True,
@@ -321,9 +334,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         source_segment.lines = list(kept_lines)
         source_segment.source_lines = list(source_segment.lines)
-        source_tl_before = self._normalize_translation_lines(source_segment.translation_lines)
-        source_segment.translation_lines = self._normalize_translation_lines(source_segment.translation_lines[:max_lines])
-        bundle.tokens.insert(token_index + 1, CommandToken(kind="dialogue", segment=new_segment))
+        source_tl_before = self._normalize_translation_lines(
+            source_segment.translation_lines)
+        source_segment.translation_lines = self._normalize_translation_lines(
+            source_segment.translation_lines[:max_lines])
+        bundle.tokens.insert(
+            token_index + 1, CommandToken(kind="dialogue", segment=new_segment))
         session.segments.insert(source_index + 1, new_segment)
 
         split_action = SplitOverflowAction(
@@ -337,12 +353,14 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             source_translation_after=list(source_segment.translation_lines),
         )
         self.structural_undo_stack.append(
-            StructuralAction(kind="split_overflow", path=session.path, data=split_action)
+            StructuralAction(kind="split_overflow",
+                             path=session.path, data=split_action)
         )
         self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
-        self._render_session(session, focus_uid=new_segment.uid, preserve_scroll=True)
+        self._render_session(
+            session, focus_uid=new_segment.uid, preserve_scroll=True)
         self.statusBar().showMessage(
             f"Moved {len(moved_lines)} overflow line(s) to a new block below."
         )
@@ -372,8 +390,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             )
             return
 
-        left_bundle, left_token_index = self._find_segment_token(session, left_uid)
-        right_bundle, right_token_index = self._find_segment_token(session, right_uid)
+        left_bundle, left_token_index = self._find_segment_token(
+            session, left_uid)
+        right_bundle, right_token_index = self._find_segment_token(
+            session, right_uid)
         if left_bundle is None or right_bundle is None:
             return
         if left_bundle is not right_bundle:
@@ -383,7 +403,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         left_lines_before = list(left_segment.lines)
         left_merged_before = list(left_segment.merged_segments)
-        left_translation_before = self._normalize_translation_lines(left_segment.translation_lines)
+        left_translation_before = self._normalize_translation_lines(
+            left_segment.translation_lines)
         left_speaker_translation_before = left_segment.translation_speaker
         merged_lines = smart_collapse_lines_space_efficient(
             list(left_segment.lines) + list(right_segment.lines),
@@ -421,7 +442,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             left_speaker_translation_after=merged_speaker_translation,
         )
         self.structural_undo_stack.append(
-            StructuralAction(kind="merge", path=session.path, data=merge_action)
+            StructuralAction(kind="merge", path=session.path,
+                             data=merge_action)
         )
         self.structural_redo_stack.clear()
 
@@ -440,9 +462,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             return
 
         if self._is_translator_mode():
-            tl_before = self._normalize_translation_lines(segment.translation_lines)
+            tl_before = self._normalize_translation_lines(
+                segment.translation_lines)
             speaker_before = segment.translation_speaker.strip()
-            tl_after = self._normalize_translation_lines(segment.original_translation_lines)
+            tl_after = self._normalize_translation_lines(
+                segment.original_translation_lines)
             speaker_after = segment.original_translation_speaker.strip()
             if tl_before == tl_after and speaker_before == speaker_after:
                 self.statusBar().showMessage("Block translation is already reset.")
@@ -464,7 +488,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         ]
         restored_count = 0
         if restored_segments:
-            restored_count = self._restore_merged_segments_after(session, uid, restored_segments)
+            restored_count = self._restore_merged_segments_after(
+                session, uid, restored_segments)
             segment.merged_segments.clear()
         lines_after = list(segment.original_lines)
         segment.lines = list(lines_after)
@@ -480,13 +505,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 restored_segments=restored_segments,
             )
             self.structural_undo_stack.append(
-                StructuralAction(kind="reset", path=session.path, data=reset_action)
+                StructuralAction(
+                    kind="reset", path=session.path, data=reset_action)
             )
             self.structural_redo_stack.clear()
         self._refresh_dirty_state(session)
         self._render_session(session, focus_uid=uid, preserve_scroll=True)
         if restored_count > 0:
-            self.statusBar().showMessage(f"Reset block and restored {restored_count} merged block(s).")
+            self.statusBar().showMessage(
+                f"Reset block and restored {restored_count} merged block(s).")
         else:
             self.statusBar().showMessage("Reset block.")
 
@@ -565,16 +592,20 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         bundle = session.bundles[action.bundle_index]
         token_index = max(0, min(action.token_index, len(bundle.tokens)))
-        segment_index = max(0, min(action.segment_index, len(session.segments)))
-        bundle.tokens.insert(token_index, CommandToken(kind="dialogue", segment=action.segment))
+        segment_index = max(
+            0, min(action.segment_index, len(session.segments)))
+        bundle.tokens.insert(token_index, CommandToken(
+            kind="dialogue", segment=action.segment))
         session.segments.insert(segment_index, action.segment)
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, focus_uid=action.uid, preserve_scroll=True)
+            self._render_session(
+                session, focus_uid=action.uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Undo delete: restored block in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Undo delete: restored block in {action.path.name}")
         return True
 
     def _apply_undo_insert(self, action: InsertedBlockAction) -> bool:
@@ -591,7 +622,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             self._render_session(session, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Undo insert: removed block in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Undo insert: removed block in {action.path.name}")
         return True
 
     def _apply_redo_insert(self, action: InsertedBlockAction) -> bool:
@@ -605,16 +637,20 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         bundle = session.bundles[action.bundle_index]
         token_index = max(0, min(action.token_index, len(bundle.tokens)))
-        segment_index = max(0, min(action.segment_index, len(session.segments)))
-        bundle.tokens.insert(token_index, CommandToken(kind="dialogue", segment=action.segment))
+        segment_index = max(
+            0, min(action.segment_index, len(session.segments)))
+        bundle.tokens.insert(token_index, CommandToken(
+            kind="dialogue", segment=action.segment))
         session.segments.insert(segment_index, action.segment)
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, focus_uid=action.uid, preserve_scroll=True)
+            self._render_session(
+                session, focus_uid=action.uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Redo insert: restored block in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Redo insert: restored block in {action.path.name}")
         return True
 
     def _apply_redo_delete(self, action: DeletedBlockAction) -> bool:
@@ -638,7 +674,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             self._render_session(session, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Redo delete: removed block in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Redo delete: removed block in {action.path.name}")
         return True
 
     def _apply_undo_reset(self, action: ResetBlockAction) -> bool:
@@ -663,10 +700,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, focus_uid=action.uid, preserve_scroll=True)
+            self._render_session(
+                session, focus_uid=action.uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Undo reset: restored pre-reset state in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Undo reset: restored pre-reset state in {action.path.name}")
         return True
 
     def _apply_redo_reset(self, action: ResetBlockAction) -> bool:
@@ -680,7 +719,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             if self._find_segment_index_by_uid(session, restored.uid) >= 0:
                 return False
 
-        restored_count = self._restore_merged_segments_after(session, action.uid, action.merged_before)
+        restored_count = self._restore_merged_segments_after(
+            session, action.uid, action.merged_before)
         if restored_count < len(action.merged_before):
             return False
 
@@ -691,17 +731,20 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, focus_uid=action.uid, preserve_scroll=True)
+            self._render_session(
+                session, focus_uid=action.uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Redo reset: reapplied reset in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Redo reset: reapplied reset in {action.path.name}")
         return True
 
     def _apply_undo_split_overflow(self, action: SplitOverflowAction) -> bool:
         session = self.sessions.get(action.path)
         if session is None:
             return False
-        source_index = self._find_segment_index_by_uid(session, action.source_uid)
+        source_index = self._find_segment_index_by_uid(
+            session, action.source_uid)
         if source_index < 0:
             return False
         if self._find_segment_index_by_uid(session, action.moved_uid) < 0:
@@ -709,21 +752,25 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if not self._remove_segment_by_uid(session, action.moved_uid):
             return False
 
-        source_index = self._find_segment_index_by_uid(session, action.source_uid)
+        source_index = self._find_segment_index_by_uid(
+            session, action.source_uid)
         if source_index < 0:
             return False
         source_segment = session.segments[source_index]
         source_segment.lines = list(action.source_lines_before)
         source_segment.source_lines = list(source_segment.lines)
         if action.source_translation_before:
-            source_segment.translation_lines = self._normalize_translation_lines(action.source_translation_before)
+            source_segment.translation_lines = self._normalize_translation_lines(
+                action.source_translation_before)
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, focus_uid=action.source_uid, preserve_scroll=True)
+            self._render_session(
+                session, focus_uid=action.source_uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Undo overflow split: restored block in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Undo overflow split: restored block in {action.path.name}")
         return True
 
     def _apply_redo_split_overflow(self, action: SplitOverflowAction) -> bool:
@@ -733,27 +780,33 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if self._find_segment_index_by_uid(session, action.moved_uid) >= 0:
             return False
 
-        source_index = self._find_segment_index_by_uid(session, action.source_uid)
+        source_index = self._find_segment_index_by_uid(
+            session, action.source_uid)
         if source_index < 0:
             return False
         source_segment = session.segments[source_index]
-        bundle, token_index = self._find_segment_token(session, action.source_uid)
+        bundle, token_index = self._find_segment_token(
+            session, action.source_uid)
         if bundle is None or token_index < 0:
             return False
 
         source_segment.lines = list(action.source_lines_after)
         source_segment.source_lines = list(source_segment.lines)
         if action.source_translation_after:
-            source_segment.translation_lines = self._normalize_translation_lines(action.source_translation_after)
-        bundle.tokens.insert(token_index + 1, CommandToken(kind="dialogue", segment=action.moved_segment))
+            source_segment.translation_lines = self._normalize_translation_lines(
+                action.source_translation_after)
+        bundle.tokens.insert(
+            token_index + 1, CommandToken(kind="dialogue", segment=action.moved_segment))
         session.segments.insert(source_index + 1, action.moved_segment)
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, focus_uid=action.moved_uid, preserve_scroll=True)
+            self._render_session(
+                session, focus_uid=action.moved_uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Redo overflow split: moved lines in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Redo overflow split: moved lines in {action.path.name}")
         return True
 
     def _apply_undo_merge(self, action: MergeBlocksAction) -> bool:
@@ -767,13 +820,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             return False
 
         left_segment = session.segments[left_index]
-        restored = self._restore_merged_segments_after(session, action.left_uid, [action.right_segment])
+        restored = self._restore_merged_segments_after(
+            session, action.left_uid, [action.right_segment])
         if restored <= 0:
             return False
         left_segment.lines = list(action.left_lines_before)
         left_segment.source_lines = list(left_segment.lines)
         if action.left_translation_before:
-            left_segment.translation_lines = self._normalize_translation_lines(action.left_translation_before)
+            left_segment.translation_lines = self._normalize_translation_lines(
+                action.left_translation_before)
         left_segment.translation_speaker = action.left_speaker_translation_before
         if left_segment.translation_speaker:
             self.speaker_translation_map[left_segment.speaker_name] = left_segment.translation_speaker
@@ -781,10 +836,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, focus_uid=action.left_uid, preserve_scroll=True)
+            self._render_session(
+                session, focus_uid=action.left_uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Undo merge: restored block in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Undo merge: restored block in {action.path.name}")
         return True
 
     def _apply_redo_merge(self, action: MergeBlocksAction) -> bool:
@@ -792,7 +849,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if session is None:
             return False
         left_index = self._find_segment_index_by_uid(session, action.left_uid)
-        right_index = self._find_segment_index_by_uid(session, action.right_uid)
+        right_index = self._find_segment_index_by_uid(
+            session, action.right_uid)
         if left_index < 0 or right_index < 0:
             return False
         if right_index != left_index + 1:
@@ -800,8 +858,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         left_segment = session.segments[left_index]
         right_segment = session.segments[right_index]
-        left_bundle, left_token_index = self._find_segment_token(session, action.left_uid)
-        right_bundle, right_token_index = self._find_segment_token(session, action.right_uid)
+        left_bundle, left_token_index = self._find_segment_token(
+            session, action.left_uid)
+        right_bundle, right_token_index = self._find_segment_token(
+            session, action.right_uid)
         if left_bundle is None or right_bundle is None:
             return False
         if left_bundle is not right_bundle:
@@ -812,20 +872,24 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         left_segment.lines = list(action.left_lines_after)
         left_segment.source_lines = list(left_segment.lines)
         if action.left_translation_after:
-            left_segment.translation_lines = self._normalize_translation_lines(action.left_translation_after)
+            left_segment.translation_lines = self._normalize_translation_lines(
+                action.left_translation_after)
         left_segment.translation_speaker = action.left_speaker_translation_after
         if left_segment.translation_speaker:
             self.speaker_translation_map[left_segment.speaker_name] = left_segment.translation_speaker
-        left_segment.merged_segments = list(action.left_merged_before) + [right_segment]
+        left_segment.merged_segments = list(
+            action.left_merged_before) + [right_segment]
         del left_bundle.tokens[right_token_index]
         del session.segments[right_index]
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, focus_uid=action.left_uid, preserve_scroll=True)
+            self._render_session(
+                session, focus_uid=action.left_uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
-        self.statusBar().showMessage(f"Redo merge: merged blocks in {action.path.name}")
+        self.statusBar().showMessage(
+            f"Redo merge: merged blocks in {action.path.name}")
         return True
 
     def _undo_last_structural_action(self) -> bool:
@@ -833,15 +897,20 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             action = self.structural_undo_stack.pop()
             ok = False
             if action.kind == "insert":
-                ok = self._apply_undo_insert(cast(InsertedBlockAction, action.data))
+                ok = self._apply_undo_insert(
+                    cast(InsertedBlockAction, action.data))
             elif action.kind == "delete":
-                ok = self._apply_undo_delete(cast(DeletedBlockAction, action.data))
+                ok = self._apply_undo_delete(
+                    cast(DeletedBlockAction, action.data))
             elif action.kind == "reset":
-                ok = self._apply_undo_reset(cast(ResetBlockAction, action.data))
+                ok = self._apply_undo_reset(
+                    cast(ResetBlockAction, action.data))
             elif action.kind == "split_overflow":
-                ok = self._apply_undo_split_overflow(cast(SplitOverflowAction, action.data))
+                ok = self._apply_undo_split_overflow(
+                    cast(SplitOverflowAction, action.data))
             elif action.kind == "merge":
-                ok = self._apply_undo_merge(cast(MergeBlocksAction, action.data))
+                ok = self._apply_undo_merge(
+                    cast(MergeBlocksAction, action.data))
             if ok:
                 self.structural_redo_stack.append(action)
                 return True
@@ -852,17 +921,21 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             action = self.structural_redo_stack.pop()
             ok = False
             if action.kind == "insert":
-                ok = self._apply_redo_insert(cast(InsertedBlockAction, action.data))
+                ok = self._apply_redo_insert(
+                    cast(InsertedBlockAction, action.data))
             elif action.kind == "delete":
-                ok = self._apply_redo_delete(cast(DeletedBlockAction, action.data))
+                ok = self._apply_redo_delete(
+                    cast(DeletedBlockAction, action.data))
             elif action.kind == "reset":
-                ok = self._apply_redo_reset(cast(ResetBlockAction, action.data))
+                ok = self._apply_redo_reset(
+                    cast(ResetBlockAction, action.data))
             elif action.kind == "split_overflow":
-                ok = self._apply_redo_split_overflow(cast(SplitOverflowAction, action.data))
+                ok = self._apply_redo_split_overflow(
+                    cast(SplitOverflowAction, action.data))
             elif action.kind == "merge":
-                ok = self._apply_redo_merge(cast(MergeBlocksAction, action.data))
+                ok = self._apply_redo_merge(
+                    cast(MergeBlocksAction, action.data))
             if ok:
                 self.structural_undo_stack.append(action)
                 return True
         return False
-

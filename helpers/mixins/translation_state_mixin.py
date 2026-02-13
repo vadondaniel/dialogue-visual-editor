@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QCheckBox, QComboBox, QPushButton
 
 
-
 class _EditorHostTypingFallback:
     # DialogueVisualEditor provides many attributes/methods consumed by mixins.
     # For static analysis, allow unresolved host members to type as Any.
@@ -78,7 +77,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             self.save_btn.setText("Save File")
             self.save_all_btn.setText("Save All")
             self.reset_json_btn.setText("Reset JSON")
-            self.auto_split_check.setToolTip("Auto-split long dialogue on save.")
+            self.auto_split_check.setToolTip(
+                "Auto-split long dialogue on save.")
 
     def _normalize_translation_lines(self, value: Any) -> list[str]:
         if isinstance(value, list):
@@ -117,7 +117,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
     def _segment_reference_source_text(self, segment: DialogueSegment) -> str:
-        source_lines = segment.source_lines or segment.original_lines or segment.lines or [""]
+        source_lines = segment.source_lines or segment.original_lines or segment.lines or [
+            ""]
         return "\n".join(source_lines)
 
     def _segment_reference_translation_text(self, segment: DialogueSegment) -> str:
@@ -192,7 +193,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                         parsed = int(match.group(1))
                     except Exception:
                         continue
-                    self.translation_uid_counter = max(self.translation_uid_counter, parsed)
+                    self.translation_uid_counter = max(
+                        self.translation_uid_counter, parsed)
 
     def _apply_translation_state_to_session(self, session: FileSession) -> None:
         rel_path = self._relative_path(session.path)
@@ -204,7 +206,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 file_state = candidate
 
         order_raw = file_state.get("order")
-        order: list[str] = [item for item in order_raw if isinstance(item, str)] if isinstance(order_raw, list) else []
+        order: list[str] = [item for item in order_raw if isinstance(
+            item, str)] if isinstance(order_raw, list) else []
         entries_raw = file_state.get("entries")
         entries: dict[str, dict[str, Any]] = {}
         if isinstance(entries_raw, dict):
@@ -220,7 +223,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 hash_buckets.setdefault(source_hash, []).append(uid)
 
         for idx, segment in enumerate(session.segments):
-            segment.source_lines = list(segment.lines) if segment.lines else [""]
+            segment.source_lines = list(
+                segment.lines) if segment.lines else [""]
             source_hash = self._segment_source_hash(segment)
             chosen_uid = ""
             preferred_uid = order[idx] if idx < len(order) else ""
@@ -247,7 +251,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 chosen_uid = self._new_translation_uid()
 
             entry = entries.get(chosen_uid, {})
-            tl_lines = self._normalize_translation_lines(entry.get("translation_lines"))
+            tl_lines = self._normalize_translation_lines(
+                entry.get("translation_lines"))
             speaker_en_raw = entry.get("speaker_en")
             speaker_en = speaker_en_raw.strip() if isinstance(speaker_en_raw, str) else ""
             speaker_key = self._speaker_key_for_state(segment)
@@ -266,7 +271,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
     def _sync_translation_state_from_sessions(self) -> None:
         files_state: dict[str, Any] = {}
         for path, session in self.sessions.items():
-            files_state[self._relative_path(path)] = self._translation_state_for_session(session)
+            files_state[self._relative_path(
+                path)] = self._translation_state_for_session(session)
 
         sorted_speaker_map: dict[str, str] = {}
         for key in sorted(self.speaker_translation_map.keys(), key=natural_sort_key):
@@ -288,7 +294,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             if not segment.tl_uid:
                 segment.tl_uid = self._new_translation_uid()
             order.append(segment.tl_uid)
-            translation_lines = self._normalize_translation_lines(segment.translation_lines)
+            translation_lines = self._normalize_translation_lines(
+                segment.translation_lines)
             speaker_en = segment.translation_speaker.strip()
             speaker_key = self._speaker_key_for_state(segment)
             entries[segment.tl_uid] = {
@@ -317,7 +324,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                     session = self.sessions.get(path)
                     if session is None:
                         continue
-                    files_raw[self._relative_path(path)] = self._translation_state_for_session(session)
+                    files_raw[self._relative_path(
+                        path)] = self._translation_state_for_session(session)
 
                 sorted_speaker_map: dict[str, str] = {}
                 for key in sorted(self.speaker_translation_map.keys(), key=natural_sort_key):
@@ -329,7 +337,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 self.translation_state["version"] = 1
 
             with self.translation_state_path.open("w", encoding="utf-8") as dst:
-                json.dump(self.translation_state, dst, ensure_ascii=False, indent=2)
+                json.dump(self.translation_state, dst,
+                          ensure_ascii=False, indent=2)
             return True
         except Exception as exc:
             QMessageBox.critical(
@@ -361,8 +370,10 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
     def _mark_session_translation_saved(self, session: FileSession) -> None:
         for segment in session.segments:
-            segment.translation_lines = self._normalize_translation_lines(segment.translation_lines)
-            segment.original_translation_lines = list(segment.translation_lines)
+            segment.translation_lines = self._normalize_translation_lines(
+                segment.translation_lines)
+            segment.original_translation_lines = list(
+                segment.translation_lines)
             segment.translation_speaker = segment.translation_speaker.strip()
             segment.original_translation_speaker = segment.translation_speaker
 
@@ -370,7 +381,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         rows: list[dict[str, Any]] = []
         for row_path, row_session in self.sessions.items():
             for block_number, segment in enumerate(row_session.segments, start=1):
-                source_text = self._segment_reference_source_text(segment).strip()
+                source_text = self._segment_reference_source_text(
+                    segment).strip()
                 if not source_text:
                     continue
                 rows.append(
@@ -404,15 +416,18 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 row for row in exact_groups.get(own_source, [])
                 if not (row["path"] == own_path and row["uid"] == own_uid)
             ]
-            exact_cross_file = [row for row in exact_candidates if row["path"] != own_path]
+            exact_cross_file = [
+                row for row in exact_candidates if row["path"] != own_path]
             exact_pool = exact_cross_file if exact_cross_file else exact_candidates
             if exact_pool:
                 en_variants = unique_preserve_order(
-                    [cast(str, row["translation_text"]) for row in exact_pool if cast(str, row["translation_text"])]
+                    [cast(str, row["translation_text"])
+                     for row in exact_pool if cast(str, row["translation_text"])]
                 )
                 samples = []
                 for row in exact_pool[:3]:
-                    sample_tl = cast(str, row["translation_text"]) or "(no EN yet)"
+                    sample_tl = cast(
+                        str, row["translation_text"]) or "(no EN yet)"
                     samples.append(
                         f"{row['file']}#{row['block_number']}: {preview_text(sample_tl, 48)}"
                     )
@@ -438,7 +453,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 scored: list[tuple[float, dict[str, Any]]] = []
                 for row in similar_rows:
                     compare_text = cast(str, row["compare_text"])
-                    ratio = SequenceMatcher(None, own_compare, compare_text).ratio()
+                    ratio = SequenceMatcher(
+                        None, own_compare, compare_text).ratio()
                     if ratio < 0.55:
                         continue
                     scored.append((ratio, row))
@@ -446,11 +462,13 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 if scored:
                     sample_parts = []
                     for ratio, row in scored[:3]:
-                        sample_tl = cast(str, row["translation_text"]) or "(no EN yet)"
+                        sample_tl = cast(
+                            str, row["translation_text"]) or "(no EN yet)"
                         sample_parts.append(
                             f"{row['file']}#{row['block_number']} ({ratio:.2f}): {preview_text(sample_tl, 44)}"
                         )
-                    similar_summary = f"Similar JP phrases: {len(scored)} candidate(s). " + " | ".join(sample_parts)
+                    similar_summary = f"Similar JP phrases: {len(scored)} candidate(s). " + " | ".join(
+                        sample_parts)
                 else:
                     similar_summary = "Similar JP phrases: none."
             else:
@@ -458,4 +476,3 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
             summaries[segment.uid] = (exact_summary, similar_summary)
         return summaries
-

@@ -26,10 +26,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         invalidate_audit = getattr(self, "_invalidate_audit_caches", None)
         if callable(invalidate_audit):
             invalidate_audit()
-        invalidate_reference = getattr(self, "_invalidate_reference_summary_cache", None)
+        invalidate_reference = getattr(
+            self, "_invalidate_reference_summary_cache", None)
         if callable(invalidate_reference):
             invalidate_reference()
-        invalidate_cached_view = getattr(self, "_invalidate_cached_block_view_for_path", None)
+        invalidate_cached_view = getattr(
+            self, "_invalidate_cached_block_view_for_path", None)
         if callable(invalidate_cached_view):
             invalidate_cached_view(session.path)
         source_dirty = self._session_has_source_changes(session)
@@ -92,7 +94,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             if not chunk:
                 chunk = [""]
             for line in chunk:
-                entries.append({"code": 401, "indent": indent, "parameters": [line]})
+                entries.append(
+                    {"code": 401, "indent": indent, "parameters": [line]})
         return entries
 
     def _collect_change_log(self, session: FileSession) -> list[tuple[str, str, str]]:
@@ -150,20 +153,24 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
         if is_name_index_session and isinstance(session.data, dict):
             name_index_kind_raw = getattr(session, "name_index_kind", "")
-            name_index_kind = name_index_kind_raw.strip().lower() if isinstance(name_index_kind_raw, str) else ""
+            name_index_kind = name_index_kind_raw.strip().lower(
+            ) if isinstance(name_index_kind_raw, str) else ""
             if name_index_kind == "system":
                 for segment in session.segments:
                     path_tokens_raw = getattr(segment, "system_text_path", ())
                     if not isinstance(path_tokens_raw, tuple):
                         continue
-                    new_value = "\n".join(segment.lines) if segment.lines else ""
-                    self._set_json_value_by_path(session.data, path_tokens_raw, new_value)
+                    new_value = "\n".join(
+                        segment.lines) if segment.lines else ""
+                    self._set_json_value_by_path(
+                        session.data, path_tokens_raw, new_value)
                 return
 
         if is_name_index_session and isinstance(session.data, list):
             uid_prefix_raw = getattr(session, "name_index_uid_prefix", "A")
             uid_prefix = uid_prefix_raw.strip() if isinstance(uid_prefix_raw, str) else "A"
-            id_pattern = re.compile(rf":{re.escape(uid_prefix)}:(\d+)(?::([A-Za-z0-9_]+))?$")
+            id_pattern = re.compile(
+                rf":{re.escape(uid_prefix)}:(\d+)(?::([A-Za-z0-9_]+))?$")
             values_by_entry_id: dict[int, dict[str, str]] = {}
             for segment in session.segments:
                 match = id_pattern.search(segment.uid)
@@ -174,7 +181,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 except Exception:
                     continue
                 field_name = match.group(2) or "name"
-                combined_fields_raw = getattr(segment, "name_index_combined_fields", ())
+                combined_fields_raw = getattr(
+                    segment, "name_index_combined_fields", ())
                 if (
                     isinstance(combined_fields_raw, tuple)
                     and "name" in combined_fields_raw
@@ -214,7 +222,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if token.kind == "raw":
                     rebuilt.append(token.raw_entry)
                 elif token.segment is not None:
-                    rebuilt.extend(self._build_entries_for_segment(token.segment))
+                    rebuilt.extend(
+                        self._build_entries_for_segment(token.segment))
             bundle.commands_ref[:] = rebuilt
 
     def _save_session(self, session: FileSession, refresh_current_view: bool = False) -> bool:
@@ -225,7 +234,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             self._refresh_dirty_state(session)
             if refresh_current_view and self.current_path == session.path:
                 self._render_session(session)
-            self.statusBar().showMessage(f"Saved TL state: {session.path.name}")
+            self.statusBar().showMessage(
+                f"Saved TL state: {session.path.name}")
             return True
 
         try:
@@ -234,7 +244,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             self._apply_session_to_json(session)
 
             if self.backup_check.isChecked():
-                backup_path = session.path.with_suffix(session.path.suffix + ".bak")
+                backup_path = session.path.with_suffix(
+                    session.path.suffix + ".bak")
                 if not backup_path.exists():
                     shutil.copy2(session.path, backup_path)
 
@@ -289,11 +300,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
     def _save_current_file(self) -> bool:
         if self.current_path is None:
-            QMessageBox.warning(cast(QWidget, self), "No file selected", "Select a file before saving.")
+            QMessageBox.warning(
+                cast(QWidget, self), "No file selected", "Select a file before saving.")
             return False
         session = self.sessions.get(self.current_path)
         if session is None:
-            QMessageBox.warning(cast(QWidget, self), "Not loaded", "Current file has not been loaded yet.")
+            QMessageBox.warning(cast(QWidget, self), "Not loaded",
+                                "Current file has not been loaded yet.")
             return False
         if (not self._is_translator_mode()) and (not self._session_has_source_changes(session)):
             if self._session_has_translation_changes(session):
@@ -301,7 +314,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     return False
                 self._mark_session_translation_saved(session)
                 self._refresh_dirty_state(session)
-                self.statusBar().showMessage(f"Saved TL state: {session.path.name}")
+                self.statusBar().showMessage(
+                    f"Saved TL state: {session.path.name}")
                 return True
             self.statusBar().showMessage("No unsaved changes in current file.")
             return True
@@ -327,11 +341,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             if button != QMessageBox.StandardButton.Yes:
                 return
             for segment in session.segments:
-                segment.translation_lines = list(segment.original_translation_lines)
+                segment.translation_lines = list(
+                    segment.original_translation_lines)
                 segment.translation_speaker = segment.original_translation_speaker
             self._refresh_dirty_state(session)
             self._render_session(session)
-            self.statusBar().showMessage(f"Reset TL changes in {session.path.name}.")
+            self.statusBar().showMessage(
+                f"Reset TL changes in {session.path.name}.")
             return
 
         if not self._session_has_source_changes(session):
@@ -352,7 +368,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         self._open_file(session.path, force_reload=True)
         reloaded = self.sessions.get(session.path)
         if reloaded is not None and reloaded is not before and not reloaded.dirty:
-            self.statusBar().showMessage(f"Reset {session.path.name} to on-disk state.")
+            self.statusBar().showMessage(
+                f"Reset {session.path.name} to on-disk state.")
 
     def _save_all_files(self) -> bool:
         if self._is_translator_mode():
@@ -389,11 +406,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             session = self.sessions.get(path)
             if session is None:
                 continue
-            ok = self._save_session(session, refresh_current_view=(path == self.current_path))
+            ok = self._save_session(
+                session, refresh_current_view=(path == self.current_path))
             if not ok:
                 failures.append(path.name)
 
-        tl_only_paths = [path for path in tl_dirty_paths if path not in source_dirty_paths]
+        tl_only_paths = [
+            path for path in tl_dirty_paths if path not in source_dirty_paths]
         if tl_only_paths and not failures:
             if not self._save_translation_state(tl_only_paths):
                 failures.extend(path.name for path in tl_only_paths)
@@ -423,9 +442,11 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             source_segment = source_lookup.get(export_segment.uid)
             if source_segment is None:
                 continue
-            tl_lines = self._normalize_translation_lines(source_segment.translation_lines)
+            tl_lines = self._normalize_translation_lines(
+                source_segment.translation_lines)
             has_tl = any(line.strip() for line in tl_lines)
-            export_segment.lines = tl_lines if has_tl else list(source_segment.lines or [""])
+            export_segment.lines = tl_lines if has_tl else list(
+                source_segment.lines or [""])
 
             speaker_en = source_segment.translation_speaker.strip()
             if speaker_en:
@@ -468,21 +489,25 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
     def _export_current_translation(self) -> None:
         if self.current_path is None:
-            QMessageBox.warning(cast(QWidget, self), "No file selected", "Select a file before exporting.")
+            QMessageBox.warning(
+                cast(QWidget, self), "No file selected", "Select a file before exporting.")
             return
         session = self.sessions.get(self.current_path)
         if session is None:
-            QMessageBox.warning(cast(QWidget, self), "Not loaded", "Current file has not been loaded yet.")
+            QMessageBox.warning(cast(QWidget, self), "Not loaded",
+                                "Current file has not been loaded yet.")
             return
         out_dir = self._choose_export_folder()
         if out_dir is None:
             return
         if self._export_session_to_folder(session, out_dir):
-            self.statusBar().showMessage(f"Exported TL file: {session.path.name}")
+            self.statusBar().showMessage(
+                f"Exported TL file: {session.path.name}")
 
     def _export_all_translations(self) -> None:
         if not self.sessions:
-            QMessageBox.warning(cast(QWidget, self), "No files loaded", "Load files before exporting translations.")
+            QMessageBox.warning(cast(QWidget, self), "No files loaded",
+                                "Load files before exporting translations.")
             return
         out_dir = self._choose_export_folder()
         if out_dir is None:
@@ -499,5 +524,5 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 "Failed to export:\n" + "\n".join(failed),
             )
             return
-        self.statusBar().showMessage(f"Exported TL files: {len(self.sessions)}")
-
+        self.statusBar().showMessage(
+            f"Exported TL files: {len(self.sessions)}")

@@ -78,7 +78,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         body.setWordWrap(True)
         body.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        body.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        body.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         body.setText(
             "<div style=\"padding: 4px 0;\">"
             f"<b>{html.escape(header_text)}</b><br>"
@@ -100,9 +101,11 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             is_name_index = self._is_name_index_session(session)
             name_index_label = self._name_index_label(session)
             for idx, segment in enumerate(list(session.segments), start=1):
-                original_text = "\n".join(self._segment_source_lines_for_display(segment))
+                original_text = "\n".join(
+                    self._segment_source_lines_for_display(segment))
                 translation_text = "\n".join(
-                    self._normalize_translation_lines(segment.translation_lines)
+                    self._normalize_translation_lines(
+                        segment.translation_lines)
                 )
                 entry_text = f"{name_index_label} {idx}" if is_name_index else f"Block {idx}"
                 if is_name_index:
@@ -158,7 +161,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self.audit_search_worker_future = None
             self.audit_search_worker_running_request = None
             if self.audit_search_status_label is not None:
-                self.audit_search_status_label.setText(f"Search scan failed: {exc}")
+                self.audit_search_status_label.setText(
+                    f"Search scan failed: {exc}")
             return
         self.audit_search_worker_timer.start(18)
 
@@ -182,7 +186,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
                 self._start_next_audit_search_worker()
                 return
             if self.audit_search_status_label is not None:
-                self.audit_search_status_label.setText(f"Search scan failed: {exc}")
+                self.audit_search_status_label.setText(
+                    f"Search scan failed: {exc}")
             return
 
         if self.audit_search_worker_pending_request is not None:
@@ -205,7 +210,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         ):
             return
         current_query = self.audit_search_query_edit.text().strip()
-        current_scope = str(self.audit_search_scope_combo.currentData() or "original")
+        current_scope = str(
+            self.audit_search_scope_combo.currentData() or "original")
         if current_query != query or current_scope != scope:
             return
         cache_key = (generation, scope, needle)
@@ -232,7 +238,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         self.audit_search_render_query = query
         self.audit_search_render_scope = scope
         self.audit_search_display_complete = False
-        self.audit_search_render_timer.start(self.audit_render_batch_interval_ms)
+        self.audit_search_render_timer.start(
+            self.audit_render_batch_interval_ms)
 
     def _run_audit_search(self) -> None:
         if (
@@ -317,7 +324,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self.audit_search_render_generation = self.audit_cache_generation
             self.audit_search_render_query = query
             self.audit_search_render_scope = scope
-            self.audit_search_render_timer.start(self.audit_render_batch_interval_ms)
+            self.audit_search_render_timer.start(
+                self.audit_render_batch_interval_ms)
             return
 
         request = {
@@ -371,7 +379,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
                 self.audit_search_progress_overlay,
                 f"Rendering {end}/{total}",
             )
-            self.audit_search_render_timer.start(self.audit_render_batch_interval_ms)
+            self.audit_search_render_timer.start(
+                self.audit_render_batch_interval_ms)
             return
         if self.audit_search_results_list.count() > 0:
             self.audit_search_results_list.setCurrentRow(0)
@@ -404,4 +413,3 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         if not isinstance(uid_raw, str) or not uid_raw:
             return
         self._jump_to_audit_location(path_raw, uid_raw)
-

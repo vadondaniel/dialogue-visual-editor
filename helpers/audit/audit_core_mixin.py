@@ -32,7 +32,8 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
         overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         overlay.setWordWrap(True)
         overlay.setTextFormat(Qt.TextFormat.PlainText)
-        overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        overlay.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         overlay.setStyleSheet(
             "QLabel {"
             "background-color: rgba(2, 6, 23, 140);"
@@ -130,7 +131,8 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
 
     def _stop_audit_control_mismatch_render(self) -> None:
         self.audit_control_mismatch_render_timer.stop()
-        self._hide_audit_progress_overlay(self.audit_control_mismatch_progress_overlay)
+        self._hide_audit_progress_overlay(
+            self.audit_control_mismatch_progress_overlay)
         self.audit_control_mismatch_render_records = []
         self.audit_control_mismatch_render_index = 0
         self.audit_control_mismatch_render_scanned_blocks = 0
@@ -195,4 +197,3 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
             f"Jumped to {self._relative_path(path)} ({uid_raw})."
         )
         return True
-

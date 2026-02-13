@@ -54,9 +54,15 @@ class SpeakerManagerHost(Protocol):
     def _speaker_color_for_key(self, speaker_key: str) -> str: ...
     def _speaker_translation_for_key(self, speaker_key: str) -> str: ...
     def _normalize_speaker_key(self, value: str) -> str: ...
-    def _rename_speaker_everywhere(self, old_key: str, new_key: str) -> int: ...
-    def _set_speaker_translation_everywhere(self, speaker_key: str, translated_name: str) -> int: ...
-    def _set_custom_speaker_color(self, speaker_key: str, color_hex: str) -> None: ...
+
+    def _rename_speaker_everywhere(
+        self, old_key: str, new_key: str) -> int: ...
+
+    def _set_speaker_translation_everywhere(
+        self, speaker_key: str, translated_name: str) -> int: ...
+    def _set_custom_speaker_color(
+        self, speaker_key: str, color_hex: str) -> None: ...
+
     def _clear_custom_speaker_color(self, speaker_key: str) -> None: ...
 
 
@@ -102,7 +108,8 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
         symbol_format.setFontWeight(QFont.Weight.DemiBold)
 
         variable_placeholder_format = QTextCharFormat()
-        variable_placeholder_format.setForeground(QColor(variable_placeholder_color))
+        variable_placeholder_format.setForeground(
+            QColor(variable_placeholder_color))
         variable_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
 
         name_placeholder_format = QTextCharFormat()
@@ -135,7 +142,9 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
             color_fmt = QTextCharFormat()
             color_fmt.setForeground(color)
             color_fmt.setFontWeight(QFont.Weight.DemiBold)
-            self.setFormat(match.start(), match.end() - match.start(), color_fmt)
+            self.setFormat(match.start(), match.end() -
+                           match.start(), color_fmt)
+
 
 class SpeakerManagerDialog(QDialog):
     def __init__(self, editor: QWidget):
@@ -166,7 +175,8 @@ class SpeakerManagerDialog(QDialog):
         self.auto_btn = QPushButton("Auto Color")
         self.rename_btn.clicked.connect(self._on_rename_clicked)
         self.translate_btn.clicked.connect(self._on_translate_clicked)
-        self.clear_translate_btn.clicked.connect(self._on_clear_translation_clicked)
+        self.clear_translate_btn.clicked.connect(
+            self._on_clear_translation_clicked)
         self.color_btn.clicked.connect(self._on_color_clicked)
         self.auto_btn.clicked.connect(self._on_auto_color_clicked)
         actions.addWidget(self.rename_btn)
@@ -202,7 +212,8 @@ class SpeakerManagerDialog(QDialog):
             color = QColor(color_hex)
             chip = QColor(color)
             chip.setAlpha(80 if dark_theme else 56)
-            text_color = QColor("#f8fafc" if color.lightness() < 128 else "#0f172a")
+            text_color = QColor(
+                "#f8fafc" if color.lightness() < 128 else "#0f172a")
 
             is_custom = speaker_key in self.editor.speaker_custom_colors
             speaker_en = self.editor._speaker_translation_for_key(speaker_key)
@@ -234,8 +245,10 @@ class SpeakerManagerDialog(QDialog):
     def _sync_action_buttons(self) -> None:
         selected_key = self._selected_speaker_key()
         has_selection = selected_key is not None
-        has_custom = bool(selected_key and selected_key in self.editor.speaker_custom_colors)
-        has_translation = bool(selected_key and self.editor._speaker_translation_for_key(selected_key))
+        has_custom = bool(
+            selected_key and selected_key in self.editor.speaker_custom_colors)
+        has_translation = bool(
+            selected_key and self.editor._speaker_translation_for_key(selected_key))
         self.rename_btn.setEnabled(has_selection)
         self.translate_btn.setEnabled(has_selection)
         self.clear_translate_btn.setEnabled(has_translation)
@@ -266,10 +279,12 @@ class SpeakerManagerDialog(QDialog):
         if current is None:
             return
         initial = QColor(self.editor._speaker_color_for_key(current))
-        picked = QColorDialog.getColor(initial, self, f"Pick color for '{current}'")
+        picked = QColorDialog.getColor(
+            initial, self, f"Pick color for '{current}'")
         if not picked.isValid():
             return
-        self.editor._set_custom_speaker_color(current, picked.name(QColor.NameFormat.HexRgb))
+        self.editor._set_custom_speaker_color(
+            current, picked.name(QColor.NameFormat.HexRgb))
         self._refresh_list(select_key=current)
 
     def _on_auto_color_clicked(self) -> None:
@@ -292,7 +307,8 @@ class SpeakerManagerDialog(QDialog):
         )
         if not ok:
             return
-        self.editor._set_speaker_translation_everywhere(current, translated_name)
+        self.editor._set_speaker_translation_everywhere(
+            current, translated_name)
         self._refresh_list(select_key=current)
 
     def _on_clear_translation_clicked(self) -> None:
@@ -344,9 +360,11 @@ class ItemNameDescriptionWidget(QFrame):
         edited_lines = segment.translation_lines if translator_mode else segment.lines
         if not edited_lines:
             edited_lines = [""]
-        source_lines = segment.source_lines or segment.original_lines or segment.lines or [""]
+        source_lines = segment.source_lines or segment.original_lines or segment.lines or [
+            ""]
         name_lines, desc_lines = self._split_combined_lines(edited_lines)
-        source_name_lines, source_desc_lines = self._split_combined_lines(source_lines)
+        source_name_lines, source_desc_lines = self._split_combined_lines(
+            source_lines)
         self._raw_name_lines = list(name_lines)
         self._raw_desc_lines = list(desc_lines)
         self._source_name_text = "\n".join(source_name_lines).strip()
@@ -365,7 +383,8 @@ class ItemNameDescriptionWidget(QFrame):
         top_row.addWidget(self.title_label)
         top_row.addStretch(1)
         self.reset_button = QPushButton("Reset")
-        self.reset_button.clicked.connect(lambda: self.reset_requested.emit(self.segment.uid))
+        self.reset_button.clicked.connect(
+            lambda: self.reset_requested.emit(self.segment.uid))
         top_row.addWidget(self.reset_button, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(top_row)
 
@@ -387,7 +406,8 @@ class ItemNameDescriptionWidget(QFrame):
         self.name_editor = QPlainTextEdit()
         self.name_editor.setFont(mono)
         self.name_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.name_editor.setFixedHeight(max(52, QFontMetrics(mono).lineSpacing() * 2 + 16))
+        self.name_editor.setFixedHeight(
+            max(52, QFontMetrics(mono).lineSpacing() * 2 + 16))
         self.name_editor.installEventFilter(self)
         self.name_editor.textChanged.connect(self._on_name_text_changed)
         self._name_highlighter = ControlCodeHighlighter(
@@ -400,8 +420,10 @@ class ItemNameDescriptionWidget(QFrame):
         root.addWidget(QLabel("Description"))
         self.desc_editor = QPlainTextEdit()
         self.desc_editor.setFont(mono)
-        self.desc_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        self.desc_editor.setFixedHeight(max(130, QFontMetrics(mono).lineSpacing() * 7 + 18))
+        self.desc_editor.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.desc_editor.setFixedHeight(
+            max(130, QFontMetrics(mono).lineSpacing() * 7 + 18))
         self.desc_editor.installEventFilter(self)
         self.desc_editor.textChanged.connect(self._on_desc_text_changed)
         self._desc_highlighter = ControlCodeHighlighter(
@@ -452,7 +474,8 @@ class ItemNameDescriptionWidget(QFrame):
         masked: list[str] = []
         for line in (lines or [""]):
             if self.hidden_control_colored_line_resolver is not None:
-                masked_line, _spans = self.hidden_control_colored_line_resolver(line)
+                masked_line, _spans = self.hidden_control_colored_line_resolver(
+                    line)
                 masked.append(masked_line)
             elif self.hidden_control_line_transform is not None:
                 masked.append(self.hidden_control_line_transform(line))
@@ -476,19 +499,23 @@ class ItemNameDescriptionWidget(QFrame):
 
     def _sync_single_editor_visibility(self, editor: QPlainTextEdit, force: bool = False) -> None:
         if editor is self.name_editor:
-            show_raw = (not self.hide_control_codes_when_unfocused) or self.name_editor.hasFocus()
+            show_raw = (
+                not self.hide_control_codes_when_unfocused) or self.name_editor.hasFocus()
             if (not force) and show_raw == self._showing_raw_name:
                 return
             self._showing_raw_name = show_raw
-            lines = self._raw_name_lines if show_raw else self._masked_lines_from_raw(self._raw_name_lines)
+            lines = self._raw_name_lines if show_raw else self._masked_lines_from_raw(
+                self._raw_name_lines)
             self._set_editor_lines(self.name_editor, lines, suppress_name=True)
             return
 
-        show_raw = (not self.hide_control_codes_when_unfocused) or self.desc_editor.hasFocus()
+        show_raw = (
+            not self.hide_control_codes_when_unfocused) or self.desc_editor.hasFocus()
         if (not force) and show_raw == self._showing_raw_desc:
             return
         self._showing_raw_desc = show_raw
-        lines = self._raw_desc_lines if show_raw else self._masked_lines_from_raw(self._raw_desc_lines)
+        lines = self._raw_desc_lines if show_raw else self._masked_lines_from_raw(
+            self._raw_desc_lines)
         self._set_editor_lines(self.desc_editor, lines, suppress_name=False)
 
     def _sync_control_code_visibility(self, force: bool = False) -> None:
@@ -509,10 +536,12 @@ class ItemNameDescriptionWidget(QFrame):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.name_editor or watched is self.desc_editor:
             if event.type() == QEvent.Type.FocusIn:
-                self._sync_single_editor_visibility(cast(QPlainTextEdit, watched), force=True)
+                self._sync_single_editor_visibility(
+                    cast(QPlainTextEdit, watched), force=True)
                 self.activated.emit(self.segment.uid)
             elif event.type() == QEvent.Type.FocusOut:
-                self._sync_single_editor_visibility(cast(QPlainTextEdit, watched), force=True)
+                self._sync_single_editor_visibility(
+                    cast(QPlainTextEdit, watched), force=True)
             elif event.type() == QEvent.Type.MouseButtonPress:
                 self.activated.emit(self.segment.uid)
         return super().eventFilter(watched, event)
@@ -552,7 +581,8 @@ class ItemNameDescriptionWidget(QFrame):
         self.desc_editor.setStyleSheet(style)
 
     def _refresh_meta_label(self) -> None:
-        actor_id_text = str(self._actor_id) if self._actor_id is not None else "?"
+        actor_id_text = str(
+            self._actor_id) if self._actor_id is not None else "?"
         mode_text = "EN text" if self.translator_mode else "JP text"
         self.meta_label.setText(
             f"{self.name_index_label} ID: {actor_id_text} | Fields: name + description | View: {mode_text}"
@@ -561,12 +591,15 @@ class ItemNameDescriptionWidget(QFrame):
     def _refresh_status(self) -> None:
         name_chars = sum(len(line) for line in self._raw_name_lines)
         desc_chars = sum(len(line) for line in self._raw_desc_lines)
-        self.status_label.setText(f"name: {name_chars} char(s) | description: {desc_chars} char(s)")
+        self.status_label.setText(
+            f"name: {name_chars} char(s) | description: {desc_chars} char(s)")
         current = self._merge_combined_lines()
         if self.translator_mode:
-            self.reset_button.setEnabled(current != self.segment.original_translation_lines)
+            self.reset_button.setEnabled(
+                current != self.segment.original_translation_lines)
         else:
-            self.reset_button.setEnabled(current != self.segment.original_lines)
+            self.reset_button.setEnabled(
+                current != self.segment.original_lines)
         if self.translator_mode:
             if not any(line.strip() for line in self._raw_name_lines) and self._source_name_text:
                 self.name_editor.setPlaceholderText(self._source_name_text)
@@ -589,21 +622,26 @@ class ItemNameDescriptionWidget(QFrame):
     def _on_name_text_changed(self) -> None:
         if self._suppress_name_changed or not self._showing_raw_name:
             return
-        self._raw_name_lines = split_lines_preserve_empty(self.name_editor.toPlainText())
+        self._raw_name_lines = split_lines_preserve_empty(
+            self.name_editor.toPlainText())
         if not self._raw_name_lines:
             self._raw_name_lines = [""]
         if len(self._raw_name_lines) > 1:
-            self._raw_name_lines = [" ".join(line for line in self._raw_name_lines if line)]
-        self._set_editor_lines(self.name_editor, self._raw_name_lines, suppress_name=True)
+            self._raw_name_lines = [
+                " ".join(line for line in self._raw_name_lines if line)]
+        self._set_editor_lines(
+            self.name_editor, self._raw_name_lines, suppress_name=True)
         self._commit_lines()
 
     def _on_desc_text_changed(self) -> None:
         if self._suppress_desc_changed or not self._showing_raw_desc:
             return
-        self._raw_desc_lines = split_lines_preserve_empty(self.desc_editor.toPlainText())
+        self._raw_desc_lines = split_lines_preserve_empty(
+            self.desc_editor.toPlainText())
         if not self._raw_desc_lines:
             self._raw_desc_lines = [""]
         self._commit_lines()
+
 
 class DialogueBlockWidget(QFrame):
     activated = Signal(str)
@@ -656,7 +694,8 @@ class DialogueBlockWidget(QFrame):
         self.translator_mode = translator_mode
         self.actor_mode = actor_mode
         self.name_index_kind = name_index_kind.strip().lower()
-        self.name_index_label = name_index_label.strip() if name_index_label.strip() else "Entry"
+        self.name_index_label = name_index_label.strip(
+        ) if name_index_label.strip() else "Entry"
         self.allow_structural_actions = allow_structural_actions
         self._actor_id = self._actor_id_from_uid()
         self._name_index_field = self._name_index_field_from_uid()
@@ -735,14 +774,19 @@ class DialogueBlockWidget(QFrame):
         self.wrap_button = QPushButton("Wrap")
         self.insert_button = QPushButton("Insert Below")
         self.delete_button = QPushButton("Delete")
-        self.collapse_button.setToolTip("Force-collapse lines and refill width without sentence heuristics.")
-        self.smart_collapse_button.setToolTip("Collapse with sentence/name-aware heuristics.")
+        self.collapse_button.setToolTip(
+            "Force-collapse lines and refill width without sentence heuristics.")
+        self.smart_collapse_button.setToolTip(
+            "Collapse with sentence/name-aware heuristics.")
         self.wrap_button.setToolTip("Wrap each existing line to fit width.")
         self.collapse_button.clicked.connect(self._on_collapse_clicked)
-        self.smart_collapse_button.clicked.connect(self._on_smart_collapse_clicked)
+        self.smart_collapse_button.clicked.connect(
+            self._on_smart_collapse_clicked)
         self.wrap_button.clicked.connect(self._on_wrap_clicked)
-        self.insert_button.clicked.connect(lambda: self.insert_after_requested.emit(self.segment.uid))
-        self.delete_button.clicked.connect(lambda: self.delete_requested.emit(self.segment.uid))
+        self.insert_button.clicked.connect(
+            lambda: self.insert_after_requested.emit(self.segment.uid))
+        self.delete_button.clicked.connect(
+            lambda: self.delete_requested.emit(self.segment.uid))
         top_row.addWidget(self.collapse_button)
         top_row.addWidget(self.smart_collapse_button)
         top_row.addWidget(self.wrap_button)
@@ -784,7 +828,8 @@ class DialogueBlockWidget(QFrame):
         self._raw_lines = list(edited_lines)
         self._set_editor_text_lines(self._raw_lines)
         if self.translator_mode:
-            source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [""]
+            source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
+                ""]
             self._source_hint_lines = list(source_lines)
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self._control_code_highlighter = ControlCodeHighlighter(
@@ -820,18 +865,23 @@ class DialogueBlockWidget(QFrame):
         self.status_label.setObjectName("MetaDim")
         footer_row.addWidget(self.status_label, 1)
         self.move_overflow_button = QPushButton("Move Overflow Down")
-        self.move_overflow_button.setToolTip("Create a new block below and move overflow lines into it.")
-        self.move_overflow_button.clicked.connect(self._on_move_overflow_clicked)
+        self.move_overflow_button.setToolTip(
+            "Create a new block below and move overflow lines into it.")
+        self.move_overflow_button.clicked.connect(
+            self._on_move_overflow_clicked)
         self.move_overflow_button.setVisible(False)
         if not self.allow_structural_actions:
             self.move_overflow_button.setEnabled(False)
             self.move_overflow_button.setVisible(False)
-        footer_row.addWidget(self.move_overflow_button, 0, Qt.AlignmentFlag.AlignRight)
+        footer_row.addWidget(self.move_overflow_button, 0,
+                             Qt.AlignmentFlag.AlignRight)
         self.reset_button = QPushButton("Reset")
         if self.translator_mode:
-            self.reset_button.setToolTip("Reset this translation block to its last saved translation text.")
+            self.reset_button.setToolTip(
+                "Reset this translation block to its last saved translation text.")
         else:
-            self.reset_button.setToolTip("Reset this block to its last saved text.")
+            self.reset_button.setToolTip(
+                "Reset this block to its last saved text.")
         self.reset_button.clicked.connect(self._on_reset_clicked)
         footer_row.addWidget(self.reset_button, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(footer_row)
@@ -895,14 +945,16 @@ class DialogueBlockWidget(QFrame):
 
     def _is_changed(self) -> bool:
         if self.translator_mode:
-            speaker_changed = self.segment.translation_speaker.strip() != self.segment.original_translation_speaker.strip()
+            speaker_changed = self.segment.translation_speaker.strip(
+            ) != self.segment.original_translation_speaker.strip()
             return self.segment.translation_lines != self.segment.original_translation_lines or speaker_changed
         return self.segment.inserted or self.segment.lines != self.segment.original_lines
 
     def _apply_editor_width(self) -> None:
         if self.actor_mode:
             metrics = QFontMetrics(self.editor.font())
-            self.editor.setMinimumWidth(max(420, metrics.horizontalAdvance("M") * 24))
+            self.editor.setMinimumWidth(
+                max(420, metrics.horizontalAdvance("M") * 24))
             self.editor.setMaximumWidth(16777215)
             if self.name_index_kind == "item" and self._name_index_field == "description":
                 self.editor.setFixedHeight(max(164, metrics.lineSpacing() * 8))
@@ -914,7 +966,8 @@ class DialogueBlockWidget(QFrame):
         pixel_width = metrics.horizontalAdvance("M") * (char_width + 2)
         self.editor.setMinimumWidth(pixel_width)
         self.editor.setMaximumWidth(pixel_width + 36)
-        self.editor.setFixedHeight(max(130, metrics.lineSpacing() * (self.max_lines + 2)))
+        self.editor.setFixedHeight(
+            max(130, metrics.lineSpacing() * (self.max_lines + 2)))
 
     def _refresh_block_style(self) -> None:
         tags: list[str] = []
@@ -947,7 +1000,8 @@ class DialogueBlockWidget(QFrame):
             )
             self.title_label.setText(f"{label}{title_suffix}")
         else:
-            self.title_label.setText(f"Block {self.block_number}{title_suffix}")
+            self.title_label.setText(
+                f"Block {self.block_number}{title_suffix}")
         self.setStyleSheet(
             f"""
             QFrame#DialogueBlock {{
@@ -1033,7 +1087,8 @@ class DialogueBlockWidget(QFrame):
         spans_per_line: list[list[tuple[int, int, str]]] = []
         for line in (lines or [""]):
             if self.hidden_control_colored_line_resolver is not None:
-                masked_line, spans = self.hidden_control_colored_line_resolver(line)
+                masked_line, spans = self.hidden_control_colored_line_resolver(
+                    line)
                 masked.append(masked_line)
                 spans_per_line.append(list(spans))
             elif self.hidden_control_line_transform is not None:
@@ -1069,7 +1124,8 @@ class DialogueBlockWidget(QFrame):
             self._set_editor_text_lines(self._raw_lines)
         else:
             self._displaying_masked_text = True
-            self._set_editor_text_lines(self._masked_lines_from_raw(self._raw_lines))
+            self._set_editor_text_lines(
+                self._masked_lines_from_raw(self._raw_lines))
         self._refresh_source_hint_overlay()
         self._refresh_status()
 
@@ -1089,7 +1145,8 @@ class DialogueBlockWidget(QFrame):
                     continue
                 cursor = QTextCursor(block)
                 cursor.setPosition(block.position() + start)
-                cursor.setPosition(block.position() + end, QTextCursor.MoveMode.KeepAnchor)
+                cursor.setPosition(block.position() + end,
+                                   QTextCursor.MoveMode.KeepAnchor)
                 selection = QTextEdit.ExtraSelection()
                 fmt = QTextCharFormat()
                 fmt.setForeground(color)
@@ -1188,7 +1245,8 @@ class DialogueBlockWidget(QFrame):
 
     def _refresh_meta_label(self) -> None:
         if self.actor_mode:
-            actor_id_text = str(self._actor_id) if self._actor_id is not None else "?"
+            actor_id_text = str(
+                self._actor_id) if self._actor_id is not None else "?"
             field_text = self._name_index_field
             if field_text == "name":
                 mode_text = "EN name" if self.translator_mode else "JP name"
@@ -1251,16 +1309,20 @@ class DialogueBlockWidget(QFrame):
         lines = self._current_lines()
         if self.actor_mode:
             char_count = sum(len(line) for line in lines)
-            self.status_label.setText(f"{len(lines)} line(s), {char_count} char(s)")
+            self.status_label.setText(
+                f"{len(lines)} line(s), {char_count} char(s)")
             self._has_warning = False
             self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
             self.move_overflow_button.setVisible(False)
             self.move_overflow_button.setEnabled(False)
             if self.translator_mode:
-                speaker_changed = self.segment.translation_speaker.strip() != self.segment.original_translation_speaker.strip()
-                self.reset_button.setEnabled(lines != self.segment.original_translation_lines or speaker_changed)
+                speaker_changed = self.segment.translation_speaker.strip(
+                ) != self.segment.original_translation_speaker.strip()
+                self.reset_button.setEnabled(
+                    lines != self.segment.original_translation_lines or speaker_changed)
             else:
-                self.reset_button.setEnabled(lines != self.segment.original_lines or bool(self.segment.merged_segments))
+                self.reset_button.setEnabled(
+                    lines != self.segment.original_lines or bool(self.segment.merged_segments))
             self._refresh_action_button_state(lines, self._width_chars())
             self._apply_overflow_highlighting()
             self._apply_editor_style(False)
@@ -1292,7 +1354,8 @@ class DialogueBlockWidget(QFrame):
         has_warning = bool(over_width) or max_lines_over
         self._has_warning = has_warning
         if has_warning:
-            self.status_label.setStyleSheet(f"color: {self._status_warn_color}; font-weight: 600;")
+            self.status_label.setStyleSheet(
+                f"color: {self._status_warn_color}; font-weight: 600;")
         else:
             self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
         can_move_overflow = max_lines_over and self.allow_structural_actions
@@ -1302,10 +1365,13 @@ class DialogueBlockWidget(QFrame):
             label = "Move Overflow Down" if overflow_count == 1 else f"Move {overflow_count} Lines Down"
             self.move_overflow_button.setText(label)
         if self.translator_mode:
-            speaker_changed = self.segment.translation_speaker.strip() != self.segment.original_translation_speaker.strip()
-            self.reset_button.setEnabled(lines != self.segment.original_translation_lines or speaker_changed)
+            speaker_changed = self.segment.translation_speaker.strip(
+            ) != self.segment.original_translation_speaker.strip()
+            self.reset_button.setEnabled(
+                lines != self.segment.original_translation_lines or speaker_changed)
         else:
-            self.reset_button.setEnabled(lines != self.segment.original_lines or bool(self.segment.merged_segments))
+            self.reset_button.setEnabled(
+                lines != self.segment.original_lines or bool(self.segment.merged_segments))
         self._refresh_action_button_state(lines, width_chars)
         self._apply_overflow_highlighting()
         self._apply_editor_style(has_warning)
@@ -1320,7 +1386,8 @@ class DialogueBlockWidget(QFrame):
             return
 
         can_collapse = collapse_lines_force(lines, width_chars) != lines
-        can_smart_collapse = smart_collapse_lines_space_efficient(lines, width_chars) != lines
+        can_smart_collapse = smart_collapse_lines_space_efficient(
+            lines, width_chars) != lines
         can_wrap = wrap_lines_keep_breaks(lines, width_chars) != lines
 
         self.collapse_button.setEnabled(can_collapse)
@@ -1333,7 +1400,8 @@ class DialogueBlockWidget(QFrame):
     def _set_editor_lines(self, lines: list[str]) -> None:
         final_lines = lines or [""]
         self._raw_lines = list(final_lines)
-        display_lines = self._raw_lines if self._should_show_raw_codes() else self._masked_lines_from_raw(self._raw_lines)
+        display_lines = self._raw_lines if self._should_show_raw_codes(
+        ) else self._masked_lines_from_raw(self._raw_lines)
         self._set_editor_text_lines(display_lines)
         if self.translator_mode:
             self.segment.translation_lines = list(self._raw_lines)
@@ -1344,15 +1412,18 @@ class DialogueBlockWidget(QFrame):
         self.text_changed.emit(self.segment.uid, list(self._raw_lines))
 
     def _on_collapse_clicked(self) -> None:
-        collapsed = collapse_lines_force(self._current_lines(), self._width_chars())
+        collapsed = collapse_lines_force(
+            self._current_lines(), self._width_chars())
         self._set_editor_lines(collapsed)
 
     def _on_smart_collapse_clicked(self) -> None:
-        collapsed = smart_collapse_lines_space_efficient(self._current_lines(), self._width_chars())
+        collapsed = smart_collapse_lines_space_efficient(
+            self._current_lines(), self._width_chars())
         self._set_editor_lines(collapsed)
 
     def _on_wrap_clicked(self) -> None:
-        wrapped = wrap_lines_keep_breaks(self._current_lines(), self._width_chars())
+        wrapped = wrap_lines_keep_breaks(
+            self._current_lines(), self._width_chars())
         self._set_editor_lines(wrapped)
 
     def _on_reset_clicked(self) -> None:
@@ -1375,5 +1446,3 @@ class DialogueBlockWidget(QFrame):
         self._refresh_meta_label()
         self._refresh_status()
         self.text_changed.emit(self.segment.uid, lines)
-
-

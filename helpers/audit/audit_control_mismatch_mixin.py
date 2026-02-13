@@ -82,7 +82,8 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
                 return
             escaped = html.escape(chunk).replace("\n", "<br/>")
             if active_color:
-                parts.append(f"<span style=\"color: {active_color};\">{escaped}</span>")
+                parts.append(
+                    f"<span style=\"color: {active_color};\">{escaped}</span>")
             else:
                 parts.append(escaped)
 
@@ -134,10 +135,14 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             source_tokens,
             tl_tokens,
         )
-        missing_text = html.escape(self._counter_summary_text(missing_in_tl, limit=14))
-        extra_text = html.escape(self._counter_summary_text(extra_in_tl, limit=14))
-        source_html = self._render_control_mismatch_side_html(source_text, source_highlight_indices)
-        tl_html = self._render_control_mismatch_side_html(tl_text, tl_highlight_indices)
+        missing_text = html.escape(
+            self._counter_summary_text(missing_in_tl, limit=14))
+        extra_text = html.escape(
+            self._counter_summary_text(extra_in_tl, limit=14))
+        source_html = self._render_control_mismatch_side_html(
+            source_text, source_highlight_indices)
+        tl_html = self._render_control_mismatch_side_html(
+            tl_text, tl_highlight_indices)
         return (
             "<div style=\"max-width: 980px;\">"
             "<b>Control Mismatch Preview</b><br/>"
@@ -200,7 +205,8 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
         body.setWordWrap(True)
         body.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        body.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        body.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         body.setToolTip(tooltip_html)
         missing_text = self._counter_summary_text(missing_in_tl)
         extra_text = self._counter_summary_text(extra_in_tl)
@@ -284,7 +290,8 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             self.audit_control_mismatch_render_scanned_blocks = scanned_blocks
             self.audit_control_mismatch_render_only_translated = only_translated
             self.audit_control_mismatch_render_generation = self.audit_cache_generation
-            self.audit_control_mismatch_render_timer.start(self.audit_render_batch_interval_ms)
+            self.audit_control_mismatch_render_timer.start(
+                self.audit_render_batch_interval_ms)
             return
 
         request = {
@@ -307,12 +314,14 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
         for path, session in path_sessions:
             for idx, segment in enumerate(list(session.segments), start=1):
                 source_lines = self._segment_source_lines_for_display(segment)
-                tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                tl_lines = self._normalize_translation_lines(
+                    segment.translation_lines)
                 if only_translated and not any(line.strip() for line in tl_lines):
                     continue
                 scanned_blocks += 1
 
-                source_tokens = self._extract_control_tokens("\n".join(source_lines))
+                source_tokens = self._extract_control_tokens(
+                    "\n".join(source_lines))
                 tl_tokens = self._extract_control_tokens("\n".join(tl_lines))
                 source_counter = Counter(source_tokens)
                 tl_counter = Counter(tl_tokens)
@@ -442,7 +451,8 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
         self.audit_control_mismatch_render_only_translated = only_translated
         self.audit_control_mismatch_render_generation = generation
         self.audit_control_mismatch_display_complete = False
-        self.audit_control_mismatch_render_timer.start(self.audit_render_batch_interval_ms)
+        self.audit_control_mismatch_render_timer.start(
+            self.audit_render_batch_interval_ms)
 
     def _render_next_audit_control_mismatch_batch(self) -> None:
         if (
@@ -475,7 +485,8 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
                     tl_token_count=int(record["tl_token_count"]),
                 )
         finally:
-            self.audit_control_mismatch_results_list.setUpdatesEnabled(prev_updates)
+            self.audit_control_mismatch_results_list.setUpdatesEnabled(
+                prev_updates)
         self.audit_control_mismatch_render_index = end
         scanned_blocks = self.audit_control_mismatch_render_scanned_blocks
         if end < total:
@@ -484,7 +495,8 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
                 self.audit_control_mismatch_progress_overlay,
                 f"Rendering {end}/{total}",
             )
-            self.audit_control_mismatch_render_timer.start(self.audit_render_batch_interval_ms)
+            self.audit_control_mismatch_render_timer.start(
+                self.audit_render_batch_interval_ms)
             return
         if self.audit_control_mismatch_results_list.count() > 0:
             self.audit_control_mismatch_results_list.setCurrentRow(0)
@@ -515,4 +527,3 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
         if not isinstance(uid_raw, str) or not uid_raw:
             return
         self._jump_to_audit_location(path_raw, uid_raw)
-

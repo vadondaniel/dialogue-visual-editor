@@ -41,7 +41,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
                 self.audit_search_scope_combo.setCurrentIndex(scope_index)
         if self.audit_sanitize_scope_combo is not None:
             default_scope = self._default_audit_search_scope()
-            scope_index = self.audit_sanitize_scope_combo.findData(default_scope)
+            scope_index = self.audit_sanitize_scope_combo.findData(
+                default_scope)
             if scope_index >= 0:
                 self.audit_sanitize_scope_combo.setCurrentIndex(scope_index)
             self._refresh_audit_sanitize_panel()
@@ -128,7 +129,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         sanitize_rules_layout.setSpacing(6)
         sanitize_rules_layout.addWidget(QLabel("Character Rules"))
         sanitize_rules_list = QListWidget()
-        sanitize_rules_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        sanitize_rules_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
         sanitize_rules_layout.addWidget(sanitize_rules_list, 1)
         sanitize_splitter.addWidget(sanitize_rules_panel)
 
@@ -136,9 +138,11 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         sanitize_occ_layout = QVBoxLayout(sanitize_occ_panel)
         sanitize_occ_layout.setContentsMargins(0, 0, 0, 0)
         sanitize_occ_layout.setSpacing(6)
-        sanitize_occ_layout.addWidget(QLabel("Potential Replacements (selected rule)"))
+        sanitize_occ_layout.addWidget(
+            QLabel("Potential Replacements (selected rule)"))
         sanitize_occurrences_list = QListWidget()
-        sanitize_occurrences_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        sanitize_occurrences_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
         sanitize_occ_layout.addWidget(sanitize_occurrences_list, 1)
         sanitize_occ_footer = QHBoxLayout()
         sanitize_occ_footer.setContentsMargins(0, 0, 0, 0)
@@ -177,7 +181,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         control_footer = QHBoxLayout()
         control_footer.setContentsMargins(0, 0, 0, 0)
         control_footer.setSpacing(6)
-        control_status_label = QLabel("Press Refresh to scan control-code mismatches.")
+        control_status_label = QLabel(
+            "Press Refresh to scan control-code mismatches.")
         control_footer.addWidget(control_status_label, 1)
         control_goto_btn = QPushButton("Go To")
         control_goto_btn.setEnabled(False)
@@ -186,11 +191,13 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
 
         tabs.addTab(control_tab, "Control Mismatch")
 
-        search_progress_overlay = self._create_audit_progress_overlay(results_list)
+        search_progress_overlay = self._create_audit_progress_overlay(
+            results_list)
         sanitize_progress_overlay = self._create_audit_progress_overlay(
             sanitize_occurrences_list
         )
-        control_progress_overlay = self._create_audit_progress_overlay(control_results_list)
+        control_progress_overlay = self._create_audit_progress_overlay(
+            control_results_list)
 
         self.audit_window = dialog
         self.audit_search_query_edit = query_edit
@@ -237,14 +244,16 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         scope_index = scope_combo.findData(self._default_audit_search_scope())
         if scope_index >= 0:
             scope_combo.setCurrentIndex(scope_index)
-        sanitize_scope_index = sanitize_scope_combo.findData(self._default_audit_search_scope())
+        sanitize_scope_index = sanitize_scope_combo.findData(
+            self._default_audit_search_scope())
         if sanitize_scope_index >= 0:
             sanitize_scope_combo.setCurrentIndex(sanitize_scope_index)
         if sanitize_rules_list.count() > 0:
             sanitize_rules_list.setCurrentRow(0)
 
         query_edit.returnPressed.connect(self._run_audit_search)
-        query_edit.textChanged.connect(lambda _text: self._schedule_audit_search())
+        query_edit.textChanged.connect(
+            lambda _text: self._schedule_audit_search())
         scope_combo.currentIndexChanged.connect(
             lambda _index: self._schedule_audit_search()
         )
@@ -268,7 +277,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             self._on_audit_sanitize_rules_context_menu
         )
         sanitize_occurrences_list.currentItemChanged.connect(
-            lambda current, _previous: sanitize_goto_btn.setEnabled(current is not None)
+            lambda current, _previous: sanitize_goto_btn.setEnabled(
+                current is not None)
         )
         sanitize_occurrences_list.customContextMenuRequested.connect(
             self._on_audit_sanitize_occurrences_context_menu
@@ -279,14 +289,18 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         sanitize_occurrences_list.itemActivated.connect(
             lambda _item: self._go_to_selected_audit_sanitize_occurrence()
         )
-        sanitize_goto_btn.clicked.connect(self._go_to_selected_audit_sanitize_occurrence)
-        apply_selected_btn.clicked.connect(self._apply_selected_audit_sanitize_rule)
+        sanitize_goto_btn.clicked.connect(
+            self._go_to_selected_audit_sanitize_occurrence)
+        apply_selected_btn.clicked.connect(
+            self._apply_selected_audit_sanitize_rule)
         control_only_translated_check.toggled.connect(
             lambda _checked: self._refresh_audit_control_mismatch_panel()
         )
-        control_refresh_btn.clicked.connect(self._refresh_audit_control_mismatch_panel)
+        control_refresh_btn.clicked.connect(
+            self._refresh_audit_control_mismatch_panel)
         control_results_list.currentItemChanged.connect(
-            lambda current, _previous: control_goto_btn.setEnabled(current is not None)
+            lambda current, _previous: control_goto_btn.setEnabled(
+                current is not None)
         )
         control_results_list.itemDoubleClicked.connect(
             lambda _item: self._go_to_selected_audit_control_mismatch()
@@ -294,7 +308,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         control_results_list.itemActivated.connect(
             lambda _item: self._go_to_selected_audit_control_mismatch()
         )
-        control_goto_btn.clicked.connect(self._go_to_selected_audit_control_mismatch)
+        control_goto_btn.clicked.connect(
+            self._go_to_selected_audit_control_mismatch)
         tabs.currentChanged.connect(self._on_audit_tab_changed)
 
         self._refresh_audit_sanitize_panel()
@@ -303,5 +318,6 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
     def _on_audit_tab_changed(self, _index: int) -> None:
         self._hide_audit_progress_overlay(self.audit_search_progress_overlay)
         self._hide_audit_progress_overlay(self.audit_sanitize_progress_overlay)
-        self._hide_audit_progress_overlay(self.audit_control_mismatch_progress_overlay)
+        self._hide_audit_progress_overlay(
+            self.audit_control_mismatch_progress_overlay)
         self._refresh_audit_sanitize_panel()

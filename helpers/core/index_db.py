@@ -72,7 +72,8 @@ class DialogueIndexDB:
                 """,
                 (file_path, modified_ts, now_utc_iso(), len(segments)),
             )
-            self.conn.execute("DELETE FROM block_index WHERE file_path = ?", (file_path,))
+            self.conn.execute(
+                "DELETE FROM block_index WHERE file_path = ?", (file_path,))
             rows = []
             for idx, seg in enumerate(segments):
                 preview = seg.text_joined().replace("\n", " / ")
@@ -112,7 +113,8 @@ class DialogueIndexDB:
                 INSERT INTO change_log(file_path, block_uid, changed_at, old_text, new_text)
                 VALUES(?, ?, ?, ?, ?)
                 """,
-                [(file_path, uid, ts, old_text, new_text) for uid, old_text, new_text in changes],
+                [(file_path, uid, ts, old_text, new_text)
+                 for uid, old_text, new_text in changes],
             )
 
     def close(self) -> None:

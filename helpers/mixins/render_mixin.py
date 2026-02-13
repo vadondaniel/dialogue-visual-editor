@@ -104,7 +104,8 @@ class RenderMixin(_RenderHostTypingFallback):
         layout_obj = self.scroll_container.layout()
         if isinstance(layout_obj, QVBoxLayout):
             self.blocks_layout = layout_obj
-        self.block_widgets = cast(dict[str, BlockWidgetType], cached_block_widgets)
+        self.block_widgets = cast(
+            dict[str, BlockWidgetType], cached_block_widgets)
         self.rendered_blocks_path = session.path
         self.rendered_block_uid_order = target_uid_order
         self.rendered_block_view_meta = view_meta
@@ -126,7 +127,8 @@ class RenderMixin(_RenderHostTypingFallback):
             QTimer.singleShot(0, restore_scroll_and_focus_cached_container)
             return True
         if start_at_top and target_widget is None:
-            QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
+            QTimer.singleShot(
+                0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
             return True
         if target_widget is not None:
             def focus_and_reveal_cached_container() -> None:
@@ -192,7 +194,8 @@ class RenderMixin(_RenderHostTypingFallback):
         return source_dirty, tl_dirty
 
     def _is_name_desc_combined_segment(self, actor_mode: bool, segment: DialogueSegment) -> bool:
-        combined_fields_raw = getattr(segment, "name_index_combined_fields", ())
+        combined_fields_raw = getattr(
+            segment, "name_index_combined_fields", ())
         return (
             actor_mode
             and isinstance(combined_fields_raw, tuple)
@@ -206,7 +209,8 @@ class RenderMixin(_RenderHostTypingFallback):
         widget.insert_after_requested.connect(self._on_insert_after_requested)
         widget.delete_requested.connect(self._on_delete_requested)
         widget.reset_requested.connect(self._on_reset_requested)
-        widget.split_overflow_requested.connect(self._on_split_overflow_requested)
+        widget.split_overflow_requested.connect(
+            self._on_split_overflow_requested)
 
     def _create_block_widget(
         self,
@@ -248,7 +252,8 @@ class RenderMixin(_RenderHostTypingFallback):
                 actor_mode=actor_mode,
                 name_index_kind=name_index_kind,
                 name_index_label=name_index_label,
-                allow_structural_actions=(not translator_mode) and (not actor_mode),
+                allow_structural_actions=(
+                    not translator_mode) and (not actor_mode),
             )
         self._bind_block_widget_signals(widget)
         return widget
@@ -264,7 +269,8 @@ class RenderMixin(_RenderHostTypingFallback):
         name_index_label: str,
     ) -> bool:
         clean_label = name_index_label.strip() or "Entry"
-        expected_is_name_desc = self._is_name_desc_combined_segment(actor_mode, segment)
+        expected_is_name_desc = self._is_name_desc_combined_segment(
+            actor_mode, segment)
         if expected_is_name_desc:
             if not isinstance(widget, ItemNameDescriptionWidget):
                 return False
@@ -301,15 +307,19 @@ class RenderMixin(_RenderHostTypingFallback):
         edited_lines = segment.translation_lines if widget.translator_mode else segment.lines
         if not edited_lines:
             edited_lines = [""]
-        source_lines = segment.source_lines or segment.original_lines or segment.lines or [""]
-        name_lines, desc_lines = widget._split_combined_lines(list(edited_lines))
-        source_name_lines, source_desc_lines = widget._split_combined_lines(list(source_lines))
+        source_lines = segment.source_lines or segment.original_lines or segment.lines or [
+            ""]
+        name_lines, desc_lines = widget._split_combined_lines(
+            list(edited_lines))
+        source_name_lines, source_desc_lines = widget._split_combined_lines(
+            list(source_lines))
         widget._raw_name_lines = list(name_lines)
         widget._raw_desc_lines = list(desc_lines)
         widget._source_name_text = "\n".join(source_name_lines).strip()
         widget._source_desc_text = "\n".join(source_desc_lines).strip()
         widget.context_label.setText(segment.context)
-        widget.set_hide_control_codes_when_unfocused(self.hide_control_codes_check.isChecked())
+        widget.set_hide_control_codes_when_unfocused(
+            self.hide_control_codes_check.isChecked())
         widget._sync_control_code_visibility(force=True)
         widget._refresh_meta_label()
         widget._refresh_status()
@@ -335,11 +345,13 @@ class RenderMixin(_RenderHostTypingFallback):
             edited_lines = [""]
         widget._raw_lines = list(edited_lines)
         if widget.translator_mode:
-            source_lines = segment.source_lines or segment.original_lines or segment.lines or [""]
+            source_lines = segment.source_lines or segment.original_lines or segment.lines or [
+                ""]
             widget._source_hint_lines = list(source_lines)
         widget.context_label.setText(segment.context)
         widget._apply_editor_width()
-        widget.set_hide_control_codes_when_unfocused(self.hide_control_codes_check.isChecked())
+        widget.set_hide_control_codes_when_unfocused(
+            self.hide_control_codes_check.isChecked())
         widget._sync_control_code_visibility(force=True)
         widget.refresh_metadata()
 
@@ -470,11 +482,14 @@ class RenderMixin(_RenderHostTypingFallback):
                 cast(Qt.ScrollBarPolicy, state["previous_v_scroll_policy"])
             )
             self.scroll_area.setHorizontalScrollBarPolicy(
-                cast(Qt.ScrollBarPolicy, state.get("previous_h_scroll_policy", self._default_h_scroll_policy))
+                cast(Qt.ScrollBarPolicy, state.get(
+                    "previous_h_scroll_policy", self._default_h_scroll_policy))
             )
         else:
-            self.scroll_area.setVerticalScrollBarPolicy(self._default_v_scroll_policy)
-            self.scroll_area.setHorizontalScrollBarPolicy(self._default_h_scroll_policy)
+            self.scroll_area.setVerticalScrollBarPolicy(
+                self._default_v_scroll_policy)
+            self.scroll_area.setHorizontalScrollBarPolicy(
+                self._default_h_scroll_policy)
         if state is not None:
             reuse_pool_raw = state.get("reuse_pool")
             if isinstance(reuse_pool_raw, dict):
@@ -513,7 +528,8 @@ class RenderMixin(_RenderHostTypingFallback):
 
     def _new_height_placeholder(self, height: int) -> QWidget:
         placeholder = QWidget()
-        placeholder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        placeholder.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         placeholder.setMinimumHeight(height)
         placeholder.setMaximumHeight(height)
         return placeholder
@@ -543,8 +559,10 @@ class RenderMixin(_RenderHostTypingFallback):
         name_index_label = cast(str, state.get("name_index_label", "Entry"))
         merge_pairs = cast(set[tuple[str, str]], state["merge_pairs"])
         block_placeholders = cast(list[QWidget], state["block_placeholders"])
-        connector_placeholders = cast(dict[int, QWidget], state["connector_placeholders"])
-        reuse_pool = cast(dict[str, BlockWidgetType], state.get("reuse_pool", {}))
+        connector_placeholders = cast(
+            dict[int, QWidget], state["connector_placeholders"])
+        reuse_pool = cast(dict[str, BlockWidgetType],
+                          state.get("reuse_pool", {}))
         focus_uid = cast(Optional[str], state["focus_uid"])
 
         for idx in range(start_idx, end_idx):
@@ -579,7 +597,8 @@ class RenderMixin(_RenderHostTypingFallback):
                     name_index_kind=name_index_kind,
                     name_index_label=name_index_label,
                 )
-            placeholder = block_placeholders[idx] if idx < len(block_placeholders) else None
+            placeholder = block_placeholders[idx] if idx < len(
+                block_placeholders) else None
             placeholder_index = (
                 self.blocks_layout.indexOf(placeholder)
                 if placeholder is not None
@@ -619,7 +638,8 @@ class RenderMixin(_RenderHostTypingFallback):
                         segment,
                         next_segment,
                     )
-                    self.blocks_layout.insertWidget(insert_index, connector_widget)
+                    self.blocks_layout.insertWidget(
+                        insert_index, connector_widget)
                     if connector_placeholder is not None:
                         self.blocks_layout.removeWidget(connector_placeholder)
                         connector_placeholder.deleteLater()
@@ -635,9 +655,11 @@ class RenderMixin(_RenderHostTypingFallback):
             return
 
         preserve_scroll = bool(state["preserve_scroll"])
-        previous_scroll_value = cast(Optional[int], state["previous_scroll_value"])
+        previous_scroll_value = cast(
+            Optional[int], state["previous_scroll_value"])
         start_at_top = bool(state.get("start_at_top", False))
-        target_widget = cast(Optional[BlockWidgetType], state.get("target_widget"))
+        target_widget = cast(
+            Optional[BlockWidgetType], state.get("target_widget"))
         self.rendered_blocks_path = session_path
         self.rendered_block_uid_order = [segment.uid for segment in segments]
         self.rendered_block_view_meta = cast(
@@ -657,7 +679,8 @@ class RenderMixin(_RenderHostTypingFallback):
             return
 
         if start_at_top and target_widget is None:
-            QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
+            QTimer.singleShot(
+                0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
             return
 
         if target_widget is not None:
@@ -692,9 +715,11 @@ class RenderMixin(_RenderHostTypingFallback):
             name_index_label=name_index_label,
         )
         if translator_mode:
-            cached_reference_map = self.reference_summary_cache_by_path.get(session.path)
+            cached_reference_map = self.reference_summary_cache_by_path.get(
+                session.path)
             if cached_reference_map is None:
-                cached_reference_map = self._build_reference_summary_for_session(session)
+                cached_reference_map = self._build_reference_summary_for_session(
+                    session)
                 self.reference_summary_cache_by_path[session.path] = cached_reference_map
             self.current_reference_map = cached_reference_map
         else:
@@ -735,7 +760,8 @@ class RenderMixin(_RenderHostTypingFallback):
             self._switch_to_new_active_blocks_container()
 
         if not session.segments:
-            self._hide_audit_progress_overlay(self.main_render_progress_overlay)
+            self._hide_audit_progress_overlay(
+                self.main_render_progress_overlay)
             self._clear_blocks()
             self.block_widgets = {}
             self.rendered_blocks_path = None
@@ -747,7 +773,8 @@ class RenderMixin(_RenderHostTypingFallback):
                     f"No {name_index_label.lower()} entries found in this file."
                 )
             else:
-                label = QLabel("No code 101 dialogue blocks found in this file.")
+                label = QLabel(
+                    "No code 101 dialogue blocks found in this file.")
             self.blocks_layout.addWidget(label)
             self.blocks_layout.addStretch(1)
             self.scroll_area.setEnabled(True)
@@ -772,9 +799,11 @@ class RenderMixin(_RenderHostTypingFallback):
                     name_index_label=name_index_label,
                 )
             self.rendered_blocks_path = session.path
-            self.rendered_block_uid_order = [segment.uid for segment in session.segments]
+            self.rendered_block_uid_order = [
+                segment.uid for segment in session.segments]
             self.rendered_block_view_meta = view_meta
-            self._hide_audit_progress_overlay(self.main_render_progress_overlay)
+            self._hide_audit_progress_overlay(
+                self.main_render_progress_overlay)
             self._refresh_translator_detail_panel()
             target_widget = (
                 self.block_widgets.get(focus_uid)
@@ -790,7 +819,8 @@ class RenderMixin(_RenderHostTypingFallback):
                 QTimer.singleShot(0, restore_scroll_and_focus_reused)
                 return
             if start_at_top and target_widget is None:
-                QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
+                QTimer.singleShot(
+                    0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
                 return
             if target_widget is not None:
                 def focus_and_reveal_reused() -> None:
@@ -813,16 +843,20 @@ class RenderMixin(_RenderHostTypingFallback):
             and self.block_widgets
         ):
             current_cache_path = self.rendered_blocks_path
-            self.cached_block_widgets_by_path[current_cache_path] = dict(self.block_widgets)
+            self.cached_block_widgets_by_path[current_cache_path] = dict(
+                self.block_widgets)
             self.cached_block_uid_order_by_path[current_cache_path] = list(
                 self.rendered_block_uid_order
             )
             if self.rendered_block_view_meta is not None:
                 self.cached_block_view_meta_by_path[current_cache_path] = self.rendered_block_view_meta
-            current_cache_widgets = set(cast(list[QWidget], list(self.block_widgets.values())))
+            current_cache_widgets = set(
+                cast(list[QWidget], list(self.block_widgets.values())))
 
-        cached_pool_raw = self.cached_block_widgets_by_path.pop(session.path, None)
-        cached_uid_order = self.cached_block_uid_order_by_path.pop(session.path, [])
+        cached_pool_raw = self.cached_block_widgets_by_path.pop(
+            session.path, None)
+        cached_uid_order = self.cached_block_uid_order_by_path.pop(
+            session.path, [])
         cached_meta = self.cached_block_view_meta_by_path.pop(session.path, ())
         cached_pool: dict[str, BlockWidgetType] = (
             dict(cached_pool_raw) if isinstance(cached_pool_raw, dict) else {}
@@ -836,7 +870,8 @@ class RenderMixin(_RenderHostTypingFallback):
             view_meta,
         ):
             preserve_widgets: set[QWidget] = set(current_cache_widgets)
-            preserve_widgets.update(cast(list[QWidget], list(cached_pool.values())))
+            preserve_widgets.update(
+                cast(list[QWidget], list(cached_pool.values())))
             self.rendered_blocks_path = None
             self.rendered_block_uid_order = []
             self._clear_blocks(
@@ -851,10 +886,12 @@ class RenderMixin(_RenderHostTypingFallback):
                 merge_pairs=merge_pairs,
             )
             self.rendered_blocks_path = session.path
-            self.rendered_block_uid_order = [segment.uid for segment in session.segments]
+            self.rendered_block_uid_order = [
+                segment.uid for segment in session.segments]
             self.rendered_block_view_meta = view_meta
             self.scroll_area.setEnabled(True)
-            self._hide_audit_progress_overlay(self.main_render_progress_overlay)
+            self._hide_audit_progress_overlay(
+                self.main_render_progress_overlay)
             self._refresh_translator_detail_panel()
             target_widget = (
                 self.block_widgets.get(focus_uid)
@@ -870,7 +907,8 @@ class RenderMixin(_RenderHostTypingFallback):
                 QTimer.singleShot(0, restore_scroll_and_focus_cached)
                 return
             if start_at_top and target_widget is None:
-                QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
+                QTimer.singleShot(
+                    0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
                 return
             if target_widget is not None:
                 def focus_and_reveal_cached() -> None:
@@ -889,7 +927,8 @@ class RenderMixin(_RenderHostTypingFallback):
         self.rendered_block_uid_order = []
         preserve_widget_set: set[QWidget] = set(current_cache_widgets)
         if reuse_pool:
-            preserve_widget_set.update(cast(list[QWidget], list(reuse_pool.values())))
+            preserve_widget_set.update(
+                cast(list[QWidget], list(reuse_pool.values())))
         self._clear_blocks(
             preserve_widgets=preserve_widget_set if preserve_widget_set else None
         )
@@ -904,7 +943,8 @@ class RenderMixin(_RenderHostTypingFallback):
         connector_placeholders: dict[int, QWidget] = {}
         for idx, segment in enumerate(session.segments):
             _ = segment
-            block_placeholder = self._new_height_placeholder(block_placeholder_height)
+            block_placeholder = self._new_height_placeholder(
+                block_placeholder_height)
             self.blocks_layout.addWidget(block_placeholder)
             block_placeholders.append(block_placeholder)
             if idx < segment_count - 1:
@@ -918,8 +958,10 @@ class RenderMixin(_RenderHostTypingFallback):
 
         previous_v_scroll_policy = self.scroll_area.verticalScrollBarPolicy()
         previous_h_scroll_policy = self.scroll_area.horizontalScrollBarPolicy()
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.blocks_layout.addStretch(1)
         self.scroll_area.setEnabled(False)
         self._pending_render_state = {
@@ -951,6 +993,3 @@ class RenderMixin(_RenderHostTypingFallback):
             f"Rendering 0/{segment_count}",
         )
         self._render_blocks_timer.start(0)
-
-
-

@@ -21,7 +21,8 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
         selected_find_text: str,
         ignored_entries_by_rule: dict[str, set[tuple[str, str]]],
     ) -> dict[str, Any]:
-        counts = {rule_id: 0 for rule_id, _label, _find, _replace in SANITIZE_CHAR_RULES}
+        counts = {rule_id: 0 for rule_id, _label,
+                  _find, _replace in SANITIZE_CHAR_RULES}
         records: list[dict[str, Any]] = []
         total_hits = 0
         entries = 0
@@ -29,7 +30,8 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
 
         for path, session in path_sessions:
             for idx, segment in enumerate(list(session.segments), start=1):
-                entry_text = self._audit_entry_text_for_segment(session, segment, idx)
+                entry_text = self._audit_entry_text_for_segment(
+                    session, segment, idx)
                 occurrences: list[dict[str, Any]] = []
                 ignored_for_rule = (str(path), segment.uid) in selected_ignored
                 if scope in ("original", "both"):
@@ -53,7 +55,8 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
                                 total_hits += selected_hit_count
                                 entries += 1
                 if scope in ("translation", "both"):
-                    tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                    tl_lines = self._normalize_translation_lines(
+                        segment.translation_lines)
                     for line_index, line in enumerate(tl_lines, start=1):
                         for rule_id, _label, find_text, _replace in SANITIZE_CHAR_RULES:
                             hit_count = line.count(find_text)
@@ -104,7 +107,8 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
 
         for path, session in path_sessions:
             for idx, segment in enumerate(list(session.segments), start=1):
-                entry_text = self._audit_entry_text_for_segment(session, segment, idx)
+                entry_text = self._audit_entry_text_for_segment(
+                    session, segment, idx)
                 occurrences: list[dict[str, Any]] = []
                 ignored_for_rule = (str(path), segment.uid) in selected_ignored
                 if scope in ("original", "both"):
@@ -124,7 +128,8 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
                         total_hits += selected_hit_count
                         entries += 1
                 if scope in ("translation", "both"):
-                    tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                    tl_lines = self._normalize_translation_lines(
+                        segment.translation_lines)
                     for line_index, line in enumerate(tl_lines, start=1):
                         selected_hit_count = line.count(selected_find_text)
                         if selected_hit_count <= 0:
@@ -177,7 +182,8 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
             if mode == "occurrences":
                 self.audit_sanitize_worker_future = self.audit_worker_executor.submit(
                     self._compute_audit_sanitize_occurrences_worker,
-                    cast(list[tuple[Path, FileSession]], request["path_sessions"]),
+                    cast(list[tuple[Path, FileSession]],
+                         request["path_sessions"]),
                     str(request["scope"]),
                     str(request["selected_find_text"]),
                     cast(set[tuple[str, str]], request["selected_ignored"]),
@@ -185,17 +191,20 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
             else:
                 self.audit_sanitize_worker_future = self.audit_worker_executor.submit(
                     self._compute_audit_sanitize_payload_worker,
-                    cast(list[tuple[Path, FileSession]], request["path_sessions"]),
+                    cast(list[tuple[Path, FileSession]],
+                         request["path_sessions"]),
                     str(request["scope"]),
                     str(request["selected_rule_id"]),
                     str(request["selected_find_text"]),
-                    cast(dict[str, set[tuple[str, str]]], request["ignored_entries_by_rule"]),
+                    cast(dict[str, set[tuple[str, str]]],
+                         request["ignored_entries_by_rule"]),
                 )
         except Exception as exc:
             self.audit_sanitize_worker_future = None
             self.audit_sanitize_worker_running_request = None
             if self.audit_sanitize_summary_label is not None:
-                self.audit_sanitize_summary_label.setText(f"Sanitize scan failed: {exc}")
+                self.audit_sanitize_summary_label.setText(
+                    f"Sanitize scan failed: {exc}")
             return
         self.audit_sanitize_worker_timer.start(18)
 
@@ -219,7 +228,8 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
                 self._start_next_audit_sanitize_worker()
                 return
             if self.audit_sanitize_summary_label is not None:
-                self.audit_sanitize_summary_label.setText(f"Sanitize scan failed: {exc}")
+                self.audit_sanitize_summary_label.setText(
+                    f"Sanitize scan failed: {exc}")
             return
 
         if self.audit_sanitize_worker_pending_request is not None:
@@ -254,7 +264,8 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
         if mode == "occurrences":
             counts_payload = dict(self.audit_sanitize_counts_cache)
             if self.audit_sanitize_counts_cache_key != (generation, scope):
-                counts_payload = {rule_id: 0 for rule_id, _label, _find, _replace in SANITIZE_CHAR_RULES}
+                counts_payload = {rule_id: 0 for rule_id,
+                                  _label, _find, _replace in SANITIZE_CHAR_RULES}
             merged_payload: dict[str, Any] = {"counts": counts_payload}
             merged_payload.update(payload)
             payload = merged_payload
@@ -265,4 +276,3 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
             selected_find_text=selected_find_text,
             payload=payload,
         )
-

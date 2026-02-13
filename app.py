@@ -101,6 +101,7 @@ DB_FILENAME = ".dialogue_editor_index.sqlite3"
 TRANSLATION_STATE_FILENAME = ".dialogue_translation_state.json"
 UI_STATE_FILENAME = ".dialogue_visual_editor_ui_state.json"
 
+
 class DialogueVisualEditor(
     AuditMixin,
     RenderMixin,
@@ -123,12 +124,14 @@ class DialogueVisualEditor(
         self.current_path: Optional[Path] = None
         self.current_segment_lookup: dict[str, DialogueSegment] = {}
         self.block_widgets: dict[str, BlockWidgetType] = {}
-        self.cached_block_widgets_by_path: dict[Path, dict[str, BlockWidgetType]] = {}
+        self.cached_block_widgets_by_path: dict[Path,
+                                                dict[str, BlockWidgetType]] = {}
         self.cached_block_uid_order_by_path: dict[Path, list[str]] = {}
         self.cached_block_view_meta_by_path: dict[Path, tuple[Any, ...]] = {}
         self.cached_block_containers_by_path: dict[Path, dict[str, Any]] = {}
         self.rendered_block_view_meta: Optional[tuple[Any, ...]] = None
-        self.reference_summary_cache_by_path: dict[Path, dict[str, tuple[str, str]]] = {}
+        self.reference_summary_cache_by_path: dict[Path, dict[str, tuple[str, str]]] = {
+        }
         self.main_render_progress_overlay: Optional[QLabel] = None
         self.rendered_blocks_path: Optional[Path] = None
         self.rendered_block_uid_order: list[str] = []
@@ -141,7 +144,8 @@ class DialogueVisualEditor(
         self._windowskin_text_colors: dict[int, str] = {}
         self._windowskin_text_colors_loaded = False
         self.translation_state_path: Optional[Path] = None
-        self.ui_state_path = Path(__file__).resolve().with_name(UI_STATE_FILENAME)
+        self.ui_state_path = Path(
+            __file__).resolve().with_name(UI_STATE_FILENAME)
         self.translation_state: dict[str, Any] = {
             "version": 1,
             "uid_counter": 0,
@@ -163,7 +167,8 @@ class DialogueVisualEditor(
         self.audit_sanitize_goto_btn: Optional[QPushButton] = None
         self.audit_sanitize_apply_selected_btn: Optional[QPushButton] = None
         self.audit_sanitize_progress_overlay: Optional[QLabel] = None
-        self.audit_sanitize_ignored_entries_by_rule: dict[str, set[tuple[str, str]]] = {}
+        self.audit_sanitize_ignored_entries_by_rule: dict[str, set[tuple[str, str]]] = {
+        }
         self.audit_sanitize_total_hits = 0
         self.audit_sanitize_rules_with_hits = 0
         self.audit_control_mismatch_results_list: Optional[QListWidget] = None
@@ -190,7 +195,8 @@ class DialogueVisualEditor(
         )
         self.audit_sanitize_occurrence_cache_key: Optional[tuple[int, str, str]] = None
         self.audit_sanitize_occurrence_cache_payload: Optional[dict[str, Any]] = None
-        self.audit_sanitize_occurrence_cache_by_key: dict[tuple[int, str, str], dict[str, Any]] = {}
+        self.audit_sanitize_occurrence_cache_by_key: dict[tuple[int, str, str], dict[str, Any]] = {
+        }
         self.audit_sanitize_render_records: list[dict[str, Any]] = []
         self.audit_sanitize_render_index = 0
         self.audit_sanitize_render_rule_id = ""
@@ -231,7 +237,8 @@ class DialogueVisualEditor(
         self.audit_search_worker_pending_request: Optional[dict[str, Any]] = None
         self.audit_search_worker_timer = QTimer(self)
         self.audit_search_worker_timer.setSingleShot(True)
-        self.audit_search_worker_timer.timeout.connect(self._poll_audit_search_worker)
+        self.audit_search_worker_timer.timeout.connect(
+            self._poll_audit_search_worker)
         self.audit_sanitize_counts_cache_key: Optional[tuple[int, str]] = None
         self.audit_sanitize_counts_cache: dict[str, int] = {}
         self.audit_sanitize_worker_future: Optional[Future] = None
@@ -239,20 +246,23 @@ class DialogueVisualEditor(
         self.audit_sanitize_worker_pending_request: Optional[dict[str, Any]] = None
         self.audit_sanitize_worker_timer = QTimer(self)
         self.audit_sanitize_worker_timer.setSingleShot(True)
-        self.audit_sanitize_worker_timer.timeout.connect(self._poll_audit_sanitize_worker)
+        self.audit_sanitize_worker_timer.timeout.connect(
+            self._poll_audit_sanitize_worker)
         self.audit_control_worker_future: Optional[Future] = None
         self.audit_control_worker_running_request: Optional[dict[str, Any]] = None
         self.audit_control_worker_pending_request: Optional[dict[str, Any]] = None
         self.audit_control_worker_timer = QTimer(self)
         self.audit_control_worker_timer.setSingleShot(True)
-        self.audit_control_worker_timer.timeout.connect(self._poll_audit_control_worker)
+        self.audit_control_worker_timer.timeout.connect(
+            self._poll_audit_control_worker)
         self.structural_undo_stack: list[StructuralAction] = []
         self.structural_redo_stack: list[StructuralAction] = []
         self._pending_render_state: Optional[dict[str, Any]] = None
         self._render_batch_size = 1
         self._render_blocks_timer = QTimer(self)
         self._render_blocks_timer.setSingleShot(True)
-        self._render_blocks_timer.timeout.connect(self._render_next_block_batch)
+        self._render_blocks_timer.timeout.connect(
+            self._render_next_block_batch)
 
         self._global_undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
         self._global_redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
@@ -356,7 +366,8 @@ class DialogueVisualEditor(
         )
         behavior_row.addWidget(self.infer_speaker_check)
 
-        self.hide_control_codes_check = QCheckBox("Hide control codes unless focused")
+        self.hide_control_codes_check = QCheckBox(
+            "Hide control codes unless focused")
         self.hide_control_codes_check.setChecked(True)
         self.hide_control_codes_check.setToolTip(
             "When enabled, control codes are hidden in unfocused dialogue editors and shown when focused."
@@ -382,7 +393,8 @@ class DialogueVisualEditor(
         self.mass_translate_btn.setToolTip(
             "Build context-aware LLM chunks for dialogues/speakers and paste results back."
         )
-        self.mass_translate_btn.clicked.connect(self._open_mass_translate_dialog)
+        self.mass_translate_btn.clicked.connect(
+            self._open_mass_translate_dialog)
         actions_row.addWidget(self.mass_translate_btn)
 
         self.audit_btn = QPushButton("Audit")
@@ -420,7 +432,8 @@ class DialogueVisualEditor(
         self.wide_width_spin.valueChanged.connect(self._rerender_current_file)
         self.max_lines_spin.valueChanged.connect(self._rerender_current_file)
         self.infer_speaker_check.toggled.connect(self._rerender_current_file)
-        self.hide_control_codes_check.toggled.connect(self._on_hide_control_codes_toggled)
+        self.hide_control_codes_check.toggled.connect(
+            self._on_hide_control_codes_toggled)
         self.editor_mode_combo.currentIndexChanged.connect(
             self._on_editor_mode_changed)
 
@@ -483,7 +496,8 @@ class DialogueVisualEditor(
         self.scroll_area.setWidgetResizable(True)
         self.scroll_container, self.blocks_layout = self._create_blocks_container()
         self.scroll_area.setWidget(self.scroll_container)
-        self.main_render_progress_overlay = self._create_audit_progress_overlay(self.scroll_area)
+        self.main_render_progress_overlay = self._create_audit_progress_overlay(
+            self.scroll_area)
         self.editor_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.editor_splitter.addWidget(self.scroll_area)
 
@@ -573,7 +587,8 @@ class DialogueVisualEditor(
 
         self.translator_reference_similar_label = QLabel("")
         self.translator_reference_similar_label.setWordWrap(True)
-        detail_content_layout.addWidget(self.translator_reference_similar_label)
+        detail_content_layout.addWidget(
+            self.translator_reference_similar_label)
 
         translator_layout.addWidget(self.translator_detail_content, 1)
 
@@ -641,8 +656,10 @@ class DialogueVisualEditor(
             if self.current_path is not None
             else None
         )
-        actor_mode = bool(current_session and self._is_name_index_session(current_session))
-        name_index_label = self._name_index_label(current_session) if actor_mode else "Entry"
+        actor_mode = bool(
+            current_session and self._is_name_index_session(current_session))
+        name_index_label = self._name_index_label(
+            current_session) if actor_mode else "Entry"
         segment = self.current_segment_lookup.get(
             self.selected_segment_uid) if self.selected_segment_uid else None
         selected_field = (
@@ -669,7 +686,8 @@ class DialogueVisualEditor(
         self.translator_speaker_en_row.setVisible(not actor_mode)
         self.translator_reference_exact_label.setVisible(not actor_mode)
         self.translator_reference_similar_label.setVisible(not actor_mode)
-        self.translator_source_label.setText(f"{field_label} (JP)" if actor_mode else "Source (JP)")
+        self.translator_source_label.setText(
+            f"{field_label} (JP)" if actor_mode else "Source (JP)")
 
         has_segment = segment is not None
         self.translator_detail_empty_label.setVisible(not has_segment)
@@ -681,7 +699,8 @@ class DialogueVisualEditor(
             self.translator_block_label.setText(
                 f"{name_index_label} ID: -" if actor_mode else "Block: -"
             )
-            self.translator_context_label.setText("Entry: -" if actor_mode else "Context: -")
+            self.translator_context_label.setText(
+                "Entry: -" if actor_mode else "Context: -")
             self.translator_speaker_jp_edit.setText("")
             self.translator_speaker_en_edit.setText("")
             self.translator_source_view.setPlainText("")
@@ -692,11 +711,14 @@ class DialogueVisualEditor(
         block_number = self._block_number_for_uid(segment.uid)
         if actor_mode:
             actor_id = self._actor_id_from_uid(segment.uid)
-            self.translator_detail_title.setText(f"Selected {name_index_label}")
+            self.translator_detail_title.setText(
+                f"Selected {name_index_label}")
             if actor_id is None:
-                self.translator_block_label.setText(f"{name_index_label} ID: -")
+                self.translator_block_label.setText(
+                    f"{name_index_label} ID: -")
             else:
-                self.translator_block_label.setText(f"{name_index_label} ID: {actor_id}")
+                self.translator_block_label.setText(
+                    f"{name_index_label} ID: {actor_id}")
             self.translator_context_label.setText(f"Entry: {segment.context}")
         else:
             if block_number is None:
@@ -706,7 +728,8 @@ class DialogueVisualEditor(
                 self.translator_detail_title.setText(
                     f"Selected Dialogue: Block {block_number}")
                 self.translator_block_label.setText(f"Block: {block_number}")
-            self.translator_context_label.setText(f"Context: {segment.context}")
+            self.translator_context_label.setText(
+                f"Context: {segment.context}")
 
             speaker_key = self._speaker_key_for_segment(segment)
             self.translator_speaker_jp_edit.setText(speaker_key)
@@ -1003,7 +1026,8 @@ class DialogueVisualEditor(
                 with self.ui_state_path.open("r", encoding="utf-8") as src:
                     loaded = json.load(src)
                 if isinstance(loaded, dict):
-                    remember_last_folder = bool(loaded.get("remember_last_folder", False))
+                    remember_last_folder = bool(
+                        loaded.get("remember_last_folder", False))
                     raw_last_folder = loaded.get("last_folder", "")
                     if isinstance(raw_last_folder, str):
                         last_folder = raw_last_folder.strip()
@@ -1387,7 +1411,8 @@ class DialogueVisualEditor(
         self.audit_sanitize_worker_timer.stop()
         self.audit_control_worker_timer.stop()
         try:
-            self.audit_worker_executor.shutdown(wait=False, cancel_futures=True)
+            self.audit_worker_executor.shutdown(
+                wait=False, cancel_futures=True)
         except TypeError:
             self.audit_worker_executor.shutdown(wait=False)
         self._save_ui_state()

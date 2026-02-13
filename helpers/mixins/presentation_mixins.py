@@ -181,7 +181,8 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             actor_id = self._actor_id_from_uid(segment.uid)
             if actor_id is None:
                 continue
-            source_name = "\n".join(self._segment_source_lines_for_display(segment)).strip()
+            source_name = "\n".join(
+                self._segment_source_lines_for_display(segment)).strip()
             if source_name:
                 jp_by_id[actor_id] = source_name
 
@@ -228,7 +229,8 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
     def _resolve_speaker_display_name(self, raw_speaker: str) -> str:
         if not raw_speaker:
             return raw_speaker
-        resolved = self._resolve_name_tokens_in_text(raw_speaker, prefer_translated=True).strip()
+        resolved = self._resolve_name_tokens_in_text(
+            raw_speaker, prefer_translated=True).strip()
         if resolved and resolved != raw_speaker.strip():
             return resolved
         key = self._normalize_speaker_key(raw_speaker)
@@ -373,7 +375,8 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             escaped = html.escape(chunk).replace("\n", "<br/>")
             effective_color = color_hex or default_color
             if effective_color:
-                parts.append(f"<span style=\"color: {effective_color};\">{escaped}</span>")
+                parts.append(
+                    f"<span style=\"color: {effective_color};\">{escaped}</span>")
             else:
                 parts.append(escaped)
 
@@ -449,4 +452,3 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
     def _hidden_control_line_transform(self, line: str) -> str:
         masked, _spans = self._hidden_control_line_with_color_spans(line)
         return masked
-

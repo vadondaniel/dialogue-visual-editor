@@ -140,7 +140,8 @@ def fuzzy_compare_text(text: str) -> str:
 
 
 def preview_text(text: str, limit: int = 66) -> str:
-    compact = (text or "").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    compact = (text or "").replace("\r", "\\r").replace(
+        "\n", "\\n").replace("\t", "\\t")
     if len(compact) <= limit:
         return compact
     return compact[: max(0, limit - 3)] + "..."
@@ -183,7 +184,7 @@ def chunk_lines(lines: list[str], size: int) -> list[list[str]]:
         return [lines or [""]]
     if not lines:
         return [[""]]
-    chunks = [lines[i : i + size] for i in range(0, len(lines), size)]
+    chunks = [lines[i: i + size] for i in range(0, len(lines), size)]
     return chunks or [[""]]
 
 

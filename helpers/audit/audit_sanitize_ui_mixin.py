@@ -85,7 +85,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         body.setWordWrap(True)
         body.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        body.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        body.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         lines_html: list[str] = []
         ignored_row = False
         for occurrence in occurrences:
@@ -98,11 +99,13 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
                 prefix = f"<b>{html.escape(field_label)} L{line_index} x{hit_count}</b>: "
             else:
                 prefix = f"<b>L{line_index} x{hit_count}</b>: "
-            lines_html.append(prefix + self._highlight_audit_literal_html(line_text, find_text))
+            lines_html.append(
+                prefix + self._highlight_audit_literal_html(line_text, find_text))
         effective_header_text = header_text
         if ignored_row:
             effective_header_text = f"[Ignored] {header_text}"
-            lines_html.insert(0, "<i>Ignored for selected rule (not applied in bulk).</i>")
+            lines_html.insert(
+                0, "<i>Ignored for selected rule (not applied in bulk).</i>")
         body.setText(
             "<div style=\"padding: 4px 0;\">"
             f"<b>{html.escape(effective_header_text)}</b><br>"
@@ -196,7 +199,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
     ) -> None:
         key = self._audit_sanitize_entry_key(path_raw, uid)
         if ignored:
-            rule_set = self.audit_sanitize_ignored_entries_by_rule.setdefault(rule_id, set())
+            rule_set = self.audit_sanitize_ignored_entries_by_rule.setdefault(
+                rule_id, set())
             rule_set.add(key)
         else:
             rule_set = self.audit_sanitize_ignored_entries_by_rule.get(rule_id)
@@ -224,7 +228,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
 
         menu = QMenu(self.audit_sanitize_rules_list)
         apply_action = menu.addAction("Apply Rule")
-        chosen = menu.exec(self.audit_sanitize_rules_list.viewport().mapToGlobal(pos))
+        chosen = menu.exec(
+            self.audit_sanitize_rules_list.viewport().mapToGlobal(pos))
         if chosen is apply_action:
             self._apply_audit_sanitize_rules([payload])
             return
@@ -288,7 +293,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             if visible and first_visible_row < 0:
                 first_visible_row = row
         if first_visible_row >= 0:
-            self.audit_sanitize_occurrences_list.setCurrentRow(first_visible_row)
+            self.audit_sanitize_occurrences_list.setCurrentRow(
+                first_visible_row)
             if self.audit_sanitize_goto_btn is not None:
                 self.audit_sanitize_goto_btn.setEnabled(True)
         else:
@@ -311,7 +317,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         payload = self._audit_sanitize_occurrence_payload(item)
         if payload is None:
             return
-        rule_payload = self._audit_sanitize_rule_payload_by_id(payload["rule_id"])
+        rule_payload = self._audit_sanitize_rule_payload_by_id(
+            payload["rule_id"])
         if rule_payload is None:
             return
 
@@ -327,7 +334,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         toggle_ignore_action = menu.addAction(
             "Unignore Entry" if ignored else "Ignore Entry"
         )
-        chosen = menu.exec(self.audit_sanitize_occurrences_list.viewport().mapToGlobal(pos))
+        chosen = menu.exec(
+            self.audit_sanitize_occurrences_list.viewport().mapToGlobal(pos))
         if chosen is go_to_action:
             self._go_to_selected_audit_sanitize_occurrence()
             return
@@ -394,14 +402,16 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             self._set_audit_sanitize_occurrence_view_visibility(None)
             self.audit_sanitize_displayed_key = view_key
             self.audit_sanitize_display_complete = True
-            self._hide_audit_progress_overlay(self.audit_sanitize_progress_overlay)
+            self._hide_audit_progress_overlay(
+                self.audit_sanitize_progress_overlay)
             return
 
         records = list(cast(list[dict[str, Any]], payload.get("records", [])))
         total_hits = int(payload.get("total_hits", 0))
         entries = int(payload.get("entries", 0))
         block_count = int(payload.get("block_count", len(records)))
-        self.audit_sanitize_occurrence_cache_key = (generation, scope, selected_rule_id)
+        self.audit_sanitize_occurrence_cache_key = (
+            generation, scope, selected_rule_id)
         self.audit_sanitize_occurrence_cache_payload = {
             "records": list(records),
             "total_hits": total_hits,
@@ -418,7 +428,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             self._set_audit_sanitize_occurrence_view_visibility(None)
             self.audit_sanitize_displayed_key = view_key
             self.audit_sanitize_display_complete = True
-            self._hide_audit_progress_overlay(self.audit_sanitize_progress_overlay)
+            self._hide_audit_progress_overlay(
+                self.audit_sanitize_progress_overlay)
             return
 
         if view_key in self.audit_sanitize_built_view_keys:
@@ -428,7 +439,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             self._set_audit_sanitize_occurrence_view_visibility(view_key)
             self.audit_sanitize_displayed_key = view_key
             self.audit_sanitize_display_complete = True
-            self._hide_audit_progress_overlay(self.audit_sanitize_progress_overlay)
+            self._hide_audit_progress_overlay(
+                self.audit_sanitize_progress_overlay)
             return
 
         self.audit_sanitize_summary_label.setText(
@@ -466,7 +478,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             self.audit_sanitize_rules_list.currentItem()
         )
         if self.audit_sanitize_apply_selected_btn is not None:
-            self.audit_sanitize_apply_selected_btn.setEnabled(selected_payload is not None)
+            self.audit_sanitize_apply_selected_btn.setEnabled(
+                selected_payload is not None)
 
         scope = self._audit_sanitize_scope()
         selected_rule_id = selected_payload["rule_id"] if selected_payload is not None else ""
@@ -476,7 +489,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             self.audit_sanitize_display_complete
             and self.audit_sanitize_displayed_key == requested_key
         ):
-            self._hide_audit_progress_overlay(self.audit_sanitize_progress_overlay)
+            self._hide_audit_progress_overlay(
+                self.audit_sanitize_progress_overlay)
             return
 
         self._stop_audit_sanitize_render()
@@ -495,7 +509,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         )
         occurrence_cached_payload: Optional[dict[str, Any]] = None
         if occurrence_key is not None:
-            cached = self.audit_sanitize_occurrence_cache_by_key.get(occurrence_key)
+            cached = self.audit_sanitize_occurrence_cache_by_key.get(
+                occurrence_key)
             if isinstance(cached, dict):
                 occurrence_cached_payload = cached
             elif (
@@ -505,9 +520,11 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
                 occurrence_cached_payload = self.audit_sanitize_occurrence_cache_payload
         occurrence_cached = occurrence_cached_payload is not None
         if counts_cached and (not selected_rule_id or occurrence_cached):
-            cached_payload: dict[str, Any] = {"counts": dict(self.audit_sanitize_counts_cache)}
+            cached_payload: dict[str, Any] = {
+                "counts": dict(self.audit_sanitize_counts_cache)}
             if selected_rule_id and occurrence_cached:
-                cached_payload.update(cast(dict[str, Any], occurrence_cached_payload))
+                cached_payload.update(
+                    cast(dict[str, Any], occurrence_cached_payload))
             self._apply_audit_sanitize_payload(
                 generation=self.audit_cache_generation,
                 scope=scope,
@@ -527,16 +544,19 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         if counts_cached and selected_rule_id:
             request["mode"] = "occurrences"
             request["selected_ignored"] = set(
-                self.audit_sanitize_ignored_entries_by_rule.get(selected_rule_id, set())
+                self.audit_sanitize_ignored_entries_by_rule.get(
+                    selected_rule_id, set())
             )
-            self.audit_sanitize_summary_label.setText("Scanning selected rule...")
+            self.audit_sanitize_summary_label.setText(
+                "Scanning selected rule...")
         else:
             request["mode"] = "full"
             request["ignored_entries_by_rule"] = {
                 rule_id: set(keys)
                 for rule_id, keys in self.audit_sanitize_ignored_entries_by_rule.items()
             }
-            self.audit_sanitize_summary_label.setText("Scanning sanitize results...")
+            self.audit_sanitize_summary_label.setText(
+                "Scanning sanitize results...")
         self._queue_audit_sanitize_worker(request)
 
     def _refresh_audit_sanitize_occurrences(self) -> None:
@@ -566,7 +586,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
                         uid=str(record["uid"]),
                         rule_id=self.audit_sanitize_render_rule_id,
                         entry_text=str(record["entry_text"]),
-                        occurrences=cast(list[dict[str, Any]], record["occurrences"]),
+                        occurrences=cast(
+                            list[dict[str, Any]], record["occurrences"]),
                         find_text=self.audit_sanitize_render_find_text,
                         show_field_label=self.audit_sanitize_render_show_field_label,
                         view_key=(
@@ -576,7 +597,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
                         ),
                     )
             finally:
-                self.audit_sanitize_occurrences_list.setUpdatesEnabled(prev_updates)
+                self.audit_sanitize_occurrences_list.setUpdatesEnabled(
+                    prev_updates)
             self.audit_sanitize_render_index = end
             if self.audit_sanitize_summary_label is not None:
                 prefix = (
@@ -593,7 +615,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
                     self.audit_sanitize_progress_overlay,
                     f"Rendering {end}/{total_blocks}",
                 )
-                self.audit_sanitize_render_timer.start(self.audit_render_batch_interval_ms)
+                self.audit_sanitize_render_timer.start(
+                    self.audit_render_batch_interval_ms)
                 return
             rendered_view_key = (
                 self.audit_sanitize_render_generation,
@@ -601,14 +624,16 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
                 self.audit_sanitize_render_rule_id,
             )
             self.audit_sanitize_built_view_keys.add(rendered_view_key)
-            self._set_audit_sanitize_occurrence_view_visibility(rendered_view_key)
+            self._set_audit_sanitize_occurrence_view_visibility(
+                rendered_view_key)
             self.audit_sanitize_displayed_key = rendered_view_key
             self.audit_sanitize_display_complete = True
             self._stop_audit_sanitize_render()
         except Exception as exc:
             self._stop_audit_sanitize_render()
             if self.audit_sanitize_summary_label is not None:
-                self.audit_sanitize_summary_label.setText(f"Sanitize render failed: {exc}")
+                self.audit_sanitize_summary_label.setText(
+                    f"Sanitize render failed: {exc}")
 
     def _go_to_selected_audit_sanitize_occurrence(self) -> None:
         if self.audit_sanitize_occurrences_list is None:
@@ -626,4 +651,3 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         if not isinstance(uid_raw, str) or not uid_raw:
             return
         self._jump_to_audit_location(path_raw, uid_raw)
-

@@ -40,7 +40,8 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
         replacements = 0
         changed = False
         if scope in ("original", "both"):
-            original_lines = list(target_segment.lines) if target_segment.lines else [""]
+            original_lines = list(
+                target_segment.lines) if target_segment.lines else [""]
             replaced_lines, replaced_count = self._apply_sanitize_rules_to_lines(
                 original_lines,
                 [rule],
@@ -51,7 +52,8 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
                 replacements += replaced_count
                 changed = True
         if scope in ("translation", "both"):
-            translation_lines = self._normalize_translation_lines(target_segment.translation_lines)
+            translation_lines = self._normalize_translation_lines(
+                target_segment.translation_lines)
             replaced_lines, replaced_count = self._apply_sanitize_rules_to_lines(
                 translation_lines,
                 [rule],
@@ -133,7 +135,8 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
                 if not segment_rules:
                     continue
                 if scope in ("original", "both"):
-                    original_lines = list(segment.lines) if segment.lines else [""]
+                    original_lines = list(
+                        segment.lines) if segment.lines else [""]
                     replaced_lines, replaced_count = self._apply_sanitize_rules_to_lines(
                         original_lines,
                         segment_rules,
@@ -144,7 +147,8 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
                         total_replacements += replaced_count
                         segment_changed = True
                 if scope in ("translation", "both"):
-                    translation_lines = self._normalize_translation_lines(segment.translation_lines)
+                    translation_lines = self._normalize_translation_lines(
+                        segment.translation_lines)
                     replaced_lines, replaced_count = self._apply_sanitize_rules_to_lines(
                         translation_lines,
                         segment_rules,
@@ -196,4 +200,3 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
             self.statusBar().showMessage("Select a sanitize rule first.")
             return
         self._apply_audit_sanitize_rules([payload])
-

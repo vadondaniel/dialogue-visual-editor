@@ -35,10 +35,13 @@ class MassTranslateHost(Protocol):
     def _relative_path(self, path: Path) -> str: ...
     def _new_translation_uid(self) -> str: ...
     def _speaker_key_for_segment(self, segment: DialogueSegment) -> str: ...
-    def _segment_source_lines_for_display(self, segment: DialogueSegment) -> list[str]: ...
+    def _segment_source_lines_for_display(
+        self, segment: DialogueSegment) -> list[str]: ...
+
     def _normalize_translation_lines(self, value: Any) -> list[str]: ...
     def _speaker_translation_for_key(self, speaker_key: str) -> str: ...
     def _refresh_dirty_state(self, session: FileSession) -> None: ...
+
     def _render_session(
         self,
         session: FileSession,
@@ -50,7 +53,8 @@ class MassTranslateHost(Protocol):
 
 
 class MassTranslateDialog(QDialog):
-    _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
+    _JSON_FENCE_RE = re.compile(
+        r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
 
     def __init__(self, editor: QWidget):
         super().__init__(editor)
@@ -87,7 +91,8 @@ class MassTranslateDialog(QDialog):
 
         options_row.addWidget(QLabel("Content"))
         self.content_scope_combo = QComboBox()
-        self.content_scope_combo.addItem("Speakers Only (Run First)", "speakers")
+        self.content_scope_combo.addItem(
+            "Speakers Only (Run First)", "speakers")
         self.content_scope_combo.addItem("Dialogues Only", "dialogues")
         self.content_scope_combo.addItem("Dialogues + Speakers", "both")
         self.content_scope_combo.setToolTip(
@@ -233,7 +238,8 @@ class MassTranslateDialog(QDialog):
             return [(self.editor.current_path, session)]
 
         items = list(self.editor.sessions.items())
-        items.sort(key=lambda item: natural_sort_key(self.editor._relative_path(item[0])))
+        items.sort(key=lambda item: natural_sort_key(
+            self.editor._relative_path(item[0])))
         return items
 
     def _ensure_segment_translation_uid(self, segment: DialogueSegment) -> str:
@@ -266,10 +272,12 @@ class MassTranslateDialog(QDialog):
         for idx in indexes:
             neighbor = session.segments[idx]
             speaker_key = self.editor._speaker_key_for_segment(neighbor)
-            speaker_display = self.editor._speaker_translation_for_key(speaker_key).strip()
+            speaker_display = self.editor._speaker_translation_for_key(
+                speaker_key).strip()
             if not speaker_display:
                 speaker_display = speaker_key
-            jp_text = "\n".join(self.editor._segment_source_lines_for_display(neighbor)).strip()
+            jp_text = "\n".join(
+                self.editor._segment_source_lines_for_display(neighbor)).strip()
             if not jp_text:
                 jp_text = "(empty)"
             blocks.append({"speaker": speaker_display, "jp_text": jp_text})
@@ -299,12 +307,14 @@ class MassTranslateDialog(QDialog):
         first_ref = self.dialogue_block_refs.get(dialogue_ids[0])
         last_ref = self.dialogue_block_refs.get(dialogue_ids[-1])
         before = (
-            self._context_blocks_for_anchor(first_ref[0], first_ref[1], -1, box_limit)
+            self._context_blocks_for_anchor(
+                first_ref[0], first_ref[1], -1, box_limit)
             if first_ref
             else []
         )
         after = (
-            self._context_blocks_for_anchor(last_ref[0], last_ref[1], +1, box_limit)
+            self._context_blocks_for_anchor(
+                last_ref[0], last_ref[1], +1, box_limit)
             if last_ref
             else []
         )
@@ -326,8 +336,10 @@ class MassTranslateDialog(QDialog):
 
         for path, session in session_items:
             for idx, segment in enumerate(session.segments):
-                source_lines = self.editor._segment_source_lines_for_display(segment)
-                existing_lines = self.editor._normalize_translation_lines(segment.translation_lines)
+                source_lines = self.editor._segment_source_lines_for_display(
+                    segment)
+                existing_lines = self.editor._normalize_translation_lines(
+                    segment.translation_lines)
                 existing_text = "\n".join(existing_lines).strip()
                 speaker_key = self.editor._speaker_key_for_segment(segment)
 
@@ -341,7 +353,8 @@ class MassTranslateDialog(QDialog):
 
                 tl_uid = self._ensure_segment_translation_uid(segment)
                 entry_id = f"D:{tl_uid}"
-                speaker_for_prompt = self.editor._speaker_translation_for_key(speaker_key).strip()
+                speaker_for_prompt = self.editor._speaker_translation_for_key(
+                    speaker_key).strip()
                 if not speaker_for_prompt:
                     speaker_for_prompt = speaker_key
                 entries.append(
@@ -358,7 +371,8 @@ class MassTranslateDialog(QDialog):
 
         if include_speakers:
             for speaker_key in sorted(speaker_keys, key=natural_sort_key):
-                existing_speaker = self.editor._speaker_translation_for_key(speaker_key)
+                existing_speaker = self.editor._speaker_translation_for_key(
+                    speaker_key)
                 if only_untranslated and existing_speaker:
                     continue
                 entry_id = f"S:{speaker_key}"
@@ -411,7 +425,8 @@ class MassTranslateDialog(QDialog):
         for idx, payload in enumerate(self.chunk_payloads):
             status = self.chunk_status.get(idx, "ready").upper()
             entries_raw = payload.get("entries")
-            entry_count = len(entries_raw) if isinstance(entries_raw, list) else 0
+            entry_count = len(entries_raw) if isinstance(
+                entries_raw, list) else 0
             char_count = len(json.dumps(payload, ensure_ascii=False, indent=2))
             self.chunk_combo.addItem(
                 f"Chunk {idx + 1}/{total} ({entry_count} entries, {char_count} chars) [{status}]"
@@ -424,7 +439,8 @@ class MassTranslateDialog(QDialog):
         has_active = has_chunks and 0 <= idx < len(self.chunk_payloads)
         self.chunk_combo.setEnabled(has_chunks)
         self.prev_chunk_btn.setEnabled(has_active and idx > 0)
-        self.next_chunk_btn.setEnabled(has_active and idx < len(self.chunk_payloads) - 1)
+        self.next_chunk_btn.setEnabled(
+            has_active and idx < len(self.chunk_payloads) - 1)
         self.copy_chunk_btn.setEnabled(has_active)
         self.copy_prompt_btn.setEnabled(has_active)
         self.apply_btn.setEnabled(has_active)
@@ -445,7 +461,8 @@ class MassTranslateDialog(QDialog):
             return
 
         payload = self.chunk_payloads[index]
-        self.chunk_preview.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2))
+        self.chunk_preview.setPlainText(json.dumps(
+            payload, ensure_ascii=False, indent=2))
         self._set_paste_text(self.chunk_drafts.get(index, ""))
         entries_raw = payload.get("entries")
         entry_count = len(entries_raw) if isinstance(entries_raw, list) else 0
@@ -472,7 +489,8 @@ class MassTranslateDialog(QDialog):
         QApplication.clipboard().setText(
             json.dumps(self.chunk_payloads[idx], ensure_ascii=False, indent=2)
         )
-        self.result_box.setPlainText("Copied selected chunk JSON to clipboard.")
+        self.result_box.setPlainText(
+            "Copied selected chunk JSON to clipboard.")
 
     def _build_prompt_for_payload(self, payload: dict[str, Any]) -> str:
         payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -492,8 +510,10 @@ class MassTranslateDialog(QDialog):
         idx = self.chunk_combo.currentIndex()
         if idx < 0 or idx >= len(self.chunk_payloads):
             return
-        QApplication.clipboard().setText(self._build_prompt_for_payload(self.chunk_payloads[idx]))
-        self.result_box.setPlainText("Copied prompt + selected chunk JSON to clipboard.")
+        QApplication.clipboard().setText(
+            self._build_prompt_for_payload(self.chunk_payloads[idx]))
+        self.result_box.setPlainText(
+            "Copied prompt + selected chunk JSON to clipboard.")
 
     def _build_chunks(self) -> None:
         include_dialogue, include_speakers = self._content_mode_flags()
@@ -519,12 +539,15 @@ class MassTranslateDialog(QDialog):
             self._set_chunk_combo_items()
             self.chunk_preview.setPlainText("")
             self._set_paste_text("")
-            self.result_box.setPlainText("No matching entries for current filters.")
-            self.chunk_summary_label.setText("No entries matched the selected options.")
+            self.result_box.setPlainText(
+                "No matching entries for current filters.")
+            self.chunk_summary_label.setText(
+                "No entries matched the selected options.")
             self._update_chunk_controls()
             return
 
-        groups = self._chunkify_entries(entries, self.max_chunk_chars_spin.value())
+        groups = self._chunkify_entries(
+            entries, self.max_chunk_chars_spin.value())
         context_boxes = self.context_boxes_spin.value()
         self.chunk_payloads = []
         self.chunk_expected_ids = []
@@ -532,7 +555,8 @@ class MassTranslateDialog(QDialog):
         self.chunk_drafts = {}
 
         for idx, group in enumerate(groups, start=1):
-            context_before, context_after = self._chunk_context_blocks(group, context_boxes)
+            context_before, context_after = self._chunk_context_blocks(
+                group, context_boxes)
             payload = {
                 "context_before": context_before,
                 "entries": group,
@@ -577,12 +601,12 @@ class MassTranslateDialog(QDialog):
         obj_start = cleaned.find("{")
         obj_end = cleaned.rfind("}")
         if obj_start >= 0 and obj_end > obj_start:
-            candidates.append(cleaned[obj_start : obj_end + 1])
+            candidates.append(cleaned[obj_start: obj_end + 1])
 
         arr_start = cleaned.find("[")
         arr_end = cleaned.rfind("]")
         if arr_start >= 0 and arr_end > arr_start:
-            candidates.append(cleaned[arr_start : arr_end + 1])
+            candidates.append(cleaned[arr_start: arr_end + 1])
 
         tried: set[str] = set()
         last_exc: Optional[Exception] = None
@@ -660,7 +684,8 @@ class MassTranslateDialog(QDialog):
         for field in line_fields:
             value = entry.get(field)
             if isinstance(value, list):
-                normalized = [str(item) if item is not None else "" for item in value]
+                normalized = [
+                    str(item) if item is not None else "" for item in value]
                 return self.editor._normalize_translation_lines(normalized)
             if isinstance(value, str):
                 return self.editor._normalize_translation_lines(value)
@@ -692,12 +717,14 @@ class MassTranslateDialog(QDialog):
     def _apply_pasted_chunk(self) -> None:
         idx = self.chunk_combo.currentIndex()
         if idx < 0 or idx >= len(self.chunk_payloads):
-            QMessageBox.warning(self, "No chunk selected", "Build and select a chunk first.")
+            QMessageBox.warning(self, "No chunk selected",
+                                "Build and select a chunk first.")
             return
 
         raw = self.paste_box.toPlainText().strip()
         if not raw:
-            QMessageBox.warning(self, "Missing paste", "Paste the LLM JSON output first.")
+            QMessageBox.warning(self, "Missing paste",
+                                "Paste the LLM JSON output first.")
             return
 
         try:
@@ -724,7 +751,8 @@ class MassTranslateDialog(QDialog):
             updates_by_id[entry_id] = entry
 
         chunk_entries_raw = self.chunk_payloads[idx].get("entries")
-        chunk_entries = chunk_entries_raw if isinstance(chunk_entries_raw, list) else []
+        chunk_entries = chunk_entries_raw if isinstance(
+            chunk_entries_raw, list) else []
         positional_fallback_used = False
         if not updates_by_id:
             if len(parsed_entries) == len(chunk_entries):
@@ -739,10 +767,12 @@ class MassTranslateDialog(QDialog):
                     updates_by_id[base_id] = mapped
                 positional_fallback_used = bool(updates_by_id)
             if not updates_by_id:
-                self.result_box.setPlainText("No usable `id` fields found in pasted entries.")
+                self.result_box.setPlainText(
+                    "No usable `id` fields found in pasted entries.")
                 return
 
-        expected_ids = self.chunk_expected_ids[idx] if idx < len(self.chunk_expected_ids) else set()
+        expected_ids = self.chunk_expected_ids[idx] if idx < len(
+            self.chunk_expected_ids) else set()
         unknown_ids = sorted(
             [entry_id for entry_id in updates_by_id if entry_id not in expected_ids],
             key=natural_sort_key,
@@ -777,12 +807,14 @@ class MassTranslateDialog(QDialog):
                     missing_translation_field_ids.append(entry_id)
                     continue
                 path, segment = target
-                expected_line_count = len(self.editor._segment_source_lines_for_display(segment))
+                expected_line_count = len(
+                    self.editor._segment_source_lines_for_display(segment))
                 if len(lines) != expected_line_count:
                     line_count_mismatches.append(
                         f"{entry_id} ({len(lines)} line(s), expected {expected_line_count})"
                     )
-                current_lines = self.editor._normalize_translation_lines(segment.translation_lines)
+                current_lines = self.editor._normalize_translation_lines(
+                    segment.translation_lines)
                 if current_lines != lines:
                     segment.translation_lines = list(lines)
                     touched_paths.add(path)
@@ -798,7 +830,8 @@ class MassTranslateDialog(QDialog):
                     missing_translation_field_ids.append(entry_id)
                     continue
                 cleaned = translated_name.strip()
-                current_name = self.editor._speaker_translation_for_key(speaker_key)
+                current_name = self.editor._speaker_translation_for_key(
+                    speaker_key)
                 if current_name == cleaned:
                     continue
 
@@ -827,11 +860,14 @@ class MassTranslateDialog(QDialog):
                 continue
             self.editor._refresh_dirty_state(session)
 
-        current_touched = bool(self.editor.current_path and self.editor.current_path in touched_paths)
+        current_touched = bool(
+            self.editor.current_path and self.editor.current_path in touched_paths)
         if current_touched and self.editor.current_path is not None:
-            current_session = self.editor.sessions.get(self.editor.current_path)
+            current_session = self.editor.sessions.get(
+                self.editor.current_path)
             if current_session is not None:
-                self.editor._render_session(current_session, preserve_scroll=True)
+                self.editor._render_session(
+                    current_session, preserve_scroll=True)
         else:
             self.editor._refresh_translator_detail_panel()
 
@@ -866,15 +902,18 @@ class MassTranslateDialog(QDialog):
             if len(unknown_ids) > 10:
                 summary_lines.append("...")
         if duplicate_ids:
-            summary_lines.append(f"Duplicate IDs in paste: {len(duplicate_ids)} (last one used)")
+            summary_lines.append(
+                f"Duplicate IDs in paste: {len(duplicate_ids)} (last one used)")
         if positional_fallback_used:
-            summary_lines.append("Used positional mapping because pasted entries had no IDs.")
+            summary_lines.append(
+                "Used positional mapping because pasted entries had no IDs.")
         if missing_translation_field_ids:
             summary_lines.append(
                 f"Entries missing translation field: {len(missing_translation_field_ids)}"
             )
         if line_count_mismatches:
-            summary_lines.append(f"Line-count mismatches: {len(line_count_mismatches)}")
+            summary_lines.append(
+                f"Line-count mismatches: {len(line_count_mismatches)}")
             summary_lines.extend(line_count_mismatches[:8])
             if len(line_count_mismatches) > 8:
                 summary_lines.append("...")
@@ -892,5 +931,3 @@ class MassTranslateDialog(QDialog):
             self.result_box.appendPlainText(
                 "\nSwitched content scope to 'Dialogues Only'."
             )
-
-
