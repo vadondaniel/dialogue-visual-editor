@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 try:
     from .helpers import (
         DialogueIndexDB,
+        DialogueVersionDB,
         DialogueSegment,
         FileSession,
         NO_SPEAKER_KEY,
@@ -70,6 +71,7 @@ try:
 except ImportError:
     from helpers import (
         DialogueIndexDB,
+        DialogueVersionDB,
         DialogueSegment,
         FileSession,
         NO_SPEAKER_KEY,
@@ -102,6 +104,7 @@ DEFAULT_THIN_WIDTH = 47
 DEFAULT_WIDE_WIDTH = 60
 DEFAULT_MAX_LINES = 4
 DB_FILENAME = ".dialogue_editor_index.sqlite3"
+VERSION_DB_FILENAME = ".dialogue_version_state.sqlite3"
 TRANSLATION_STATE_FILENAME = ".dialogue_translation_state.json"
 UI_STATE_FILENAME = ".dialogue_visual_editor_ui_state.json"
 
@@ -122,6 +125,7 @@ class DialogueVisualEditor(
 
         self.data_dir: Optional[Path] = None
         self.index_db: Optional[DialogueIndexDB] = None
+        self.version_db: Optional[DialogueVersionDB] = None
         self.file_paths: list[Path] = []
         self.file_items: dict[Path, QListWidgetItem] = {}
         self.sessions: dict[Path, FileSession] = {}
@@ -424,26 +428,41 @@ class DialogueVisualEditor(
 
         self.save_btn = QPushButton("Save File")
         self.save_all_btn = QPushButton("Save All")
+        self.save_btn.setToolTip(
+            "Save current edits to the project snapshot database.")
+        self.save_all_btn.setToolTip(
+            "Save all edits to the project snapshot database.")
         self.save_btn.clicked.connect(self._save_current_file)
         self.save_all_btn.clicked.connect(self._save_all_files)
         self.save_btn.setEnabled(False)
         self.save_all_btn.setEnabled(False)
         actions_row.addWidget(self.save_btn)
         actions_row.addWidget(self.save_all_btn)
-
-        self.export_tl_btn = QPushButton("Export TL File")
-        self.export_tl_all_btn = QPushButton("Export TL All")
-        self.export_tl_btn.setToolTip(
-            "Export current file with EN translations into another folder.")
-        self.export_tl_all_btn.setToolTip(
-            "Export all files with EN translations into another folder.")
-        self.export_tl_btn.clicked.connect(self._export_current_translation)
-        self.export_tl_all_btn.clicked.connect(self._export_all_translations)
-        self.export_tl_btn.setEnabled(False)
-        self.export_tl_all_btn.setEnabled(False)
-        actions_row.addWidget(self.export_tl_btn)
-        actions_row.addWidget(self.export_tl_all_btn)
         controls_layout.addLayout(actions_row)
+
+        apply_row = QHBoxLayout()
+        apply_row.setContentsMargins(0, 0, 0, 0)
+        apply_row.setSpacing(6)
+        apply_row.addWidget(QLabel("Apply Snapshot"))
+        self.apply_version_combo = QComboBox()
+        self.apply_version_combo.addItem("Original", "original")
+        self.apply_version_combo.addItem("Translated", "translated")
+        self.apply_version_combo.setToolTip(
+            "Choose which snapshot version to apply to game files."
+        )
+        self.apply_version_combo.setEnabled(False)
+        apply_row.addWidget(self.apply_version_combo)
+        self.apply_version_btn = QPushButton("Apply To Game Files")
+        self.apply_version_btn.setToolTip(
+            "Write selected snapshot version directly to JSON files in the data folder."
+        )
+        self.apply_version_btn.clicked.connect(
+            self._apply_selected_snapshot_to_game_files
+        )
+        self.apply_version_btn.setEnabled(False)
+        apply_row.addWidget(self.apply_version_btn)
+        apply_row.addStretch(1)
+        controls_layout.addLayout(apply_row)
 
         layout.addWidget(controls_panel)
 
@@ -1273,8 +1292,7 @@ class DialogueVisualEditor(
         msg.setText("You have unsaved changes. Save before switching folders?")
         msg.setIcon(QMessageBox.Icon.Warning)
         save_btn = msg.addButton("Save All", QMessageBox.ButtonRole.AcceptRole)
-        discard_btn = msg.addButton(
-            "Discard", QMessageBox.ButtonRole.DestructiveRole)
+        msg.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
         cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         msg.exec()
 
@@ -1359,7 +1377,10 @@ class DialogueVisualEditor(
 
         if self.index_db is not None:
             self.index_db.close()
+        if self.version_db is not None:
+            self.version_db.close()
         self.index_db = DialogueIndexDB(self.data_dir / DB_FILENAME)
+        self.version_db = DialogueVersionDB(self.data_dir / VERSION_DB_FILENAME)
         self.translation_state_path = self.data_dir / TRANSLATION_STATE_FILENAME
         self._load_translation_state()
 
@@ -1396,8 +1417,8 @@ class DialogueVisualEditor(
             self._update_reset_json_button(None)
             self.save_btn.setEnabled(False)
             self.save_all_btn.setEnabled(False)
-            self.export_tl_btn.setEnabled(False)
-            self.export_tl_all_btn.setEnabled(False)
+            self.apply_version_combo.setEnabled(False)
+            self.apply_version_btn.setEnabled(False)
             self.selected_segment_uid = None
             self.current_reference_map = {}
             self._refresh_translator_detail_panel()
@@ -1414,6 +1435,14 @@ class DialogueVisualEditor(
                 self.segment_uid_counter = max(
                     self.segment_uid_counter, len(session.segments))
                 total_blocks += len(session.segments)
+                if self.version_db is not None:
+                    try:
+                        self.version_db.ensure_original_snapshot(
+                            self._relative_path(path),
+                            session.data,
+                        )
+                    except Exception:
+                        pass
                 if self.index_db is not None:
                     try:
                         self.index_db.update_file_index(
@@ -1429,8 +1458,8 @@ class DialogueVisualEditor(
         if not self.sessions:
             self.save_btn.setEnabled(False)
             self.save_all_btn.setEnabled(False)
-            self.export_tl_btn.setEnabled(False)
-            self.export_tl_all_btn.setEnabled(False)
+            self.apply_version_combo.setEnabled(False)
+            self.apply_version_btn.setEnabled(False)
             self.file_header_label.setText(
                 "No readable JSON files found in selected folder.")
             self._update_reset_json_button(None)
@@ -1453,8 +1482,8 @@ class DialogueVisualEditor(
 
         self.save_btn.setEnabled(True)
         self.save_all_btn.setEnabled(True)
-        self.export_tl_btn.setEnabled(True)
-        self.export_tl_all_btn.setEnabled(True)
+        self.apply_version_combo.setEnabled(True)
+        self.apply_version_btn.setEnabled(True)
         self._rebuild_file_list()
 
         visible_count = len(self._visible_file_paths())
@@ -1599,8 +1628,7 @@ class DialogueVisualEditor(
             msg.setIcon(QMessageBox.Icon.Warning)
             save_btn = msg.addButton(
                 "Save All", QMessageBox.ButtonRole.AcceptRole)
-            discard_btn = msg.addButton(
-                "Discard", QMessageBox.ButtonRole.DestructiveRole)
+            msg.addButton("Discard", QMessageBox.ButtonRole.DestructiveRole)
             cancel_btn = msg.addButton(
                 "Cancel", QMessageBox.ButtonRole.RejectRole)
             msg.exec()
@@ -1615,6 +1643,8 @@ class DialogueVisualEditor(
 
         if self.index_db is not None:
             self.index_db.close()
+        if self.version_db is not None:
+            self.version_db.close()
         self.audit_search_worker_timer.stop()
         self.audit_sanitize_worker_timer.stop()
         self.audit_control_worker_timer.stop()

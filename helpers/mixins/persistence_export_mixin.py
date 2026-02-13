@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import copy
-import json
 import re
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QMessageBox, QWidget
 
 from ..core.models import DialogueSegment, FileSession
-from ..core.parser import parse_dialogue_file
 from ..core.text_utils import chunk_lines
+
+ApplyVersionKind = Literal["original", "translated"]
 
 
 class _EditorHostTypingFallback:
@@ -226,75 +226,85 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                         self._build_entries_for_segment(token.segment))
             bundle.commands_ref[:] = rebuilt
 
-    def _save_session(self, session: FileSession, refresh_current_view: bool = False) -> bool:
+    def _build_source_data_for_session(self, session: FileSession) -> Any:
+        source_session = copy.deepcopy(session)
+        self._apply_session_to_json(source_session)
+        return source_session.data
+
+    def _mark_session_source_saved(self, session: FileSession) -> None:
+        for segment in session.segments:
+            normalized = list(segment.lines) if segment.lines else [""]
+            segment.lines = normalized
+            segment.original_lines = list(normalized)
+            segment.source_lines = list(normalized)
+            segment.inserted = False
+            segment.merged_segments = []
+
+    def _save_session_snapshot_to_db(self, session: FileSession) -> None:
+        if self.version_db is None:
+            raise RuntimeError("Version database is not initialized.")
+        rel_path = self._relative_path(session.path)
         if self._is_translator_mode():
-            if not self._save_translation_state([session.path]):
-                return False
-            self._mark_session_translation_saved(session)
-            self._refresh_dirty_state(session)
-            if refresh_current_view and self.current_path == session.path:
-                self._render_session(session)
-            self.statusBar().showMessage(
-                f"Saved TL state: {session.path.name}")
-            return True
+            translated_data = self._export_translated_data_for_session(session)
+        elif self._session_has_source_changes(session):
+            translated_data = self._build_source_data_for_session(session)
+        else:
+            translated_data = self._export_translated_data_for_session(session)
+        self.version_db.save_translated_snapshot(rel_path, translated_data)
 
+    def _save_session(self, session: FileSession, refresh_current_view: bool = False) -> bool:
+        if self.version_db is None:
+            QMessageBox.critical(
+                cast(QWidget, self),
+                "Save failed",
+                "Version database is not initialized. Reload the folder and try again.",
+            )
+            return False
+
+        translator_mode = self._is_translator_mode()
         try:
-            was_visible = session.path in self.file_items
-            changes = self._collect_change_log(session)
-            self._apply_session_to_json(session)
-
-            if self.backup_check.isChecked():
-                backup_path = session.path.with_suffix(
-                    session.path.suffix + ".bak")
-                if not backup_path.exists():
-                    shutil.copy2(session.path, backup_path)
-
-            with session.path.open("w", encoding="utf-8") as dst:
-                json.dump(session.data, dst, ensure_ascii=False, indent=0)
-
-            if self.index_db is not None:
-                try:
-                    rel = self._relative_path(session.path)
-                    self.index_db.log_changes(rel, changes)
-                except Exception:
-                    pass
-
             if not self._save_translation_state([session.path]):
                 return False
 
-            reloaded = parse_dialogue_file(session.path)
-            self._apply_translation_state_to_session(reloaded)
-            self.sessions[session.path] = reloaded
-            self._clear_structural_history_for_path(session.path)
-
-            now_visible = self.show_empty_files_check.isChecked() or bool(reloaded.segments)
-            if was_visible != now_visible:
-                self._rebuild_file_list(preferred_path=self.current_path)
-            else:
-                self._update_file_item_text(session.path)
-
+            self._save_session_snapshot_to_db(session)
             if self.index_db is not None:
                 try:
+                    rel_path = self._relative_path(session.path)
+                    self.index_db.log_changes(
+                        rel_path,
+                        self._collect_change_log(session),
+                    )
                     self.index_db.update_file_index(
-                        self._relative_path(session.path),
+                        rel_path,
                         session.path.stat().st_mtime,
-                        reloaded.segments,
+                        session.segments,
                     )
                 except Exception:
                     pass
 
-            if self.current_path == session.path and refresh_current_view:
-                self._render_session(reloaded)
+            if translator_mode:
+                self._mark_session_translation_saved(session)
             else:
-                self._refresh_dirty_state(reloaded)
+                self._mark_session_source_saved(session)
+                self._mark_session_translation_saved(session)
+                self._clear_structural_history_for_path(session.path)
 
-            self.statusBar().showMessage(f"Saved: {session.path.name}")
+            self._refresh_dirty_state(session)
+            if refresh_current_view and self.current_path == session.path:
+                self._render_session(session, preserve_scroll=True)
+
+            if translator_mode:
+                self.statusBar().showMessage(
+                    f"Saved TL snapshot to DB: {session.path.name}")
+            else:
+                self.statusBar().showMessage(
+                    f"Saved snapshot to DB: {session.path.name}")
             return True
         except Exception as exc:
             QMessageBox.critical(
                 cast(QWidget, self),
                 "Save failed",
-                f"Failed to save file:\n{session.path}\n\n{exc}",
+                f"Failed to save snapshot for:\n{session.path}\n\n{exc}",
             )
             return False
 
@@ -308,15 +318,17 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             QMessageBox.warning(cast(QWidget, self), "Not loaded",
                                 "Current file has not been loaded yet.")
             return False
-        if (not self._is_translator_mode()) and (not self._session_has_source_changes(session)):
-            if self._session_has_translation_changes(session):
-                if not self._save_translation_state([session.path]):
-                    return False
-                self._mark_session_translation_saved(session)
-                self._refresh_dirty_state(session)
-                self.statusBar().showMessage(
-                    f"Saved TL state: {session.path.name}")
+
+        source_dirty = self._session_has_source_changes(session)
+        tl_dirty = self._session_has_translation_changes(session)
+
+        if self._is_translator_mode():
+            if not tl_dirty:
+                self.statusBar().showMessage("No unsaved TL changes in current file.")
                 return True
+            return self._save_session(session, refresh_current_view=True)
+
+        if not source_dirty and not tl_dirty:
             self.statusBar().showMessage("No unsaved changes in current file.")
             return True
         return self._save_session(session, refresh_current_view=True)
@@ -373,36 +385,27 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
     def _save_all_files(self) -> bool:
         if self._is_translator_mode():
-            if not any(self._session_has_translation_changes(session) for session in self.sessions.values()):
+            dirty_paths = [
+                path
+                for path, session in self.sessions.items()
+                if self._session_has_translation_changes(session)
+            ]
+            if not dirty_paths:
                 self.statusBar().showMessage("No unsaved TL files.")
                 return True
-            if not self._save_translation_state(list(self.sessions.keys())):
-                return False
-            for session in self.sessions.values():
-                self._mark_session_translation_saved(session)
-                self._refresh_dirty_state(session)
-            if self.current_path is not None:
-                current = self.sessions.get(self.current_path)
-                if current is not None:
-                    self._render_session(current)
-            self.statusBar().showMessage("Saved TL state for all files.")
-            return True
-
-        source_dirty_paths = [
-            path for path, session in self.sessions.items()
-            if self._session_has_source_changes(session)
-        ]
-        tl_dirty_paths = [
-            path for path, session in self.sessions.items()
-            if self._session_has_translation_changes(session)
-        ]
-
-        if not source_dirty_paths and not tl_dirty_paths:
-            self.statusBar().showMessage("No unsaved files.")
-            return True
+        else:
+            dirty_paths = [
+                path
+                for path, session in self.sessions.items()
+                if self._session_has_source_changes(session)
+                or self._session_has_translation_changes(session)
+            ]
+            if not dirty_paths:
+                self.statusBar().showMessage("No unsaved files.")
+                return True
 
         failures: list[str] = []
-        for path in source_dirty_paths:
+        for path in dirty_paths:
             session = self.sessions.get(path)
             if session is None:
                 continue
@@ -411,19 +414,6 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             if not ok:
                 failures.append(path.name)
 
-        tl_only_paths = [
-            path for path in tl_dirty_paths if path not in source_dirty_paths]
-        if tl_only_paths and not failures:
-            if not self._save_translation_state(tl_only_paths):
-                failures.extend(path.name for path in tl_only_paths)
-            else:
-                for path in tl_only_paths:
-                    session = self.sessions.get(path)
-                    if session is None:
-                        continue
-                    self._mark_session_translation_saved(session)
-                    self._refresh_dirty_state(session)
-
         if failures:
             QMessageBox.warning(
                 cast(QWidget, self),
@@ -431,9 +421,104 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 "Some files failed to save:\n" + "\n".join(failures),
             )
             return False
-        saved_total = len(source_dirty_paths) + len(tl_only_paths)
-        self.statusBar().showMessage(f"Saved {saved_total} file(s).")
+
+        self.statusBar().showMessage(f"Saved {len(dirty_paths)} snapshot file(s) to DB.")
         return True
+
+    def _selected_apply_version(self) -> ApplyVersionKind:
+        raw = self.apply_version_combo.currentData()
+        if raw == "original":
+            return "original"
+        return "translated"
+
+    def _apply_selected_snapshot_to_game_files(self) -> None:
+        if self.data_dir is None:
+            QMessageBox.warning(
+                cast(QWidget, self),
+                "No folder selected",
+                "Load a data folder before applying snapshots.",
+            )
+            return
+        if self.version_db is None:
+            QMessageBox.warning(
+                cast(QWidget, self),
+                "Snapshot DB unavailable",
+                "Reload the data folder to initialize the snapshot database.",
+            )
+            return
+        if not self.sessions:
+            QMessageBox.warning(
+                cast(QWidget, self),
+                "No files loaded",
+                "Load files before applying snapshots.",
+            )
+            return
+        if not self._prompt_unsaved_if_any():
+            return
+
+        version = self._selected_apply_version()
+        version_label = "Original" if version == "original" else "Translated"
+        button = QMessageBox.question(
+            cast(QWidget, self),
+            "Apply snapshots to game files",
+            (
+                f"Apply '{version_label}' snapshots to JSON game files in:\n"
+                f"{self.data_dir}\n\n"
+                "This will overwrite current file contents."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if button != QMessageBox.StandardButton.Yes:
+            return
+
+        applied = 0
+        missing: list[str] = []
+        failed: list[str] = []
+        target_paths = [path for path in self.file_paths if path in self.sessions]
+        for path in target_paths:
+            rel_path = self._relative_path(path)
+            payload = self.version_db.get_snapshot_payload(rel_path, version)
+            if not payload:
+                missing.append(path.name)
+                continue
+            try:
+                if self.backup_check.isChecked():
+                    backup_path = path.with_suffix(path.suffix + ".bak")
+                    if not backup_path.exists():
+                        shutil.copy2(path, backup_path)
+                with path.open("w", encoding="utf-8") as dst:
+                    dst.write(payload)
+                applied += 1
+            except Exception as exc:
+                failed.append(f"{path.name}: {exc}")
+
+        if failed:
+            QMessageBox.warning(
+                cast(QWidget, self),
+                "Apply completed with errors",
+                "Some files failed:\n" + "\n".join(failed),
+            )
+        if missing:
+            QMessageBox.warning(
+                cast(QWidget, self),
+                "Missing snapshots",
+                "No snapshot found for:\n" + "\n".join(missing),
+            )
+        if applied <= 0:
+            self.statusBar().showMessage("No files were applied.")
+            return
+
+        current_dir = self.data_dir
+        self._load_data_folder(current_dir)
+        if missing or failed:
+            self.statusBar().showMessage(
+                f"Applied {version_label} snapshots to {applied} file(s) with warnings."
+            )
+        else:
+            self.statusBar().showMessage(
+                f"Applied {version_label} snapshots to {applied} file(s)."
+            )
 
     def _export_translated_data_for_session(self, session: FileSession) -> Any:
         exported_session = copy.deepcopy(session)
@@ -458,71 +543,3 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
         self._apply_session_to_json(exported_session)
         return exported_session.data
-
-    def _export_session_to_folder(self, session: FileSession, out_dir: Path) -> bool:
-        try:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            output_path = out_dir / session.path.name
-            exported_data = self._export_translated_data_for_session(session)
-            with output_path.open("w", encoding="utf-8") as dst:
-                json.dump(exported_data, dst, ensure_ascii=False, indent=0)
-            return True
-        except Exception as exc:
-            QMessageBox.critical(
-                cast(QWidget, self),
-                "Export failed",
-                f"Failed to export translation file:\n{session.path.name}\n\n{exc}",
-            )
-            return False
-
-    def _choose_export_folder(self) -> Optional[Path]:
-        if self.data_dir is None:
-            return None
-        chosen = QFileDialog.getExistingDirectory(
-            cast(QWidget, self),
-            "Select export folder",
-            str(self.data_dir.parent),
-        )
-        if not chosen:
-            return None
-        return Path(chosen).resolve()
-
-    def _export_current_translation(self) -> None:
-        if self.current_path is None:
-            QMessageBox.warning(
-                cast(QWidget, self), "No file selected", "Select a file before exporting.")
-            return
-        session = self.sessions.get(self.current_path)
-        if session is None:
-            QMessageBox.warning(cast(QWidget, self), "Not loaded",
-                                "Current file has not been loaded yet.")
-            return
-        out_dir = self._choose_export_folder()
-        if out_dir is None:
-            return
-        if self._export_session_to_folder(session, out_dir):
-            self.statusBar().showMessage(
-                f"Exported TL file: {session.path.name}")
-
-    def _export_all_translations(self) -> None:
-        if not self.sessions:
-            QMessageBox.warning(cast(QWidget, self), "No files loaded",
-                                "Load files before exporting translations.")
-            return
-        out_dir = self._choose_export_folder()
-        if out_dir is None:
-            return
-
-        failed: list[str] = []
-        for session in self.sessions.values():
-            if not self._export_session_to_folder(session, out_dir):
-                failed.append(session.path.name)
-        if failed:
-            QMessageBox.warning(
-                cast(QWidget, self),
-                "Export completed with errors",
-                "Failed to export:\n" + "\n".join(failed),
-            )
-            return
-        self.statusBar().showMessage(
-            f"Exported TL files: {len(self.sessions)}")

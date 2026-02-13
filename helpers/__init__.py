@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .core import DialogueIndexDB
+from .core import DialogueIndexDB, DialogueVersionDB
 from .core.models import (
     CommandBundle,
     CommandToken,
@@ -36,6 +36,7 @@ __all__ = [
     "CommandToken",
     "DeletedBlockAction",
     "DialogueIndexDB",
+    "DialogueVersionDB",
     "DialogueSegment",
     "FileSession",
     "InsertedBlockAction",
