@@ -707,8 +707,12 @@ class MassTranslateDialog(QDialog):
         if self.chunk_combo.count() > 0:
             self.chunk_combo.setCurrentIndex(0)
             self._on_chunk_changed(0)
+        chunk_count = len(self.chunk_payloads)
+        chunk_label = "chunk" if chunk_count == 1 else "chunks"
+        entry_count = len(entries)
+        entry_label = "entry" if entry_count == 1 else "entries"
         self.chunk_summary_label.setText(
-            f"Built {len(self.chunk_payloads)} chunk(s) from {len(entries)} entries."
+            f"Built {chunk_count} {chunk_label} from {entry_count} {entry_label}."
         )
         self.result_box.setPlainText(
             "Chunks built. Use Copy Prompt, send to your LLM, then paste JSON output and apply."
@@ -948,8 +952,9 @@ class MassTranslateDialog(QDialog):
                 expected_line_count = len(
                     self.editor._segment_source_lines_for_display(segment))
                 if len(lines) != expected_line_count:
+                    line_label = "line" if len(lines) == 1 else "lines"
                     line_count_mismatches.append(
-                        f"{entry_id} ({len(lines)} line(s), expected {expected_line_count})"
+                        f"{entry_id} ({len(lines)} {line_label}, expected {expected_line_count})"
                     )
                 current_lines = self.editor._normalize_translation_lines(
                     segment.translation_lines)

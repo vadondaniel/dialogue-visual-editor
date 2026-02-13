@@ -764,12 +764,16 @@ class RenderMixin(_RenderHostTypingFallback):
         source_dirty, tl_dirty = self._session_dirty_flags_cached(session)
 
         if actor_mode:
+            entry_count = len(session.segments)
+            entry_label = "entry" if entry_count == 1 else "entries"
             header = (
-                f"{session.path.name} | {len(session.segments)} "
-                f"{name_index_label.lower()} entry(ies)"
+                f"{session.path.name} | {entry_count} "
+                f"{name_index_label.lower()} {entry_label}"
             )
         else:
-            header = f"{session.path.name} | {len(session.segments)} dialogue block(s)"
+            block_count = len(session.segments)
+            block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
+            header = f"{session.path.name} | {block_count} {block_label}"
         if source_dirty and tl_dirty:
             header += " | UNSAVED SOURCE+TL"
         elif source_dirty:

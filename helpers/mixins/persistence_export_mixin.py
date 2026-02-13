@@ -75,7 +75,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         session.dirty = source_dirty or tl_dirty
         self._update_file_item_text(session.path)
         if self.current_path == session.path:
-            header = f"{session.path.name} | {len(session.segments)} dialogue block(s)"
+            block_count = len(session.segments)
+            block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
+            header = f"{session.path.name} | {block_count} {block_label}"
             if source_dirty and tl_dirty:
                 header += " | UNSAVED SOURCE+TL"
             elif source_dirty:
@@ -473,7 +475,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             )
             return False
 
-        self.statusBar().showMessage(f"Saved {len(dirty_paths)} snapshot file(s) to DB.")
+        saved_count = len(dirty_paths)
+        file_label = "snapshot file" if saved_count == 1 else "snapshot files"
+        self.statusBar().showMessage(f"Saved {saved_count} {file_label} to DB.")
         return True
 
     def _selected_apply_version(self) -> ApplyVersionKind:
@@ -575,12 +579,14 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         current_dir = self.data_dir
         self._load_data_folder(current_dir)
         if missing or failed:
+            file_label = "file" if applied == 1 else "files"
             self.statusBar().showMessage(
-                f"Applied {version_label} snapshots to {applied} file(s) with warnings."
+                f"Applied {version_label} snapshots to {applied} {file_label} with warnings."
             )
         else:
+            file_label = "file" if applied == 1 else "files"
             self.statusBar().showMessage(
-                f"Applied {version_label} snapshots to {applied} file(s)."
+                f"Applied {version_label} snapshots to {applied} {file_label}."
             )
 
     def _export_translated_data_for_session(self, session: FileSession) -> Any:

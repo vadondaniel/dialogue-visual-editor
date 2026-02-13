@@ -773,8 +773,10 @@ class ItemNameDescriptionWidget(QFrame):
     def _refresh_status(self) -> None:
         name_chars = sum(len(line) for line in self._raw_name_lines)
         desc_chars = sum(len(line) for line in self._raw_desc_lines)
+        name_label = "char" if name_chars == 1 else "chars"
+        desc_label = "char" if desc_chars == 1 else "chars"
         self.status_label.setText(
-            f"name: {name_chars} char(s) | description: {desc_chars} char(s)")
+            f"name: {name_chars} {name_label} | description: {desc_chars} {desc_label}")
         current = self._merge_combined_lines()
         if self.translator_mode:
             self.reset_button.setEnabled(
@@ -1599,8 +1601,10 @@ class DialogueBlockWidget(QFrame):
         lines = self._current_lines()
         if self.actor_mode:
             char_count = sum(len(line) for line in lines)
+            line_label = "line" if len(lines) == 1 else "lines"
+            char_label = "char" if char_count == 1 else "chars"
             self.status_label.setText(
-                f"{len(lines)} line(s), {char_count} char(s)")
+                f"{len(lines)} {line_label}, {char_count} {char_label}")
             self._has_warning = False
             self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
             self.move_overflow_button.setVisible(False)
@@ -1628,9 +1632,11 @@ class DialogueBlockWidget(QFrame):
             if visible_length(line) > width_chars:
                 over_width.append(idx)
 
-        text = f"{len(lines)} line(s), width hint: {width_chars} chars ({width_mode})"
+        line_label = "line" if len(lines) == 1 else "lines"
+        text = f"{len(lines)} {line_label}, width hint: {width_chars} chars ({width_mode})"
         if over_width:
-            text += f", over width on line(s): {', '.join(str(i) for i in over_width[:6])}"
+            over_width_label = "line" if len(over_width) == 1 else "lines"
+            text += f", over width on {over_width_label}: {', '.join(str(i) for i in over_width[:6])}"
             if len(over_width) > 6:
                 text += "..."
         overflow_count = max(0, len(lines) - self.max_lines)
@@ -1638,7 +1644,8 @@ class DialogueBlockWidget(QFrame):
         if max_lines_over:
             text += f", exceeds max lines ({self.max_lines})"
             if self.allow_structural_actions:
-                text += f" -> move {overflow_count} line(s) below"
+                overflow_line_label = "line" if overflow_count == 1 else "lines"
+                text += f" -> move {overflow_count} {overflow_line_label} below"
 
         self.status_label.setText(text)
         has_warning = bool(over_width) or max_lines_over

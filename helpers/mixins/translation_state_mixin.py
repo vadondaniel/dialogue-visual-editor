@@ -466,8 +466,10 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                         f"{row['file']}#{row['block_number']}: {preview_text(sample_tl, 48)}"
                     )
                 exact_scope = "in other files" if exact_cross_file else "in this file/folder"
+                block_label = "block" if len(exact_pool) == 1 else "blocks"
+                variant_label = "variant" if len(en_variants) == 1 else "variants"
                 exact_summary = (
-                    f"Exact JP matches {exact_scope}: {len(exact_pool)} block(s), EN variants: {len(en_variants)}."
+                    f"Exact JP matches {exact_scope}: {len(exact_pool)} {block_label}, EN {variant_label}: {len(en_variants)}."
                 )
                 if samples:
                     exact_summary += " " + " | ".join(samples)
@@ -501,7 +503,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                         sample_parts.append(
                             f"{row['file']}#{row['block_number']} ({ratio:.2f}): {preview_text(sample_tl, 44)}"
                         )
-                    similar_summary = f"Similar JP phrases: {len(scored)} candidate(s). " + " | ".join(
+                    candidate_label = "candidate" if len(scored) == 1 else "candidates"
+                    similar_summary = f"Similar JP phrases: {len(scored)} {candidate_label}. " + " | ".join(
                         sample_parts)
                 else:
                     similar_summary = "Similar JP phrases: none."

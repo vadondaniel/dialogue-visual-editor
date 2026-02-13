@@ -183,7 +183,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self._hide_audit_progress_overlay(self.main_render_progress_overlay)
 
         source_dirty, tl_dirty = self._session_dirty_flags_cached(session)
-        header = f"{session.path.name} | {len(session.segments)} dialogue block(s)"
+        block_count = len(session.segments)
+        block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
+        header = f"{session.path.name} | {block_count} {block_label}"
         if source_dirty and tl_dirty:
             header += " | UNSAVED SOURCE+TL"
         elif source_dirty:
@@ -551,8 +553,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self._refresh_dirty_state(session)
         self._render_session(
             session, focus_uid=new_segment.uid, preserve_scroll=True)
+        line_label = "line" if len(moved_lines) == 1 else "lines"
         self.statusBar().showMessage(
-            f"Moved {len(moved_lines)} overflow line(s) to a new block below."
+            f"Moved {len(moved_lines)} overflow {line_label} to a new block below."
         )
 
     def _on_merge_pair_requested(self, left_uid: str, right_uid: str) -> None:
@@ -717,8 +720,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         ):
             self._render_session(session, focus_uid=uid, preserve_scroll=True)
         if restored_count > 0:
+            block_label = "block" if restored_count == 1 else "blocks"
             self.statusBar().showMessage(
-                f"Reset block and restored {restored_count} merged block(s).")
+                f"Reset block and restored {restored_count} merged {block_label}.")
         else:
             self.statusBar().showMessage("Reset block.")
 

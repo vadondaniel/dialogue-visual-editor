@@ -1067,8 +1067,9 @@ class DialogueVisualEditor(
 
         if changed_blocks > 0:
             value_display = cleaned if cleaned else "(blank)"
+            block_label = "block" if changed_blocks == 1 else "blocks"
             self.statusBar().showMessage(
-                f"Set Speaker EN for '{key}' to '{value_display}' in {changed_blocks} block(s)."
+                f"Set Speaker EN for '{key}' to '{value_display}' in {changed_blocks} {block_label}."
             )
         elif map_changed:
             value_display = cleaned if cleaned else "(blank)"
@@ -1254,8 +1255,9 @@ class DialogueVisualEditor(
                 self._render_session(session, preserve_scroll=True)
 
         if changed_blocks > 0:
+            block_label = "block" if changed_blocks == 1 else "blocks"
             self.statusBar().showMessage(
-                f"Renamed speaker '{old_name}' -> '{new_name}' in {changed_blocks} block(s)."
+                f"Renamed speaker '{old_name}' -> '{new_name}' in {changed_blocks} {block_label}."
             )
         else:
             self.statusBar().showMessage(
@@ -1857,10 +1859,11 @@ class DialogueVisualEditor(
         visible_count = len(self._visible_file_paths())
         infer_suffix = " Infer speaker-from-line1 enabled (no explicit speakers found)." if auto_enabled_infer else ""
         if load_errors:
+            skipped_label = "file" if len(load_errors) == 1 else "files"
             self.statusBar().showMessage(
                 f"Loaded {len(self.sessions)} files ({visible_count} shown), "
                 f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}. "
-                f"Skipped {len(load_errors)} unreadable file(s).{infer_suffix}"
+                f"Skipped {len(load_errors)} unreadable {skipped_label}.{infer_suffix}"
             )
         else:
             self.statusBar().showMessage(

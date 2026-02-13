@@ -79,8 +79,9 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
         self._invalidate_audit_caches()
         self._refresh_audit_sanitize_panel()
         self._refresh_audit_control_mismatch_panel()
+        replacement_label = "replacement" if replacements == 1 else "replacements"
         self.statusBar().showMessage(
-            f"Applied sanitize rule to entry: {replacements} replacement(s)."
+            f"Applied sanitize rule to entry: {replacements} {replacement_label}."
         )
 
     def _apply_sanitize_rules_to_lines(
@@ -186,8 +187,10 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
         self._invalidate_audit_caches()
         self._refresh_audit_sanitize_panel()
         self._refresh_audit_control_mismatch_panel()
+        replacement_label = "replacement" if total_replacements == 1 else "replacements"
+        segment_label = "segment" if changed_segments == 1 else "segments"
         self.statusBar().showMessage(
-            f"Applied sanitize rules: {total_replacements} replacement(s) in {changed_segments} segment(s)."
+            f"Applied sanitize rules: {total_replacements} {replacement_label} in {changed_segments} {segment_label}."
         )
 
     def _apply_selected_audit_sanitize_rule(self) -> None:

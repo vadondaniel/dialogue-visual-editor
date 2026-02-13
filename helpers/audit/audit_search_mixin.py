@@ -355,8 +355,9 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self.audit_search_displayed_key = cache_key
             self.audit_search_display_complete = True
             return
+        match_label = "match" if len(records) == 1 else "matches"
         self.audit_search_status_label.setText(
-            f"Found {len(records)} match(es) for '{query}' in {scope}."
+            f"Found {len(records)} {match_label} for '{query}' in {scope}."
         )
         self._set_audit_progress_overlay(
             self.audit_search_results_list,
@@ -432,8 +433,9 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         ):
             rows = self.audit_search_results_list.count()
             if rows > 0:
+                match_label = "match" if rows == 1 else "matches"
                 self.audit_search_status_label.setText(
-                    f"Found {rows} match(es) for '{query}' in {scope}."
+                    f"Found {rows} {match_label} for '{query}' in {scope}."
                 )
                 self.audit_search_goto_btn.setEnabled(
                     self.audit_search_results_list.currentItem() is not None
@@ -472,8 +474,9 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
                 self.audit_search_display_complete = True
                 self._refresh_audit_search_replace_preview()
                 return
+            match_label = "match" if len(records) == 1 else "matches"
             self.audit_search_status_label.setText(
-                f"Found {len(records)} match(es) for '{query}' in {scope}."
+                f"Found {len(records)} {match_label} for '{query}' in {scope}."
             )
             self._set_audit_progress_overlay(
                 self.audit_search_results_list,
@@ -578,8 +581,9 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             case_sensitive,
         )
         self.audit_search_display_complete = True
+        match_label = "match" if total == 1 else "matches"
         self.audit_search_status_label.setText(
-            f"Found {total} match(es) for '{query}' in {scope}."
+            f"Found {total} {match_label} for '{query}' in {scope}."
         )
         self._refresh_audit_search_replace_preview()
         self._stop_audit_search_render()
@@ -857,8 +861,9 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self._refresh_translator_detail_panel()
         self._run_audit_search()
         self._refresh_audit_search_replace_preview()
+        match_label = "match" if replacements == 1 else "matches"
         self.statusBar().showMessage(
-            f"Replaced {replacements} match(es) in selected result."
+            f"Replaced {replacements} {match_label} in selected result."
         )
 
     def _replace_all_audit_search_results(self) -> None:
@@ -890,7 +895,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             "Replace all matches",
             (
                 f"Replace '{find_text}' with '{replace_text}' "
-                f"in {result_count} result entry(ies)?"
+                f"in {result_count} result {'entry' if result_count == 1 else 'entries'}?"
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -954,6 +959,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self._refresh_translator_detail_panel()
         self._run_audit_search()
         self._refresh_audit_search_replace_preview()
+        match_label = "match" if total_replacements == 1 else "matches"
+        entry_label = "entry" if changed_entries == 1 else "entries"
         self.statusBar().showMessage(
-            f"Replaced {total_replacements} match(es) in {changed_entries} result entry(ies)."
+            f"Replaced {total_replacements} {match_label} in {changed_entries} result {entry_label}."
         )

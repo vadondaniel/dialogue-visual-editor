@@ -64,7 +64,9 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             for occurrence in occurrences
         )
         line_count = len(occurrences)
-        header_text = f"{relative_path} | {entry_text} | {total_hits} hit(s) across {line_count} line(s)"
+        hit_label = "hit" if total_hits == 1 else "hits"
+        line_label = "line" if line_count == 1 else "lines"
+        header_text = f"{relative_path} | {entry_text} | {total_hits} {hit_label} across {line_count} {line_label}"
 
         item = QListWidgetItem()
         item.setFlags(
@@ -423,7 +425,7 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         ] = cast(dict[str, Any], dict(self.audit_sanitize_occurrence_cache_payload))
         if block_count <= 0:
             self.audit_sanitize_summary_label.setText(
-                f"{prefix} Selected rule: 0 hits in 0 line(s) across 0 block(s)."
+                f"{prefix} Selected rule: 0 hits in 0 lines across 0 blocks."
             )
             self._set_audit_sanitize_occurrence_view_visibility(None)
             self.audit_sanitize_displayed_key = view_key
@@ -433,8 +435,10 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             return
 
         if view_key in self.audit_sanitize_built_view_keys:
+            line_label = "line" if entries == 1 else "lines"
+            block_label = "block" if block_count == 1 else "blocks"
             self.audit_sanitize_summary_label.setText(
-                f"{prefix} Selected rule: {total_hits} hits in {entries} line(s) across {block_count} block(s)."
+                f"{prefix} Selected rule: {total_hits} hits in {entries} {line_label} across {block_count} {block_label}."
             )
             self._set_audit_sanitize_occurrence_view_visibility(view_key)
             self.audit_sanitize_displayed_key = view_key
@@ -443,8 +447,10 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
                 self.audit_sanitize_progress_overlay)
             return
 
+        line_label = "line" if entries == 1 else "lines"
+        block_label = "block" if block_count == 1 else "blocks"
         self.audit_sanitize_summary_label.setText(
-            f"{prefix} Selected rule: {total_hits} hits in {entries} line(s) across {block_count} block(s)."
+            f"{prefix} Selected rule: {total_hits} hits in {entries} {line_label} across {block_count} {block_label}."
         )
         self._set_audit_progress_overlay(
             self.audit_sanitize_occurrences_list,
@@ -605,9 +611,19 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
                     f"Potential replacements: {self.audit_sanitize_total_hits} across "
                     f"{self.audit_sanitize_rules_with_hits}/{len(SANITIZE_CHAR_RULES)} rules."
                 )
+                line_label = (
+                    "line"
+                    if self.audit_sanitize_render_entries == 1
+                    else "lines"
+                )
+                block_label = (
+                    "block"
+                    if self.audit_sanitize_render_block_count == 1
+                    else "blocks"
+                )
                 self.audit_sanitize_summary_label.setText(
                     f"{prefix} Selected rule: {self.audit_sanitize_render_total_hits} hits in "
-                    f"{self.audit_sanitize_render_entries} line(s) across {self.audit_sanitize_render_block_count} block(s)."
+                    f"{self.audit_sanitize_render_entries} {line_label} across {self.audit_sanitize_render_block_count} {block_label}."
                 )
             if end < total_blocks:
                 self._set_audit_progress_overlay(

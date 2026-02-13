@@ -240,16 +240,18 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             shown = self.audit_control_mismatch_results_list.count()
             scanned = self.audit_control_mismatch_cache_scanned_blocks
             if shown > 0:
+                shown_label = "block" if shown == 1 else "blocks"
                 self.audit_control_mismatch_status_label.setText(
-                    f"Found {shown} mismatched block(s) out of {scanned} scanned."
+                    f"Found {shown} mismatched {shown_label} out of {scanned} scanned."
                 )
                 self.audit_control_mismatch_goto_btn.setEnabled(
                     self.audit_control_mismatch_results_list.currentItem() is not None
                 )
             else:
                 suffix = " (translated only)." if only_translated else "."
+                scanned_label = "block" if scanned == 1 else "blocks"
                 self.audit_control_mismatch_status_label.setText(
-                    f"No control mismatches found across {scanned} scanned block(s){suffix}"
+                    f"No control mismatches found across {scanned} scanned {scanned_label}{suffix}"
                 )
                 self.audit_control_mismatch_goto_btn.setEnabled(False)
             return
@@ -271,14 +273,16 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             mismatched_blocks = len(records)
             if mismatched_blocks <= 0:
                 suffix = " (translated only)." if only_translated else "."
+                scanned_label = "block" if scanned_blocks == 1 else "blocks"
                 self.audit_control_mismatch_status_label.setText(
-                    f"No control mismatches found across {scanned_blocks} scanned block(s){suffix}"
+                    f"No control mismatches found across {scanned_blocks} scanned {scanned_label}{suffix}"
                 )
                 self.audit_control_mismatch_displayed_key = cache_key
                 self.audit_control_mismatch_display_complete = True
                 return
+            mismatched_label = "block" if mismatched_blocks == 1 else "blocks"
             self.audit_control_mismatch_status_label.setText(
-                f"Found {mismatched_blocks} mismatched block(s) out of {scanned_blocks} scanned."
+                f"Found {mismatched_blocks} mismatched {mismatched_label} out of {scanned_blocks} scanned."
             )
             self._set_audit_progress_overlay(
                 self.audit_control_mismatch_results_list,
@@ -431,14 +435,16 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
         mismatched_blocks = len(records)
         if mismatched_blocks <= 0:
             suffix = " (translated only)." if only_translated else "."
+            scanned_label = "block" if scanned_blocks == 1 else "blocks"
             self.audit_control_mismatch_status_label.setText(
-                f"No control mismatches found across {scanned_blocks} scanned block(s){suffix}"
+                f"No control mismatches found across {scanned_blocks} scanned {scanned_label}{suffix}"
             )
             self.audit_control_mismatch_displayed_key = cache_key
             self.audit_control_mismatch_display_complete = True
             return
+        mismatched_label = "block" if mismatched_blocks == 1 else "blocks"
         self.audit_control_mismatch_status_label.setText(
-            f"Found {mismatched_blocks} mismatched block(s) out of {scanned_blocks} scanned."
+            f"Found {mismatched_blocks} mismatched {mismatched_label} out of {scanned_blocks} scanned."
         )
         self._set_audit_progress_overlay(
             self.audit_control_mismatch_results_list,
@@ -506,8 +512,9 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             bool(self.audit_control_mismatch_render_only_translated),
         )
         self.audit_control_mismatch_display_complete = True
+        total_label = "block" if total == 1 else "blocks"
         self.audit_control_mismatch_status_label.setText(
-            f"Found {total} mismatched block(s) out of {scanned_blocks} scanned."
+            f"Found {total} mismatched {total_label} out of {scanned_blocks} scanned."
         )
         self._stop_audit_control_mismatch_render()
 
