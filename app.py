@@ -1328,8 +1328,35 @@ class DialogueVisualEditor(
         except ValueError:
             return str(path)
 
+    def _focus_existing_block_widget(self, uid: str) -> bool:
+        widget = self.block_widgets.get(uid)
+        if widget is None:
+            return False
+        if uid in self.current_segment_lookup:
+            self.selected_segment_uid = uid
+        self._refresh_block_visual_states()
+        self._refresh_translator_detail_panel()
+
+        def focus_and_reveal() -> None:
+            widget.focus_editor()
+            self.scroll_area.ensureWidgetVisible(widget, 20, 20)
+
+        QTimer.singleShot(0, focus_and_reveal)
+        return True
+
     def _open_file(self, path: Path, force_reload: bool = False, focus_uid: Optional[str] = None) -> None:
         previous_path = self.current_path
+        if (
+            not force_reload
+            and previous_path is not None
+            and previous_path == path
+            and self._pending_render_state is None
+        ):
+            if focus_uid is None:
+                return
+            if self._focus_existing_block_widget(focus_uid):
+                return
+
         if (
             not force_reload
             and focus_uid is None
