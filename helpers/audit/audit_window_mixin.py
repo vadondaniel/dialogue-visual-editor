@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QTabWidget,
@@ -75,6 +76,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
                 self.audit_sanitize_scope_combo.setCurrentIndex(scope_index)
             self._refresh_audit_sanitize_panel()
         self._refresh_audit_control_mismatch_panel()
+        self._refresh_audit_consistency_panel()
         if self.audit_window is None:
             return
         self.audit_window.show()
@@ -236,6 +238,74 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
 
         tabs.addTab(control_tab, "Control Mismatch")
 
+        consistency_tab = QWidget()
+        consistency_layout = QVBoxLayout(consistency_tab)
+        consistency_layout.setContentsMargins(8, 8, 8, 8)
+        consistency_layout.setSpacing(8)
+
+        consistency_controls_row = QHBoxLayout()
+        consistency_controls_row.setContentsMargins(0, 0, 0, 0)
+        consistency_controls_row.setSpacing(6)
+        consistency_only_inconsistent_check = QCheckBox("Only inconsistent")
+        consistency_only_inconsistent_check.setChecked(True)
+        consistency_controls_row.addWidget(consistency_only_inconsistent_check)
+        consistency_controls_row.addStretch(1)
+        consistency_refresh_btn = QPushButton("Refresh")
+        consistency_controls_row.addWidget(consistency_refresh_btn)
+        consistency_layout.addLayout(consistency_controls_row)
+
+        consistency_splitter = QSplitter(Qt.Orientation.Horizontal)
+        consistency_layout.addWidget(consistency_splitter, 1)
+
+        consistency_groups_panel = QWidget()
+        consistency_groups_layout = QVBoxLayout(consistency_groups_panel)
+        consistency_groups_layout.setContentsMargins(0, 0, 0, 0)
+        consistency_groups_layout.setSpacing(6)
+        consistency_groups_layout.addWidget(QLabel("Duplicate Source Groups"))
+        consistency_groups_list = QListWidget()
+        consistency_groups_layout.addWidget(consistency_groups_list, 1)
+        consistency_splitter.addWidget(consistency_groups_panel)
+
+        consistency_entries_panel = QWidget()
+        consistency_entries_layout = QVBoxLayout(consistency_entries_panel)
+        consistency_entries_layout.setContentsMargins(0, 0, 0, 0)
+        consistency_entries_layout.setSpacing(6)
+        consistency_entries_layout.addWidget(
+            QLabel("Entries In Selected Group"))
+        consistency_entries_list = QListWidget()
+        consistency_entries_layout.addWidget(consistency_entries_list, 1)
+        consistency_entries_layout.addWidget(QLabel("Sync Translation Target"))
+        consistency_target_edit = QPlainTextEdit()
+        consistency_target_edit.setPlaceholderText(
+            "Type translation to apply to all entries in selected group."
+        )
+        consistency_target_edit.setFixedHeight(84)
+        consistency_entries_layout.addWidget(consistency_target_edit)
+        consistency_actions_row = QHBoxLayout()
+        consistency_actions_row.setContentsMargins(0, 0, 0, 0)
+        consistency_actions_row.setSpacing(6)
+        consistency_use_selected_btn = QPushButton("Use Selected")
+        consistency_use_common_btn = QPushButton("Use Most Common")
+        consistency_apply_btn = QPushButton("Apply To Group")
+        consistency_goto_btn = QPushButton("Go To Entry")
+        consistency_use_selected_btn.setEnabled(False)
+        consistency_use_common_btn.setEnabled(False)
+        consistency_apply_btn.setEnabled(False)
+        consistency_goto_btn.setEnabled(False)
+        consistency_actions_row.addWidget(consistency_use_selected_btn)
+        consistency_actions_row.addWidget(consistency_use_common_btn)
+        consistency_actions_row.addStretch(1)
+        consistency_actions_row.addWidget(consistency_apply_btn)
+        consistency_actions_row.addWidget(consistency_goto_btn)
+        consistency_entries_layout.addLayout(consistency_actions_row)
+        consistency_status_label = QLabel("Duplicate groups: 0 | Duplicate entries: 0")
+        consistency_entries_layout.addWidget(consistency_status_label)
+        consistency_splitter.addWidget(consistency_entries_panel)
+        consistency_splitter.setStretchFactor(0, 4)
+        consistency_splitter.setStretchFactor(1, 6)
+
+        tabs.addTab(consistency_tab, "Consistency")
+
         search_progress_overlay = self._create_audit_progress_overlay(
             results_list)
         sanitize_progress_overlay = self._create_audit_progress_overlay(
@@ -271,6 +341,15 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_control_mismatch_goto_btn = control_goto_btn
         self.audit_control_mismatch_progress_overlay = control_progress_overlay
         self.audit_control_mismatch_only_translated_check = control_only_translated_check
+        self.audit_consistency_only_inconsistent_check = consistency_only_inconsistent_check
+        self.audit_consistency_groups_list = consistency_groups_list
+        self.audit_consistency_entries_list = consistency_entries_list
+        self.audit_consistency_target_edit = consistency_target_edit
+        self.audit_consistency_status_label = consistency_status_label
+        self.audit_consistency_goto_btn = consistency_goto_btn
+        self.audit_consistency_apply_btn = consistency_apply_btn
+        self.audit_consistency_use_selected_btn = consistency_use_selected_btn
+        self.audit_consistency_use_common_btn = consistency_use_common_btn
 
         for rule_id, label, find_text, replace_text in SANITIZE_CHAR_RULES:
             item = QListWidgetItem()
@@ -388,10 +467,44 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         control_goto_btn.clicked.connect(
             self._go_to_selected_audit_control_mismatch)
+        consistency_only_inconsistent_check.toggled.connect(
+            lambda _checked: self._refresh_audit_consistency_panel()
+        )
+        consistency_refresh_btn.clicked.connect(
+            lambda: self._refresh_audit_consistency_panel()
+        )
+        consistency_groups_list.currentItemChanged.connect(
+            lambda _current, _previous: self._refresh_audit_consistency_entries()
+        )
+        consistency_entries_list.currentItemChanged.connect(
+            lambda current, _previous: (
+                consistency_goto_btn.setEnabled(current is not None),
+                consistency_use_selected_btn.setEnabled(current is not None),
+            )
+        )
+        consistency_entries_list.itemDoubleClicked.connect(
+            lambda _item: self._go_to_selected_audit_consistency_entry()
+        )
+        consistency_entries_list.itemActivated.connect(
+            lambda _item: self._go_to_selected_audit_consistency_entry()
+        )
+        consistency_goto_btn.clicked.connect(
+            self._go_to_selected_audit_consistency_entry
+        )
+        consistency_use_selected_btn.clicked.connect(
+            self._use_selected_audit_consistency_entry
+        )
+        consistency_use_common_btn.clicked.connect(
+            self._use_most_common_audit_consistency_translation
+        )
+        consistency_apply_btn.clicked.connect(
+            self._apply_audit_consistency_target_to_group
+        )
         tabs.currentChanged.connect(self._on_audit_tab_changed)
 
         self._refresh_audit_sanitize_panel()
         self._refresh_audit_control_mismatch_panel()
+        self._refresh_audit_consistency_panel()
         self._refresh_audit_search_replace_preview()
 
     def _on_audit_tab_changed(self, _index: int) -> None:
@@ -400,3 +513,4 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self._hide_audit_progress_overlay(
             self.audit_control_mismatch_progress_overlay)
         self._refresh_audit_sanitize_panel()
+        self._refresh_audit_consistency_panel()

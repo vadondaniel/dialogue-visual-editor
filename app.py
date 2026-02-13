@@ -193,6 +193,15 @@ class DialogueVisualEditor(
         self.audit_control_mismatch_goto_btn: Optional[QPushButton] = None
         self.audit_control_mismatch_progress_overlay: Optional[QLabel] = None
         self.audit_control_mismatch_only_translated_check: Optional[QCheckBox] = None
+        self.audit_consistency_only_inconsistent_check: Optional[QCheckBox] = None
+        self.audit_consistency_groups_list: Optional[QListWidget] = None
+        self.audit_consistency_entries_list: Optional[QListWidget] = None
+        self.audit_consistency_target_edit: Optional[QPlainTextEdit] = None
+        self.audit_consistency_status_label: Optional[QLabel] = None
+        self.audit_consistency_goto_btn: Optional[QPushButton] = None
+        self.audit_consistency_apply_btn: Optional[QPushButton] = None
+        self.audit_consistency_use_selected_btn: Optional[QPushButton] = None
+        self.audit_consistency_use_common_btn: Optional[QPushButton] = None
         self.audit_cache_generation = 0
         self.audit_result_batch_size = 16
         self.audit_render_batch_interval_ms = 8
