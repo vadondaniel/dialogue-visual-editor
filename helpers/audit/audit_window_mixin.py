@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from .audit_constants import SANITIZE_CHAR_RULES
+from ..mixins.presentation_mixins import is_dark_palette
 
 
 class _AuditWindowHostTypingFallback:
@@ -28,6 +30,32 @@ class _AuditWindowHostTypingFallback:
 
 
 class AuditWindowMixin(_AuditWindowHostTypingFallback):
+    def _audit_case_toggle_icon(self, checked: bool) -> QIcon:
+        pixmap = QPixmap(26, 26)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        try:
+            dark = is_dark_palette()
+            if dark:
+                text = QColor("#f3f4f6") if checked else QColor("#d1d5db")
+                fill = QColor("#4b5563") if checked else QColor(0, 0, 0, 0)
+            else:
+                text = QColor("#111111") if checked else QColor("#222222")
+                fill = QColor("#d1d5db") if checked else QColor(0, 0, 0, 0)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(fill)
+            painter.drawRect(0, 0, 25, 25)
+            font = QFont()
+            font.setPointSize(10)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QPen(text, 1))
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Aa")
+        finally:
+            painter.end()
+        return QIcon(pixmap)
+
     def _default_audit_search_scope(self) -> str:
         return "translation" if self._is_translator_mode() else "original"
 
@@ -75,6 +103,10 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         controls_row.setSpacing(6)
         query_edit = QLineEdit()
         query_edit.setPlaceholderText("Find...")
+        query_edit.setStyleSheet(
+            "QLineEdit { padding-right: 34px; } "
+            "QLineEdit QToolButton { width: 26px; height: 26px; }"
+        )
         controls_row.addWidget(query_edit, 2)
 
         scope_combo = QComboBox()
@@ -82,13 +114,16 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         scope_combo.addItem("Translation", "translation")
         scope_combo.addItem("Both", "both")
         controls_row.addWidget(scope_combo)
-        case_sensitive_check = QCheckBox("Case sensitive")
-        case_sensitive_check.setChecked(False)
-        controls_row.addWidget(case_sensitive_check)
         replace_edit = QLineEdit()
         replace_edit.setPlaceholderText("Replace with...")
         controls_row.addWidget(replace_edit, 2)
-        replace_selected_btn = QPushButton("Replace Sel")
+        case_sensitive_action = QAction("Aa", query_edit)
+        case_sensitive_action.setCheckable(True)
+        case_sensitive_action.setChecked(False)
+        case_sensitive_action.setToolTip("Case sensitive search/replace")
+        case_sensitive_action.setIcon(self._audit_case_toggle_icon(False))
+        query_edit.addAction(case_sensitive_action, QLineEdit.ActionPosition.TrailingPosition)
+        replace_selected_btn = QPushButton("Replace Selected")
         replace_all_btn = QPushButton("Replace All")
         replace_selected_btn.setEnabled(False)
         replace_all_btn.setEnabled(False)
@@ -213,7 +248,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_search_query_edit = query_edit
         self.audit_search_scope_combo = scope_combo
         self.audit_search_replace_edit = replace_edit
-        self.audit_search_case_sensitive_check = case_sensitive_check
+        self.audit_search_case_sensitive_check = case_sensitive_action
         self.audit_search_results_list = results_list
         self.audit_search_status_label = status_label
         self.audit_search_goto_btn = goto_btn
@@ -280,8 +315,13 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
                 self._refresh_audit_search_replace_preview(),
             )
         )
-        case_sensitive_check.toggled.connect(
+        case_sensitive_action.toggled.connect(
             lambda _checked: (
+                case_sensitive_action.setIcon(
+                    self._audit_case_toggle_icon(
+                        bool(case_sensitive_action.isChecked())
+                    )
+                ),
                 self._schedule_audit_search(),
                 self._refresh_audit_search_replace_preview(),
             )

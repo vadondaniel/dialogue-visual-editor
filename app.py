@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
+    QAction,
     QColor,
     QCloseEvent,
     QCursor,
@@ -165,7 +166,7 @@ class DialogueVisualEditor(
         self.audit_window: Optional[QDialog] = None
         self.audit_search_query_edit: Optional[QLineEdit] = None
         self.audit_search_replace_edit: Optional[QLineEdit] = None
-        self.audit_search_case_sensitive_check: Optional[QCheckBox] = None
+        self.audit_search_case_sensitive_check: Optional[QAction] = None
         self.audit_search_scope_combo: Optional[QComboBox] = None
         self.audit_search_results_list: Optional[QListWidget] = None
         self.audit_search_status_label: Optional[QLabel] = None

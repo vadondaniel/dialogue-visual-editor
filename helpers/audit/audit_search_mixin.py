@@ -87,6 +87,18 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             return
         self.audit_search_timer.start()
 
+    def _audit_search_case_sensitive_enabled(self) -> bool:
+        action = getattr(self, "audit_search_case_sensitive_check", None)
+        if action is None:
+            return False
+        checker = getattr(action, "isChecked", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception:
+                return False
+        return False
+
     def _highlight_audit_match_html(
         self,
         text: str,
@@ -314,7 +326,6 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         if (
             self.audit_search_query_edit is None
             or self.audit_search_scope_combo is None
-            or self.audit_search_case_sensitive_check is None
             or self.audit_search_results_list is None
             or self.audit_search_status_label is None
             or self.audit_search_goto_btn is None
@@ -325,7 +336,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         current_query = self.audit_search_query_edit.text().strip()
         current_scope = str(
             self.audit_search_scope_combo.currentData() or "original")
-        current_case_sensitive = self.audit_search_case_sensitive_check.isChecked()
+        current_case_sensitive = self._audit_search_case_sensitive_enabled()
         if (
             current_query != query
             or current_scope != scope
@@ -370,7 +381,6 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self.audit_search_query_edit is None
             or self.audit_search_replace_edit is None
             or self.audit_search_scope_combo is None
-            or self.audit_search_case_sensitive_check is None
             or self.audit_search_results_list is None
             or self.audit_search_status_label is None
             or self.audit_search_goto_btn is None
@@ -383,7 +393,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
 
         query = self.audit_search_query_edit.text().strip()
         scope = str(self.audit_search_scope_combo.currentData() or "original")
-        case_sensitive = self.audit_search_case_sensitive_check.isChecked()
+        case_sensitive = self._audit_search_case_sensitive_enabled()
 
         if not query:
             self._stop_audit_search_render()
@@ -639,9 +649,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         query = self.audit_search_query_edit.text().strip()
         replace_text = self.audit_search_replace_edit.text()
         case_sensitive = (
-            self.audit_search_case_sensitive_check.isChecked()
-            if self.audit_search_case_sensitive_check is not None
-            else True
+            self._audit_search_case_sensitive_enabled()
         )
         control_query = self._is_control_code_search_query(query)
         natural_mode = not control_query
@@ -820,9 +828,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             return
         replace_text = self.audit_search_replace_edit.text()
         case_sensitive = (
-            self.audit_search_case_sensitive_check.isChecked()
-            if self.audit_search_case_sensitive_check is not None
-            else True
+            self._audit_search_case_sensitive_enabled()
         )
         changed, replacements = self._replace_in_session_entry(
             payload["path"],
@@ -872,9 +878,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             return
         replace_text = self.audit_search_replace_edit.text()
         case_sensitive = (
-            self.audit_search_case_sensitive_check.isChecked()
-            if self.audit_search_case_sensitive_check is not None
-            else True
+            self._audit_search_case_sensitive_enabled()
         )
         result_count = self.audit_search_results_list.count()
         if result_count <= 0:
