@@ -68,6 +68,154 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         kept_lines[-1] = f"{kept_lines[-1]}\\C[0]"
         return kept_lines, moved_lines
 
+    def _refresh_after_structure_change_without_full_rerender(
+        self,
+        session: FileSession,
+        *,
+        focus_uid: Optional[str] = None,
+        preserve_scroll: bool = True,
+    ) -> bool:
+        if self.current_path != session.path:
+            return False
+        if self._pending_render_state is not None:
+            return False
+        if self.rendered_blocks_path != session.path:
+            return False
+        if self._is_translator_mode():
+            return False
+        actor_mode = self._is_name_index_session(session)
+        if actor_mode:
+            return False
+
+        translator_mode = False
+        name_index_kind = ""
+        name_index_label = self._name_index_label(session)
+        target_view_meta = self._block_view_meta(
+            translator_mode=translator_mode,
+            actor_mode=actor_mode,
+            name_index_kind=name_index_kind,
+            name_index_label=name_index_label,
+        )
+        if self.rendered_block_view_meta != target_view_meta:
+            return False
+
+        previous_scroll_value = (
+            self.scroll_area.verticalScrollBar().value() if preserve_scroll else None
+        )
+        self.current_segment_lookup = {
+            segment.uid: segment for segment in session.segments}
+        if self.selected_segment_uid and self.selected_segment_uid not in self.current_segment_lookup:
+            self.selected_segment_uid = None
+        if focus_uid and focus_uid in self.current_segment_lookup:
+            self.selected_segment_uid = focus_uid
+
+        self.cached_block_widgets_by_path.pop(session.path, None)
+        self.cached_block_uid_order_by_path.pop(session.path, None)
+        self.cached_block_view_meta_by_path.pop(session.path, None)
+        cached_container = self.cached_block_containers_by_path.pop(
+            session.path, None)
+        if isinstance(cached_container, dict):
+            container = cached_container.get("container")
+            if isinstance(container, QWidget) and container is not self.scroll_container:
+                container.deleteLater()
+
+        existing_widgets = dict(self.block_widgets)
+        preserve_widgets = set(
+            cast(list[QWidget], list(existing_widgets.values())))
+        self.rendered_blocks_path = None
+        self.rendered_block_uid_order = []
+        self._clear_blocks(
+            preserve_widgets=preserve_widgets if preserve_widgets else None
+        )
+        self.block_widgets = {}
+
+        merge_pairs = self._precompute_merge_pairs(session)
+        segment_count = len(session.segments)
+        for idx, segment in enumerate(session.segments):
+            reused = existing_widgets.pop(segment.uid, None)
+            if (
+                reused is not None
+                and self._can_reuse_block_widget(
+                    reused,
+                    segment=segment,
+                    translator_mode=translator_mode,
+                    actor_mode=actor_mode,
+                    name_index_kind=name_index_kind,
+                    name_index_label=name_index_label,
+                )
+            ):
+                widget = reused
+                self._sync_reused_block_widget(
+                    widget,
+                    segment=segment,
+                    block_number=idx + 1,
+                    name_index_label=name_index_label,
+                )
+            else:
+                if reused is not None:
+                    reused.deleteLater()
+                widget = self._create_block_widget(
+                    segment=segment,
+                    block_number=idx + 1,
+                    translator_mode=translator_mode,
+                    actor_mode=actor_mode,
+                    name_index_kind=name_index_kind,
+                    name_index_label=name_index_label,
+                )
+            self.blocks_layout.addWidget(widget)
+            widget.show()
+            self.block_widgets[segment.uid] = widget
+            self._apply_block_visual_state(segment.uid, widget)
+
+            if idx < segment_count - 1:
+                next_segment = session.segments[idx + 1]
+                if (segment.uid, next_segment.uid) in merge_pairs:
+                    connector_widget = self._build_merge_connector_widget(
+                        session,
+                        segment,
+                        next_segment,
+                    )
+                    self.blocks_layout.addWidget(connector_widget)
+
+        self.blocks_layout.addStretch(1)
+        for leftover in existing_widgets.values():
+            leftover.deleteLater()
+
+        self.rendered_blocks_path = session.path
+        self.rendered_block_uid_order = [segment.uid for segment in session.segments]
+        self.rendered_block_view_meta = target_view_meta
+        self._hide_audit_progress_overlay(self.main_render_progress_overlay)
+
+        source_dirty, tl_dirty = self._session_dirty_flags_cached(session)
+        header = f"{session.path.name} | {len(session.segments)} dialogue block(s)"
+        if source_dirty and tl_dirty:
+            header += " | UNSAVED SOURCE+TL"
+        elif source_dirty:
+            header += " | UNSAVED SOURCE"
+        elif tl_dirty:
+            header += " | UNSAVED TL"
+        self.file_header_label.setText(header)
+        self._update_reset_json_button(session)
+        self._refresh_translator_detail_panel()
+
+        target_widget = (
+            self.block_widgets.get(focus_uid)
+            if focus_uid and focus_uid in self.block_widgets
+            else None
+        )
+        self._flash_pending_audit_target(focus_uid, target_widget)
+        if target_widget is not None:
+            def focus_and_reveal() -> None:
+                target_widget.focus_editor()
+                self.scroll_area.ensureWidgetVisible(target_widget, 20, 20)
+
+            QTimer.singleShot(0, focus_and_reveal)
+            return True
+        if preserve_scroll and previous_scroll_value is not None:
+            QTimer.singleShot(
+                0, lambda: self.scroll_area.verticalScrollBar().setValue(previous_scroll_value))
+        return True
+
     def _segment_line_width(self, segment: DialogueSegment) -> int:
         return self.thin_width_spin.value() if segment.has_face else self.wide_width_spin.value()
 
@@ -317,8 +465,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
-        self._render_session(
-            session, focus_uid=new_segment.uid, preserve_scroll=True)
+        if not self._refresh_after_structure_change_without_full_rerender(
+            session,
+            focus_uid=new_segment.uid,
+            preserve_scroll=True,
+        ):
+            self._render_session(
+                session, focus_uid=new_segment.uid, preserve_scroll=True)
         self.statusBar().showMessage("Inserted a new code 101 block.")
 
     def _on_split_overflow_requested(self, uid: str) -> None:
@@ -487,7 +640,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
-        self._render_session(session, focus_uid=left_uid, preserve_scroll=True)
+        if not self._refresh_after_structure_change_without_full_rerender(
+            session,
+            focus_uid=left_uid,
+            preserve_scroll=True,
+        ):
+            self._render_session(session, focus_uid=left_uid, preserve_scroll=True)
         self.statusBar().showMessage("Merged neighboring dialogue blocks.")
 
     def _on_reset_requested(self, uid: str) -> None:
@@ -515,7 +673,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             if speaker_after:
                 self.speaker_translation_map[segment.speaker_name] = speaker_after
             self._refresh_dirty_state(session)
-            self._render_session(session, focus_uid=uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(session, focus_uid=uid, preserve_scroll=True)
             self.statusBar().showMessage("Reset translation block.")
             return
 
@@ -549,7 +712,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             )
             self.structural_redo_stack.clear()
         self._refresh_dirty_state(session)
-        self._render_session(session, focus_uid=uid, preserve_scroll=True)
+        if not self._refresh_after_structure_change_without_full_rerender(
+            session,
+            focus_uid=uid,
+            preserve_scroll=True,
+        ):
+            self._render_session(session, focus_uid=uid, preserve_scroll=True)
         if restored_count > 0:
             self.statusBar().showMessage(
                 f"Reset block and restored {restored_count} merged block(s).")
@@ -617,7 +785,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
-        self._render_session(session)
+        if not self._refresh_after_structure_change_without_full_rerender(
+            session,
+            preserve_scroll=True,
+        ):
+            self._render_session(session)
         self.statusBar().showMessage("Deleted dialogue block.")
 
     def _apply_undo_delete(self, action: DeletedBlockAction) -> bool:
@@ -639,8 +811,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(
-                session, focus_uid=action.uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=action.uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(
+                    session, focus_uid=action.uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
@@ -658,7 +835,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                preserve_scroll=True,
+            ):
+                self._render_session(session, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
@@ -684,8 +865,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(
-                session, focus_uid=action.uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=action.uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(
+                    session, focus_uid=action.uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
@@ -710,7 +896,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(session, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                preserve_scroll=True,
+            ):
+                self._render_session(session, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
@@ -739,8 +929,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(
-                session, focus_uid=action.uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=action.uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(
+                    session, focus_uid=action.uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
@@ -770,8 +965,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(
-                session, focus_uid=action.uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=action.uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(
+                    session, focus_uid=action.uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
@@ -875,8 +1075,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(
-                session, focus_uid=action.left_uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=action.left_uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(
+                    session, focus_uid=action.left_uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
@@ -923,8 +1128,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(
-                session, focus_uid=action.left_uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=action.left_uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(
+                    session, focus_uid=action.left_uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
