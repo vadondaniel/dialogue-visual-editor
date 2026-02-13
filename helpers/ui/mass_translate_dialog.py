@@ -67,12 +67,16 @@ class MassTranslateDialog(QDialog):
         self.chunk_status: dict[int, str] = {}
         self.chunk_drafts: dict[int, str] = {}
         self.dialogue_targets: dict[str, tuple[Path, DialogueSegment]] = {}
+        self.misc_targets: dict[str, tuple[Path, DialogueSegment]] = {}
+        self.speaker_segment_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.dialogue_block_refs: dict[str, tuple[Path, int]] = {}
         self.speaker_targets: dict[str, str] = {}
         self._active_chunk_index = -1
         self._updating_paste_box = False
 
         self._build_ui()
+        self._refresh_scope_items()
+        self._build_chunks()
         self._update_chunk_controls()
 
     def _build_ui(self) -> None:
@@ -83,26 +87,28 @@ class MassTranslateDialog(QDialog):
         options_row = QHBoxLayout()
         options_row.addWidget(QLabel("Scope"))
         self.scope_combo = QComboBox()
-        self.scope_combo.addItem("Current File", "current")
-        self.scope_combo.addItem("All Loaded Files", "all")
-        if self.editor.current_path is None:
-            self.scope_combo.setCurrentIndex(1)
         options_row.addWidget(self.scope_combo)
 
         options_row.addWidget(QLabel("Content"))
         self.content_scope_combo = QComboBox()
-        self.content_scope_combo.addItem(
-            "Speakers Only (Run First)", "speakers")
-        self.content_scope_combo.addItem("Dialogues Only", "dialogues")
-        self.content_scope_combo.addItem("Dialogues + Speakers", "both")
+        self.content_scope_combo.addItem("All Content", "all_content")
+        self.content_scope_combo.addItem("Speakers", "speakers")
+        self.content_scope_combo.addItem("Misc", "misc")
+        self.content_scope_combo.addItem("Dialogues", "dialogues")
         self.content_scope_combo.setToolTip(
-            "Recommended flow: run Speakers first, apply, then build Dialogues."
+            "Filter translatable entries by category."
         )
         options_row.addWidget(self.content_scope_combo)
 
         self.only_untranslated_check = QCheckBox("Only Untranslated")
         self.only_untranslated_check.setChecked(True)
         options_row.addWidget(self.only_untranslated_check)
+        self.scope_combo.currentIndexChanged.connect(
+            lambda _idx: self._build_chunks())
+        self.content_scope_combo.currentIndexChanged.connect(
+            lambda _idx: self._on_scope_or_filters_changed())
+        self.only_untranslated_check.toggled.connect(
+            lambda _checked: self._on_scope_or_filters_changed())
 
         options_row.addWidget(QLabel("Context boxes/side"))
         self.context_boxes_spin = QSpinBox()
@@ -219,28 +225,127 @@ class MassTranslateDialog(QDialog):
         elif idx in self.chunk_drafts:
             del self.chunk_drafts[idx]
 
-    def _content_mode_flags(self) -> tuple[bool, bool]:
+    def _content_mode_flags(self) -> tuple[bool, bool, bool]:
         mode = str(self.content_scope_combo.currentData())
+        if mode == "all_content":
+            return True, True, True
         if mode == "speakers":
-            return False, True
+            return False, False, True
+        if mode == "misc":
+            return False, True, False
         if mode == "dialogues":
-            return True, False
-        return True, True
+            return True, False, False
+        return True, True, True
 
-    def _scoped_session_items(self) -> list[tuple[Path, FileSession]]:
-        scope = str(self.scope_combo.currentData())
-        if scope == "current":
-            if self.editor.current_path is None:
-                return []
-            session = self.editor.sessions.get(self.editor.current_path)
+    def _on_scope_or_filters_changed(self) -> None:
+        self._refresh_scope_items()
+        self._build_chunks()
+
+    def _segment_content_type(self, path: Path, session: FileSession, segment: DialogueSegment) -> str:
+        _ = path
+        _ = segment
+        if bool(getattr(session, "is_name_index_session", False)):
+            kind = str(getattr(session, "name_index_kind", "")).strip().lower()
+            if kind == "actor":
+                return "speaker_segment"
+            return "misc"
+        return "dialogue"
+
+    def _segment_specific_type_label(self, path: Path, segment: DialogueSegment) -> str:
+        context = segment.context.strip()
+        prefix = f"{path.name} > "
+        if context.startswith(prefix):
+            detail = context[len(prefix):].strip()
+            if detail:
+                return detail
+        if context:
+            return context
+        return "unknown"
+
+    def _segment_has_translation(self, segment: DialogueSegment) -> bool:
+        existing_lines = self.editor._normalize_translation_lines(
+            segment.translation_lines)
+        return bool("\n".join(existing_lines).strip())
+
+    def _scope_session_items_from_value(self, scope_value: str) -> list[tuple[Path, FileSession]]:
+        if scope_value.startswith("file:"):
+            raw_path = scope_value[5:]
+            target_path = Path(raw_path)
+            session = self.editor.sessions.get(target_path)
             if session is None:
                 return []
-            return [(self.editor.current_path, session)]
-
+            return [(target_path, session)]
         items = list(self.editor.sessions.items())
         items.sort(key=lambda item: natural_sort_key(
             self.editor._relative_path(item[0])))
         return items
+
+    def _scope_completion_counts(self, scope_value: str) -> tuple[int, int]:
+        include_dialogue, include_misc, include_speakers = self._content_mode_flags()
+        done = 0
+        total = 0
+        speaker_keys: set[str] = set()
+        for path, session in self._scope_session_items_from_value(scope_value):
+            for segment in session.segments:
+                content_type = self._segment_content_type(path, session, segment)
+                if content_type == "dialogue" and not include_dialogue:
+                    continue
+                if content_type == "misc" and not include_misc:
+                    continue
+                if content_type == "speaker_segment" and not include_speakers:
+                    continue
+                translated = self._segment_has_translation(segment)
+                total += 1
+                if translated:
+                    done += 1
+                if include_speakers:
+                    speaker_key = self.editor._speaker_key_for_segment(segment)
+                    if speaker_key != NO_SPEAKER_KEY:
+                        speaker_keys.add(speaker_key)
+        if include_speakers:
+            for speaker_key in speaker_keys:
+                speaker_translated = bool(
+                    self.editor._speaker_translation_for_key(speaker_key).strip())
+                total += 1
+                if speaker_translated:
+                    done += 1
+        return done, total
+
+    def _refresh_scope_items(self) -> None:
+        previous = str(self.scope_combo.currentData()
+                       ) if self.scope_combo.count() > 0 else "all"
+        self.scope_combo.blockSignals(True)
+        self.scope_combo.clear()
+
+        all_done, all_total = self._scope_completion_counts("all")
+        all_rate = (all_done * 100.0 / all_total) if all_total > 0 else 0.0
+        self.scope_combo.addItem(
+            f"All Files ({all_done}/{all_total}, {all_rate:.1f}%)", "all")
+
+        items = list(self.editor.sessions.items())
+        items.sort(key=lambda item: natural_sort_key(
+            self.editor._relative_path(item[0])))
+        for path, _session in items:
+            key = f"file:{path}"
+            done, total = self._scope_completion_counts(key)
+            if total <= 0:
+                continue
+            rate = (done * 100.0 / total) if total > 0 else 0.0
+            self.scope_combo.addItem(
+                f"{self.editor._relative_path(path)} ({done}/{total}, {rate:.1f}%)",
+                key,
+            )
+        index_to_select = 0
+        for idx in range(self.scope_combo.count()):
+            if str(self.scope_combo.itemData(idx)) == previous:
+                index_to_select = idx
+                break
+        self.scope_combo.setCurrentIndex(index_to_select)
+        self.scope_combo.blockSignals(False)
+
+    def _scoped_session_items(self) -> list[tuple[Path, FileSession]]:
+        scope = str(self.scope_combo.currentData())
+        return self._scope_session_items_from_value(scope)
 
     def _ensure_segment_translation_uid(self, segment: DialogueSegment) -> str:
         if segment.tl_uid:
@@ -323,11 +428,14 @@ class MassTranslateDialog(QDialog):
     def _collect_chunk_entries(
         self,
         include_dialogue: bool,
+        include_misc: bool,
         include_speakers: bool,
         only_untranslated: bool,
         _context_boxes: int,
     ) -> list[dict[str, Any]]:
         self.dialogue_targets.clear()
+        self.misc_targets.clear()
+        self.speaker_segment_targets.clear()
         self.dialogue_block_refs.clear()
         self.speaker_targets.clear()
         entries: list[dict[str, Any]] = []
@@ -342,17 +450,31 @@ class MassTranslateDialog(QDialog):
                     segment.translation_lines)
                 existing_text = "\n".join(existing_lines).strip()
                 speaker_key = self.editor._speaker_key_for_segment(segment)
+                content_type = self._segment_content_type(path, session, segment)
 
                 if include_speakers and speaker_key != NO_SPEAKER_KEY:
                     speaker_keys.add(speaker_key)
 
-                if not include_dialogue:
+                include_segment = (
+                    (content_type == "dialogue" and include_dialogue)
+                    or (content_type == "misc" and include_misc)
+                    or (content_type == "speaker_segment" and include_speakers)
+                )
+                if not include_segment:
                     continue
                 if only_untranslated and existing_text:
                     continue
 
                 tl_uid = self._ensure_segment_translation_uid(segment)
-                entry_id = f"D:{tl_uid}"
+                if content_type == "dialogue":
+                    entry_id = f"D:{tl_uid}"
+                    entry_type = "dialogue"
+                elif content_type == "speaker_segment":
+                    entry_id = f"P:{tl_uid}"
+                    entry_type = "speaker_text"
+                else:
+                    entry_id = f"M:{tl_uid}"
+                    entry_type = self._segment_specific_type_label(path, segment)
                 speaker_for_prompt = self.editor._speaker_translation_for_key(
                     speaker_key).strip()
                 if not speaker_for_prompt:
@@ -360,14 +482,20 @@ class MassTranslateDialog(QDialog):
                 entries.append(
                     {
                         "id": entry_id,
-                        "type": "dialogue",
-                        "speaker": speaker_for_prompt,
+                        "type": entry_type,
+                        **({"speaker": speaker_for_prompt}
+                           if content_type == "dialogue" else {}),
                         "jp_text": "\n".join(source_lines),
                         "en_translation": existing_text,
                     }
                 )
-                self.dialogue_targets[entry_id] = (path, segment)
-                self.dialogue_block_refs[entry_id] = (path, idx)
+                if content_type == "dialogue":
+                    self.dialogue_targets[entry_id] = (path, segment)
+                    self.dialogue_block_refs[entry_id] = (path, idx)
+                elif content_type == "speaker_segment":
+                    self.speaker_segment_targets[entry_id] = (path, segment)
+                else:
+                    self.misc_targets[entry_id] = (path, segment)
 
         if include_speakers:
             for speaker_key in sorted(speaker_keys, key=natural_sort_key):
@@ -380,7 +508,6 @@ class MassTranslateDialog(QDialog):
                     {
                         "id": entry_id,
                         "type": "speaker_name",
-                        "speaker": speaker_key,
                         "jp_text": speaker_key,
                         "en_translation": existing_speaker,
                     }
@@ -516,8 +643,8 @@ class MassTranslateDialog(QDialog):
             "Copied prompt + selected chunk JSON to clipboard.")
 
     def _build_chunks(self) -> None:
-        include_dialogue, include_speakers = self._content_mode_flags()
-        if not include_dialogue and not include_speakers:
+        include_dialogue, include_misc, include_speakers = self._content_mode_flags()
+        if not include_dialogue and not include_misc and not include_speakers:
             QMessageBox.warning(
                 self,
                 "No targets selected",
@@ -527,6 +654,7 @@ class MassTranslateDialog(QDialog):
 
         entries = self._collect_chunk_entries(
             include_dialogue=include_dialogue,
+            include_misc=include_misc,
             include_speakers=include_speakers,
             only_untranslated=self.only_untranslated_check.isChecked(),
             _context_boxes=self.context_boxes_spin.value(),
@@ -557,11 +685,14 @@ class MassTranslateDialog(QDialog):
         for idx, group in enumerate(groups, start=1):
             context_before, context_after = self._chunk_context_blocks(
                 group, context_boxes)
-            payload = {
-                "context_before": context_before,
-                "entries": group,
-                "context_after": context_after,
-            }
+            if context_before and context_after and context_before == context_after:
+                context_after = []
+            payload: dict[str, Any] = {}
+            if context_before:
+                payload["context_before"] = context_before
+            payload["entries"] = group
+            if context_after:
+                payload["context_after"] = context_after
             self.chunk_payloads.append(payload)
             self.chunk_expected_ids.append(
                 {
@@ -644,7 +775,12 @@ class MassTranslateDialog(QDialog):
                 continue
             if key == "meta":
                 continue
-            if not (key.startswith("D:") or key.startswith("S:")):
+            if not (
+                key.startswith("D:")
+                or key.startswith("S:")
+                or key.startswith("M:")
+                or key.startswith("P:")
+            ):
                 continue
             if isinstance(value, dict):
                 row = dict(value)
@@ -784,6 +920,8 @@ class MassTranslateDialog(QDialog):
 
         touched_paths: set[Path] = set()
         dialogue_applied = 0
+        misc_applied = 0
+        speaker_segments_applied = 0
         speaker_keys_applied = 0
         speaker_blocks_applied = 0
         missing_translation_field_ids: list[str] = []
@@ -819,6 +957,30 @@ class MassTranslateDialog(QDialog):
                     segment.translation_lines = list(lines)
                     touched_paths.add(path)
                     dialogue_applied += 1
+                continue
+
+            if entry_id.startswith("M:") or entry_id.startswith("P:"):
+                target: Optional[tuple[Path, DialogueSegment]] = None
+                if entry_id.startswith("M:"):
+                    target = self.misc_targets.get(entry_id)
+                else:
+                    target = self.speaker_segment_targets.get(entry_id)
+                if target is None:
+                    continue
+                lines = self._extract_dialogue_translation_lines(update)
+                if lines is None:
+                    missing_translation_field_ids.append(entry_id)
+                    continue
+                path, segment = target
+                current_lines = self.editor._normalize_translation_lines(
+                    segment.translation_lines)
+                if current_lines != lines:
+                    segment.translation_lines = list(lines)
+                    touched_paths.add(path)
+                    if entry_id.startswith("M:"):
+                        misc_applied += 1
+                    else:
+                        speaker_segments_applied += 1
                 continue
 
             if entry_id.startswith("S:"):
@@ -887,6 +1049,8 @@ class MassTranslateDialog(QDialog):
         summary_lines: list[str] = [
             f"Parsed entries: {len(updates_by_id)}",
             f"Applied dialogue entries: {dialogue_applied}",
+            f"Applied misc entries: {misc_applied}",
+            f"Applied speaker text entries: {speaker_segments_applied}",
             f"Applied speaker names: {speaker_keys_applied}",
             f"Speaker blocks updated: {speaker_blocks_applied}",
             f"Touched files: {len(touched_paths)}",
@@ -921,13 +1085,18 @@ class MassTranslateDialog(QDialog):
         self.result_box.setPlainText("\n".join(summary_lines))
         self.editor.statusBar().showMessage(
             "Mass translate apply: "
-            f"{dialogue_applied} dialogues, {speaker_keys_applied} speaker names."
+            f"{dialogue_applied} dialogues, {misc_applied} misc, "
+            f"{speaker_segments_applied} speaker text, {speaker_keys_applied} speaker names."
         )
+        self._refresh_scope_items()
 
         # After a successful speaker-only pass, move workflow to dialogue translation.
         current_mode = str(self.content_scope_combo.currentData())
         if current_mode == "speakers" and speaker_keys_applied > 0:
-            self.content_scope_combo.setCurrentIndex(1)
+            for idx in range(self.content_scope_combo.count()):
+                if str(self.content_scope_combo.itemData(idx)) == "dialogues":
+                    self.content_scope_combo.setCurrentIndex(idx)
+                    break
             self.result_box.appendPlainText(
-                "\nSwitched content scope to 'Dialogues Only'."
+                "\nSwitched content scope to 'Dialogues'."
             )
