@@ -90,6 +90,40 @@ def _set_hard_newline_markers(editor: QPlainTextEdit, enabled: bool) -> None:
     editor.document().setDefaultTextOption(text_option)
 
 
+def _split_masked_text_and_spans(
+    masked_text: str,
+    spans: list[tuple[int, int, str]],
+) -> tuple[list[str], list[list[tuple[int, int, str]]]]:
+    lines = split_lines_preserve_empty(masked_text)
+    if not lines:
+        return [""], [[]]
+
+    line_starts: list[int] = []
+    cursor = 0
+    line_count = len(lines)
+    for idx, line in enumerate(lines):
+        line_starts.append(cursor)
+        cursor += len(line)
+        if idx < line_count - 1:
+            cursor += 1
+
+    spans_per_line: list[list[tuple[int, int, str]]] = [[] for _ in lines]
+    for span_start, span_end, color_hex in spans:
+        if span_end <= span_start:
+            continue
+        for idx, line in enumerate(lines):
+            line_start = line_starts[idx]
+            line_end = line_start + len(line)
+            start = max(span_start, line_start)
+            end = min(span_end, line_end)
+            if end <= start:
+                continue
+            spans_per_line[idx].append(
+                (start - line_start, end - line_start, color_hex)
+            )
+    return lines, spans_per_line
+
+
 class ControlCodeHighlighter(QSyntaxHighlighter):
     _COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]")
 
@@ -491,13 +525,15 @@ class ItemNameDescriptionWidget(QFrame):
         return merged
 
     def _masked_lines_from_raw(self, lines: list[str]) -> list[str]:
+        source_lines = lines or [""]
+        if self.hidden_control_colored_line_resolver is not None:
+            joined = "\n".join(source_lines)
+            masked_text, _spans = self.hidden_control_colored_line_resolver(
+                joined)
+            return split_lines_preserve_empty(masked_text) or [""]
         masked: list[str] = []
-        for line in (lines or [""]):
-            if self.hidden_control_colored_line_resolver is not None:
-                masked_line, _spans = self.hidden_control_colored_line_resolver(
-                    line)
-                masked.append(masked_line)
-            elif self.hidden_control_line_transform is not None:
+        for line in source_lines:
+            if self.hidden_control_line_transform is not None:
                 masked.append(self.hidden_control_line_transform(line))
             else:
                 masked.append(strip_control_tokens(line))
@@ -1242,15 +1278,21 @@ class DialogueBlockWidget(QFrame):
         self._source_hint_overlay.setVisible(should_show)
 
     def _masked_lines_from_raw(self, lines: list[str]) -> list[str]:
+        source_lines = lines or [""]
+        if self.hidden_control_colored_line_resolver is not None:
+            joined = "\n".join(source_lines)
+            masked_text, spans = self.hidden_control_colored_line_resolver(
+                joined)
+            split_lines, spans_per_line = _split_masked_text_and_spans(
+                masked_text, list(spans)
+            )
+            self._masked_color_spans = spans_per_line
+            return split_lines or [""]
+
         masked: list[str] = []
         spans_per_line: list[list[tuple[int, int, str]]] = []
-        for line in (lines or [""]):
-            if self.hidden_control_colored_line_resolver is not None:
-                masked_line, spans = self.hidden_control_colored_line_resolver(
-                    line)
-                masked.append(masked_line)
-                spans_per_line.append(list(spans))
-            elif self.hidden_control_line_transform is not None:
+        for line in source_lines:
+            if self.hidden_control_line_transform is not None:
                 masked.append(self.hidden_control_line_transform(line))
                 spans_per_line.append([])
             else:
