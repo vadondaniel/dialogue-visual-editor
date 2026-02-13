@@ -58,6 +58,36 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         return str(self.editor_mode_combo.currentData()) == "translator"
 
     def _on_editor_mode_changed(self, _index: int) -> None:
+        current_mode = str(self.editor_mode_combo.currentData())
+        previous_mode_raw = getattr(self, "_editor_mode_last_data", current_mode)
+        previous_mode = (
+            previous_mode_raw if isinstance(previous_mode_raw, str) else current_mode
+        )
+        if current_mode != previous_mode:
+            has_dirty = any(session.dirty for session in self.sessions.values())
+            if has_dirty:
+                response = QMessageBox.warning(
+                    cast(QWidget, self),
+                    "Unsaved changes",
+                    (
+                        "You have unsaved changes.\n"
+                        "Switching edit mode changes how text is edited/shown.\n\n"
+                        "Switch mode anyway?"
+                    ),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if response != QMessageBox.StandardButton.Yes:
+                    if not bool(getattr(self, "_editor_mode_reverting", False)):
+                        setattr(self, "_editor_mode_reverting", True)
+                        try:
+                            previous_index = self.editor_mode_combo.findData(previous_mode)
+                            if previous_index >= 0:
+                                self.editor_mode_combo.setCurrentIndex(previous_index)
+                        finally:
+                            setattr(self, "_editor_mode_reverting", False)
+                    return
+
         self._update_mode_controls()
         refresh_file_items = getattr(self, "_refresh_all_file_item_text", None)
         if callable(refresh_file_items):
@@ -82,6 +112,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             self.reset_json_btn.setText("Reset JSON")
             self.auto_split_check.setToolTip(
                 "Auto-split long dialogue on save.")
+        setattr(self, "_editor_mode_last_data", str(self.editor_mode_combo.currentData()))
 
     def _normalize_translation_lines(self, value: Any) -> list[str]:
         if isinstance(value, list):
