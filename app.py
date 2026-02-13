@@ -159,6 +159,8 @@ class DialogueVisualEditor(
         self.translation_state_path: Optional[Path] = None
         self.ui_state_path = Path(
             __file__).resolve().with_name(UI_STATE_FILENAME)
+        self.project_ui_settings_by_folder: dict[str, dict[str, Any]] = {}
+        self._applying_project_ui_state = False
         self.translation_state: dict[str, Any] = {
             "version": 1,
             "uid_counter": 0,
@@ -506,6 +508,22 @@ class DialogueVisualEditor(
             self._on_hide_control_codes_toggled)
         self.editor_mode_combo.currentIndexChanged.connect(
             self._on_editor_mode_changed)
+        self.editor_mode_combo.currentIndexChanged.connect(
+            self._on_project_setting_changed)
+        self.apply_version_combo.currentIndexChanged.connect(
+            self._on_project_setting_changed)
+        self.thin_width_spin.valueChanged.connect(
+            self._on_project_setting_changed)
+        self.wide_width_spin.valueChanged.connect(
+            self._on_project_setting_changed)
+        self.max_lines_spin.valueChanged.connect(
+            self._on_project_setting_changed)
+        self.auto_split_check.toggled.connect(self._on_project_setting_changed)
+        self.infer_speaker_check.toggled.connect(
+            self._on_project_setting_changed)
+        self.hide_control_codes_check.toggled.connect(
+            self._on_project_setting_changed)
+        self.backup_check.toggled.connect(self._on_project_setting_changed)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter, 1)
@@ -520,6 +538,8 @@ class DialogueVisualEditor(
         self.show_empty_files_check.setChecked(False)
         self.show_empty_files_check.toggled.connect(
             self._on_show_empty_toggled)
+        self.show_empty_files_check.toggled.connect(
+            self._on_project_setting_changed)
         files_header_row.addStretch(1)
         files_header_row.addWidget(self.show_empty_files_check)
         left_layout.addLayout(files_header_row)
@@ -1288,9 +1308,124 @@ class DialogueVisualEditor(
     def _on_remember_folder_toggled(self, _checked: bool) -> None:
         self._save_ui_state()
 
+    def _project_state_key(self, folder: Path) -> str:
+        try:
+            return str(folder.resolve())
+        except Exception:
+            return str(folder)
+
+    def _collect_project_ui_settings(self) -> dict[str, Any]:
+        mode_raw = self.editor_mode_combo.currentData()
+        mode_value = mode_raw if isinstance(mode_raw, str) else "plain"
+        apply_raw = self.apply_version_combo.currentData()
+        apply_value = apply_raw if isinstance(apply_raw, str) else "working"
+        return {
+            "editor_mode": mode_value,
+            "apply_version": apply_value,
+            "thin_width": int(self.thin_width_spin.value()),
+            "wide_width": int(self.wide_width_spin.value()),
+            "max_lines": int(self.max_lines_spin.value()),
+            "auto_split": bool(self.auto_split_check.isChecked()),
+            "infer_speaker": bool(self.infer_speaker_check.isChecked()),
+            "hide_control_codes": bool(self.hide_control_codes_check.isChecked()),
+            "create_backup": bool(self.backup_check.isChecked()),
+            "show_empty_files": bool(self.show_empty_files_check.isChecked()),
+        }
+
+    def _store_project_ui_settings(self, folder: Path) -> None:
+        key = self._project_state_key(folder)
+        self.project_ui_settings_by_folder[key] = self._collect_project_ui_settings()
+
+    def _store_current_project_ui_settings(self) -> None:
+        if self.data_dir is None:
+            return
+        self._store_project_ui_settings(self.data_dir)
+
+    def _set_combo_data_if_present(self, combo: QComboBox, data_value: str) -> None:
+        index = combo.findData(data_value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+    def _apply_project_ui_settings(self, settings: dict[str, Any]) -> None:
+        self._applying_project_ui_state = True
+        self.editor_mode_combo.blockSignals(True)
+        self.apply_version_combo.blockSignals(True)
+        self.thin_width_spin.blockSignals(True)
+        self.wide_width_spin.blockSignals(True)
+        self.max_lines_spin.blockSignals(True)
+        self.auto_split_check.blockSignals(True)
+        self.infer_speaker_check.blockSignals(True)
+        self.hide_control_codes_check.blockSignals(True)
+        self.backup_check.blockSignals(True)
+        self.show_empty_files_check.blockSignals(True)
+        try:
+            editor_mode = settings.get("editor_mode")
+            if isinstance(editor_mode, str):
+                self._set_combo_data_if_present(self.editor_mode_combo, editor_mode)
+            apply_version = settings.get("apply_version")
+            if isinstance(apply_version, str):
+                self._set_combo_data_if_present(
+                    self.apply_version_combo, apply_version
+                )
+            thin_width = settings.get("thin_width")
+            if isinstance(thin_width, int):
+                self.thin_width_spin.setValue(thin_width)
+            wide_width = settings.get("wide_width")
+            if isinstance(wide_width, int):
+                self.wide_width_spin.setValue(wide_width)
+            max_lines = settings.get("max_lines")
+            if isinstance(max_lines, int):
+                self.max_lines_spin.setValue(max_lines)
+            auto_split = settings.get("auto_split")
+            if isinstance(auto_split, bool):
+                self.auto_split_check.setChecked(auto_split)
+            infer_speaker = settings.get("infer_speaker")
+            if isinstance(infer_speaker, bool):
+                self.infer_speaker_check.setChecked(infer_speaker)
+            hide_control_codes = settings.get("hide_control_codes")
+            if isinstance(hide_control_codes, bool):
+                self.hide_control_codes_check.setChecked(hide_control_codes)
+            create_backup = settings.get("create_backup")
+            if isinstance(create_backup, bool):
+                self.backup_check.setChecked(create_backup)
+            show_empty_files = settings.get("show_empty_files")
+            if isinstance(show_empty_files, bool):
+                self.show_empty_files_check.setChecked(show_empty_files)
+        finally:
+            self.editor_mode_combo.blockSignals(False)
+            self.apply_version_combo.blockSignals(False)
+            self.thin_width_spin.blockSignals(False)
+            self.wide_width_spin.blockSignals(False)
+            self.max_lines_spin.blockSignals(False)
+            self.auto_split_check.blockSignals(False)
+            self.infer_speaker_check.blockSignals(False)
+            self.hide_control_codes_check.blockSignals(False)
+            self.backup_check.blockSignals(False)
+            self.show_empty_files_check.blockSignals(False)
+            self._applying_project_ui_state = False
+
+        self._update_mode_controls()
+        refresh_file_items = getattr(self, "_refresh_all_file_item_text", None)
+        if callable(refresh_file_items):
+            refresh_file_items()
+        sync_mode_ui = getattr(self, "_sync_translator_mode_ui", None)
+        if callable(sync_mode_ui):
+            sync_mode_ui()
+        if self.current_path is not None:
+            self._rerender_current_file()
+
+    def _on_project_setting_changed(self, *_args: Any) -> None:
+        if self._applying_project_ui_state:
+            return
+        if self.data_dir is None:
+            return
+        self._store_current_project_ui_settings()
+        self._save_ui_state()
+
     def _load_ui_state(self) -> None:
         remember_last_folder = False
         last_folder = ""
+        loaded_project_settings: dict[str, dict[str, Any]] = {}
 
         try:
             if self.ui_state_path.exists():
@@ -1302,9 +1437,15 @@ class DialogueVisualEditor(
                     raw_last_folder = loaded.get("last_folder", "")
                     if isinstance(raw_last_folder, str):
                         last_folder = raw_last_folder.strip()
+                    raw_project_settings = loaded.get("project_settings")
+                    if isinstance(raw_project_settings, dict):
+                        for key, value in raw_project_settings.items():
+                            if isinstance(key, str) and isinstance(value, dict):
+                                loaded_project_settings[key] = value
         except Exception:
             return
 
+        self.project_ui_settings_by_folder = loaded_project_settings
         self.remember_folder_check.blockSignals(True)
         self.remember_folder_check.setChecked(remember_last_folder)
         self.remember_folder_check.blockSignals(False)
@@ -1318,6 +1459,7 @@ class DialogueVisualEditor(
                 self._load_data_folder(candidate)
 
     def _save_ui_state(self) -> None:
+        self._store_current_project_ui_settings()
         remember_last_folder = bool(self.remember_folder_check.isChecked())
         last_folder = ""
         if remember_last_folder:
@@ -1329,6 +1471,7 @@ class DialogueVisualEditor(
         payload = {
             "remember_last_folder": remember_last_folder,
             "last_folder": last_folder,
+            "project_settings": self.project_ui_settings_by_folder,
         }
         try:
             with self.ui_state_path.open("w", encoding="utf-8") as dst:
@@ -1540,8 +1683,15 @@ class DialogueVisualEditor(
         elif self.data_dir is None and not self._prompt_unsaved_if_any():
             return
 
+        if self.data_dir is not None:
+            self._store_current_project_ui_settings()
+
         self.data_dir = folder.resolve()
         self.folder_edit.setText(str(self.data_dir))
+        project_key = self._project_state_key(self.data_dir)
+        project_settings = self.project_ui_settings_by_folder.get(project_key)
+        if isinstance(project_settings, dict):
+            self._apply_project_ui_settings(project_settings)
         self._save_ui_state()
         self._windowskin_text_colors.clear()
         self._windowskin_text_colors_loaded = False
