@@ -1254,13 +1254,14 @@ class DialogueBlockWidget(QFrame):
     def _source_hint_html(self) -> str:
         if not self._source_hint_lines:
             return ""
+        if self.hint_display_html_resolver is not None:
+            full_text = "\n".join(self._source_hint_lines)
+            rendered = self.hint_display_html_resolver(full_text).strip()
+            if rendered:
+                return rendered
+
         rows: list[str] = []
         for line in self._source_hint_lines:
-            if self.hint_display_html_resolver is not None:
-                rendered = self.hint_display_html_resolver(line).strip()
-                if rendered:
-                    rows.append(rendered)
-                    continue
             rows.append(html.escape(line) if line else "&nbsp;")
         return "<br/>".join(rows)
 
