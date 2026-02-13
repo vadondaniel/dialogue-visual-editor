@@ -70,15 +70,15 @@ class TranslationStateMixin(_EditorHostTypingFallback):
     def _update_mode_controls(self) -> None:
         translator_mode = self._is_translator_mode()
         if translator_mode:
-            self.save_btn.setText("Save TL Snapshot")
-            self.save_all_btn.setText("Save TL Snapshots")
+            self.save_btn.setText("Save")
+            self.save_all_btn.setText("Save All")
             self.reset_json_btn.setText("Reset TL/JSON")
             self.auto_split_check.setToolTip(
                 "Used when building translated snapshot data."
             )
         else:
-            self.save_btn.setText("Save Snapshot")
-            self.save_all_btn.setText("Save All Snapshots")
+            self.save_btn.setText("Save")
+            self.save_all_btn.setText("Save All")
             self.reset_json_btn.setText("Reset JSON")
             self.auto_split_check.setToolTip(
                 "Auto-split long dialogue on save.")
