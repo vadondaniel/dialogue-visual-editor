@@ -426,6 +426,14 @@ class DialogueVisualEditor(
         self.audit_btn.setToolTip("Open non-blocking audit tools.")
         self.audit_btn.clicked.connect(self._open_audit_window)
         actions_row.addWidget(self.audit_btn)
+
+        self.next_problem_btn = QPushButton("Next Problem")
+        self.next_problem_btn.setToolTip(
+            "Jump to the next block that exceeds width or max-lines in the current mode."
+        )
+        self.next_problem_btn.clicked.connect(self._jump_to_next_problem)
+        self.next_problem_btn.setEnabled(False)
+        actions_row.addWidget(self.next_problem_btn)
         actions_row.addStretch(1)
 
         self.save_btn = QPushButton("Save File")
@@ -470,9 +478,12 @@ class DialogueVisualEditor(
 
         layout.addWidget(controls_panel)
 
-        self.thin_width_spin.valueChanged.connect(self._rerender_current_file)
-        self.wide_width_spin.valueChanged.connect(self._rerender_current_file)
-        self.max_lines_spin.valueChanged.connect(self._rerender_current_file)
+        self.thin_width_spin.valueChanged.connect(
+            self._on_layout_constraints_changed)
+        self.wide_width_spin.valueChanged.connect(
+            self._on_layout_constraints_changed)
+        self.max_lines_spin.valueChanged.connect(
+            self._on_layout_constraints_changed)
         self.infer_speaker_check.toggled.connect(self._rerender_current_file)
         self.hide_control_codes_check.toggled.connect(
             self._on_hide_control_codes_toggled)
@@ -1523,6 +1534,7 @@ class DialogueVisualEditor(
             self.save_all_btn.setEnabled(False)
             self.apply_version_combo.setEnabled(False)
             self.apply_version_btn.setEnabled(False)
+            self.next_problem_btn.setEnabled(False)
             self.selected_segment_uid = None
             self.current_reference_map = {}
             self._refresh_translator_detail_panel()
@@ -1606,6 +1618,7 @@ class DialogueVisualEditor(
             self.save_all_btn.setEnabled(False)
             self.apply_version_combo.setEnabled(False)
             self.apply_version_btn.setEnabled(False)
+            self.next_problem_btn.setEnabled(False)
             self.file_header_label.setText(
                 "No readable JSON files found in selected folder.")
             self._update_reset_json_button(None)
@@ -1630,6 +1643,7 @@ class DialogueVisualEditor(
         self.save_all_btn.setEnabled(True)
         self.apply_version_combo.setEnabled(True)
         self.apply_version_btn.setEnabled(True)
+        self.next_problem_btn.setEnabled(True)
         self._rebuild_file_list()
 
         visible_count = len(self._visible_file_paths())
@@ -1764,6 +1778,52 @@ class DialogueVisualEditor(
             return
         self._clear_cached_block_views()
         self._render_session(session)
+
+    def _on_layout_constraints_changed(self, _value: int) -> None:
+        self._refresh_all_file_item_text()
+        self._rerender_current_file()
+
+    def _jump_to_next_problem(self) -> None:
+        if not self.sessions:
+            self.statusBar().showMessage("Load files before jumping to problems.")
+            return
+
+        translator_mode = self._is_translator_mode()
+        ordered_files = [path for path in self.file_paths if path in self.sessions]
+        problem_targets: list[tuple[Path, str]] = []
+        for path in ordered_files:
+            session = self.sessions.get(path)
+            if session is None:
+                continue
+            for segment in session.segments:
+                if self._segment_has_layout_problem(session, segment, translator_mode):
+                    problem_targets.append((path, segment.uid))
+
+        if not problem_targets:
+            mode_label = "translator" if translator_mode else "plain"
+            self.statusBar().showMessage(
+                f"No layout problems found in {mode_label} mode.")
+            return
+
+        start_index = -1
+        if self.current_path is not None:
+            current_uid = self.selected_segment_uid or ""
+            for idx, target in enumerate(problem_targets):
+                if target[0] == self.current_path and target[1] == current_uid:
+                    start_index = idx
+                    break
+            if start_index < 0:
+                for idx, target in enumerate(problem_targets):
+                    if target[0] == self.current_path:
+                        start_index = idx - 1
+                        break
+
+        target_index = (start_index + 1) % len(problem_targets)
+        target_path, target_uid = problem_targets[target_index]
+        self._open_file(target_path, focus_uid=target_uid)
+        self.statusBar().showMessage(
+            f"Jumped to next problem ({target_index + 1}/{len(problem_targets)})."
+        )
 
     def _on_hide_control_codes_toggled(self, checked: bool) -> None:
         scroll_bar = self.scroll_area.verticalScrollBar()

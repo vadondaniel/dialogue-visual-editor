@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from ..core.models import DialogueSegment, FileSession
-from ..core.text_utils import chunk_lines
+from ..core.text_utils import chunk_lines, visible_length
 
 ApplyVersionKind = Literal["original", "working", "translated"]
 
@@ -22,6 +22,40 @@ class _EditorHostTypingFallback:
 
 
 class PersistenceExportMixin(_EditorHostTypingFallback):
+    def _segment_has_layout_problem(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+        translator_mode: bool,
+    ) -> bool:
+        if self._is_name_index_session(session):
+            return False
+        lines = (
+            self._normalize_translation_lines(segment.translation_lines)
+            if translator_mode
+            else list(segment.lines) if segment.lines else [""]
+        )
+        width_chars = (
+            self.thin_width_spin.value()
+            if segment.has_face
+            else self.wide_width_spin.value()
+        )
+        if any(visible_length(line) > width_chars for line in lines):
+            return True
+        return len(lines) > self.max_lines_spin.value()
+
+    def _problem_count_for_session(self, session: FileSession) -> int:
+        translator_mode = self._is_translator_mode()
+        return sum(
+            1
+            for segment in session.segments
+            if self._segment_has_layout_problem(session, segment, translator_mode)
+        )
+
+    def _refresh_all_file_item_text(self) -> None:
+        for path in self.file_paths:
+            self._update_file_item_text(path)
+
     def _refresh_dirty_state(self, session: FileSession) -> None:
         invalidate_audit = getattr(self, "_invalidate_audit_caches", None)
         if callable(invalidate_audit):
@@ -61,7 +95,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return
         prefix = "* " if session.dirty else ""
         suffix = " [empty]" if len(session.segments) == 0 else ""
-        item.setText(f"{prefix}{path.name} ({len(session.segments)}){suffix}")
+        problems = self._problem_count_for_session(session)
+        problem_badge = f" [!{problems}]" if problems > 0 else ""
+        item.setText(
+            f"{prefix}{path.name} ({len(session.segments)}){problem_badge}{suffix}")
 
     def _build_entries_for_segment(self, segment: DialogueSegment) -> list[dict[str, Any]]:
         return self._build_entries_for_segment_lines(segment, segment.lines)
