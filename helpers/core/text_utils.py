@@ -26,16 +26,14 @@ SIMILARITY_PUNCT_RE = re.compile(
 
 
 def visible_length(text: str) -> int:
-    if _wrap_dialogs is not None:
-        fn = getattr(_wrap_dialogs, "visible_length", None)
-        if callable(fn):
-            try:
-                value = fn(text)
-                if isinstance(value, int):
-                    return max(0, value)
-            except Exception:
-                pass
-    return len(text)
+    visible = 0
+    for unit in parse_units_for_measure(text):
+        if unit.get("is_newline"):
+            continue
+        raw_visible = unit.get("visible", 0)
+        if isinstance(raw_visible, int) and raw_visible > 0:
+            visible += raw_visible
+    return visible
 
 
 def looks_like_name_line(line: str) -> bool:
@@ -50,29 +48,30 @@ def looks_like_name_line(line: str) -> bool:
 
 
 def parse_units_for_measure(text: str) -> list[dict[str, Any]]:
-    if _wrap_dialogs is not None:
-        fn = getattr(_wrap_dialogs, "parse_units", None)
-        if callable(fn):
-            try:
-                raw_units = fn(text)
-                if isinstance(raw_units, list):
-                    normalized: list[dict[str, Any]] = []
-                    for unit in raw_units:
-                        if isinstance(unit, dict):
-                            normalized.append(unit)
-                    if normalized:
-                        return normalized
-            except Exception:
-                pass
     units: list[dict[str, Any]] = []
-    for ch in text:
-        units.append(
-            {
-                "text": ch,
-                "visible": 0 if ch == "\n" else 1,
-                "is_newline": ch == "\n",
-            }
-        )
+    cursor = 0
+    for match in CONTROL_TOKEN_RE.finditer(text):
+        if match.start() > cursor:
+            for ch in text[cursor:match.start()]:
+                units.append(
+                    {
+                        "text": ch,
+                        "visible": 0 if ch == "\n" else 1,
+                        "is_newline": ch == "\n",
+                    }
+                )
+        token = match.group(0)
+        units.append({"text": token, "visible": 0, "is_newline": False})
+        cursor = match.end()
+    if cursor < len(text):
+        for ch in text[cursor:]:
+            units.append(
+                {
+                    "text": ch,
+                    "visible": 0 if ch == "\n" else 1,
+                    "is_newline": ch == "\n",
+                }
+            )
     return units
 
 
