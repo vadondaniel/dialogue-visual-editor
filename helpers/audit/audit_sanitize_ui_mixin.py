@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QListWidgetItem, QMenu
 
 from .audit_constants import SANITIZE_CHAR_RULES
-from .models import DialogueSegment, FileSession
+from ..core.models import DialogueSegment, FileSession
 
 
 class _AuditSanitizeHostTypingFallback:
@@ -627,3 +627,4 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         if not isinstance(uid_raw, str) or not uid_raw:
             return
         self._jump_to_audit_location(path_raw, uid_raw)
+

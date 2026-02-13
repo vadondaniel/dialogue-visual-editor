@@ -11,8 +11,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QListWidgetItem
 
 from .audit_constants import COLOR_CODE_TOKEN_RE
-from .presentation_mixins import is_dark_palette
-from .text_utils import CONTROL_TOKEN_RE
+from ..mixins.presentation_mixins import is_dark_palette
+from ..core.text_utils import CONTROL_TOKEN_RE
 
 
 class _AuditControlHostTypingFallback:
@@ -516,3 +516,4 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
         if not isinstance(uid_raw, str) or not uid_raw:
             return
         self._jump_to_audit_location(path_raw, uid_raw)
+

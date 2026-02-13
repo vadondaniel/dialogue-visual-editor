@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from .models import DialogueSegment, FileSession
-from .ui_components import DialogueBlockWidget, ItemNameDescriptionWidget
+from ..core.models import DialogueSegment, FileSession
+from ..ui.ui_components import DialogueBlockWidget, ItemNameDescriptionWidget
 
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
 
@@ -951,5 +951,6 @@ class RenderMixin(_RenderHostTypingFallback):
             f"Rendering 0/{segment_count}",
         )
         self._render_blocks_timer.start(0)
+
 
 

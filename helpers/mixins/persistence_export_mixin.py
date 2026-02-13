@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
-from .models import DialogueSegment, FileSession
-from .parser import parse_dialogue_file
-from .text_utils import chunk_lines
+from ..core.models import DialogueSegment, FileSession
+from ..core.parser import parse_dialogue_file
+from ..core.text_utils import chunk_lines
 
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QCheckBox, QComboBox, QPushButton
@@ -504,3 +504,4 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             )
             return
         self.statusBar().showMessage(f"Exported TL files: {len(self.sessions)}")
+

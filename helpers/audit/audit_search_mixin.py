@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QListWidgetItem
 
-from .models import DialogueSegment, FileSession
+from ..core.models import DialogueSegment, FileSession
 
 
 class _AuditSearchHostTypingFallback:
@@ -404,3 +404,4 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         if not isinstance(uid_raw, str) or not uid_raw:
             return
         self._jump_to_audit_location(path_raw, uid_raw)
+

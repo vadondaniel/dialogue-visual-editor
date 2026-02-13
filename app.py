@@ -43,34 +43,60 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dialogue_visual_editor_helpers import (
-    DialogueIndexDB,
-    DialogueSegment,
-    FileSession,
-    NO_SPEAKER_KEY,
-    StructuralAction,
-    looks_like_name_line,
-    natural_sort_key,
-    parse_dialogue_file,
-)
-from dialogue_visual_editor_helpers.audit_mixin import AuditMixin
-from dialogue_visual_editor_helpers.editor_mixins import (
-    PersistenceExportMixin,
-    StructuralEditingMixin,
-    TranslationStateMixin,
-)
-from dialogue_visual_editor_helpers.mass_translate_dialog import MassTranslateDialog
-from dialogue_visual_editor_helpers.presentation_mixins import (
-    PresentationHelpersMixin,
-    is_dark_palette,
-)
-from dialogue_visual_editor_helpers.render_mixin import RenderMixin
-from dialogue_visual_editor_helpers.ui_components import (
-    ControlCodeHighlighter,
-    DialogueBlockWidget,
-    ItemNameDescriptionWidget,
-    SpeakerManagerDialog,
-)
+try:
+    from .helpers import (
+        DialogueIndexDB,
+        DialogueSegment,
+        FileSession,
+        NO_SPEAKER_KEY,
+        StructuralAction,
+        looks_like_name_line,
+        natural_sort_key,
+        parse_dialogue_file,
+    )
+    from .helpers.audit import AuditMixin
+    from .helpers.mixins import (
+        PersistenceExportMixin,
+        PresentationHelpersMixin,
+        RenderMixin,
+        StructuralEditingMixin,
+        TranslationStateMixin,
+        is_dark_palette,
+    )
+    from .helpers.ui import (
+        ControlCodeHighlighter,
+        DialogueBlockWidget,
+        ItemNameDescriptionWidget,
+        MassTranslateDialog,
+        SpeakerManagerDialog,
+    )
+except ImportError:
+    from helpers import (
+        DialogueIndexDB,
+        DialogueSegment,
+        FileSession,
+        NO_SPEAKER_KEY,
+        StructuralAction,
+        looks_like_name_line,
+        natural_sort_key,
+        parse_dialogue_file,
+    )
+    from helpers.audit import AuditMixin
+    from helpers.mixins import (
+        PersistenceExportMixin,
+        PresentationHelpersMixin,
+        RenderMixin,
+        StructuralEditingMixin,
+        TranslationStateMixin,
+        is_dark_palette,
+    )
+    from helpers.ui import (
+        ControlCodeHighlighter,
+        DialogueBlockWidget,
+        ItemNameDescriptionWidget,
+        MassTranslateDialog,
+        SpeakerManagerDialog,
+    )
 
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
 

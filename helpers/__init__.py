@@ -1,5 +1,7 @@
-from .index_db import DialogueIndexDB
-from .models import (
+from __future__ import annotations
+
+from .core import DialogueIndexDB
+from .core.models import (
     CommandBundle,
     CommandToken,
     DeletedBlockAction,
@@ -12,8 +14,8 @@ from .models import (
     SplitOverflowAction,
     StructuralAction,
 )
-from .parser import parse_dialogue_file
-from .text_utils import (
+from .core.parser import parse_dialogue_file
+from .core.text_utils import (
     chunk_lines,
     collapse_lines_force,
     first_overflow_char_index,

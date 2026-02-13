@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtWidgets import QMessageBox, QWidget
 
-from .models import (
+from ..core.models import (
     DialogueSegment,
     FileSession,
 )
-from .text_utils import (
+from ..core.text_utils import (
     fuzzy_compare_text,
     natural_sort_key,
     preview_text,
@@ -458,3 +458,4 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
             summaries[segment.uid] = (exact_summary, similar_summary)
         return summaries
+

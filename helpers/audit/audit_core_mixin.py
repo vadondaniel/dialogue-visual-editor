@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QWidget
 
-from .models import FileSession
-from .presentation_mixins import is_dark_palette
+from ..core.models import FileSession
+from ..mixins.presentation_mixins import is_dark_palette
 
 
 class _AuditCoreHostTypingFallback:
@@ -195,3 +195,4 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
             f"Jumped to {self._relative_path(path)} ({uid_raw})."
         )
         return True
+

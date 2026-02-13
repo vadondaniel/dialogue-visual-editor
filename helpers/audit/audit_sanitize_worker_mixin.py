@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
-from .models import FileSession
+from ..core.models import FileSession
 
 
 class _AuditSanitizeHostTypingFallback:
@@ -264,3 +264,4 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
             selected_find_text=selected_find_text,
             payload=payload,
         )
+

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtWidgets import QMessageBox
 
-from .models import DialogueSegment
+from ..core.models import DialogueSegment
 
 
 class _AuditSanitizeHostTypingFallback:
@@ -198,3 +198,4 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
             self.statusBar().showMessage("Select a sanitize rule first.")
             return
         self._apply_audit_sanitize_rules([payload])
+

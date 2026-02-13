@@ -23,8 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .models import DialogueSegment, FileSession, NO_SPEAKER_KEY
-from .text_utils import natural_sort_key
+from ..core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
+from ..core.text_utils import natural_sort_key
 
 
 class MassTranslateHost(Protocol):
@@ -892,4 +892,5 @@ class MassTranslateDialog(QDialog):
             self.result_box.appendPlainText(
                 "\nSwitched content scope to 'Dialogues Only'."
             )
+
 

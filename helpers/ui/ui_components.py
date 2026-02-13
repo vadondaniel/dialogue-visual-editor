@@ -33,8 +33,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .models import NO_SPEAKER_KEY, DialogueSegment
-from .text_utils import (
+from ..core.models import NO_SPEAKER_KEY, DialogueSegment
+from ..core.text_utils import (
     collapse_lines_force,
     first_overflow_char_index,
     looks_like_name_line,
@@ -1376,4 +1376,5 @@ class DialogueBlockWidget(QFrame):
         self._refresh_meta_label()
         self._refresh_status()
         self.text_changed.emit(self.segment.uid, lines)
+
 

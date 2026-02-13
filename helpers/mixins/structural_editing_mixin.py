@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QMessageBox, QPushButton, QWidget
 
-from .models import (
+from ..core.models import (
     CommandBundle,
     CommandToken,
     DeletedBlockAction,
@@ -19,7 +19,7 @@ from .models import (
     SplitOverflowAction,
     StructuralAction,
 )
-from .text_utils import smart_collapse_lines_space_efficient
+from ..core.text_utils import smart_collapse_lines_space_efficient
 
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QCheckBox, QComboBox, QPushButton
@@ -865,3 +865,4 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 self.structural_undo_stack.append(action)
                 return True
         return False
+

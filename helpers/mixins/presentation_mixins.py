@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 from PySide6.QtGui import QColor, QImage, QPalette
 from PySide6.QtWidgets import QApplication
 
-from .models import DialogueSegment, FileSession
-from .text_utils import strip_control_tokens
+from ..core.models import DialogueSegment, FileSession
+from ..core.text_utils import strip_control_tokens
 
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
 NAME_TOKEN_RE = re.compile(r"\\[Nn]\[(\d+)\]")
@@ -449,3 +449,4 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
     def _hidden_control_line_transform(self, line: str) -> str:
         masked, _spans = self._hidden_control_line_with_color_spans(line)
         return masked
+
