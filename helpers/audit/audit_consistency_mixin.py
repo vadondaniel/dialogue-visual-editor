@@ -201,13 +201,34 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             )
             self.audit_consistency_entries_list.addItem(item)
 
-        target_text = group_payload.get("most_common_translation", "")
-        if isinstance(target_text, str):
-            self.audit_consistency_target_edit.setPlainText(target_text)
-        else:
-            self.audit_consistency_target_edit.setPlainText("")
         if self.audit_consistency_entries_list.count() > 0:
             self.audit_consistency_entries_list.setCurrentRow(0)
+            first_payload = self._audit_consistency_entry_payload(
+                self.audit_consistency_entries_list.currentItem()
+            )
+            if first_payload is not None:
+                first_translation = first_payload.get("translation")
+                if isinstance(first_translation, str):
+                    self.audit_consistency_target_edit.setPlainText(first_translation)
+                else:
+                    self.audit_consistency_target_edit.setPlainText("")
+                return
+        self.audit_consistency_target_edit.setPlainText("")
+
+    def _on_audit_consistency_entry_selected(self) -> None:
+        if (
+            self.audit_consistency_entries_list is None
+            or self.audit_consistency_target_edit is None
+        ):
+            return
+        payload = self._audit_consistency_entry_payload(
+            self.audit_consistency_entries_list.currentItem()
+        )
+        if payload is None:
+            return
+        translation = payload.get("translation")
+        if isinstance(translation, str):
+            self.audit_consistency_target_edit.setPlainText(translation)
 
     def _refresh_audit_consistency_panel(self, preferred_source: Optional[str] = None) -> None:
         if (

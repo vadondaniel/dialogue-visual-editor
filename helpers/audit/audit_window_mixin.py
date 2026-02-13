@@ -491,6 +491,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             lambda current, _previous: (
                 consistency_goto_btn.setEnabled(current is not None),
                 consistency_use_selected_btn.setEnabled(current is not None),
+                self._on_audit_consistency_entry_selected(),
             )
         )
         consistency_entries_list.itemDoubleClicked.connect(
