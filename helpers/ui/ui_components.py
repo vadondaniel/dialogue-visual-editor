@@ -13,6 +13,7 @@ from PySide6.QtGui import (
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
+    QTextOption,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -75,6 +76,18 @@ def is_dark_palette() -> bool:
         return app.palette().color(QPalette.ColorRole.Window).lightness() < 128
     except Exception:
         return False
+
+
+def _set_hard_newline_markers(editor: QPlainTextEdit, enabled: bool) -> None:
+    text_option = editor.document().defaultTextOption()
+    flags = text_option.flags()
+    marker_flag = QTextOption.Flag.ShowLineAndParagraphSeparators
+    if enabled:
+        flags = flags | marker_flag
+    else:
+        flags = flags & ~marker_flag
+    text_option.setFlags(flags)
+    editor.document().setDefaultTextOption(text_option)
 
 
 class ControlCodeHighlighter(QSyntaxHighlighter):
@@ -411,6 +424,7 @@ class ItemNameDescriptionWidget(QFrame):
         self.name_editor = QPlainTextEdit()
         self.name_editor.setFont(mono)
         self.name_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        _set_hard_newline_markers(self.name_editor, False)
         self.name_editor.setFixedHeight(
             max(52, QFontMetrics(mono).lineSpacing() * 2 + 16))
         self.name_editor.installEventFilter(self)
@@ -427,6 +441,7 @@ class ItemNameDescriptionWidget(QFrame):
         self.desc_editor.setFont(mono)
         self.desc_editor.setLineWrapMode(
             QPlainTextEdit.LineWrapMode.WidgetWidth)
+        _set_hard_newline_markers(self.desc_editor, False)
         self.desc_editor.setFixedHeight(
             max(130, QFontMetrics(mono).lineSpacing() * 7 + 18))
         self.desc_editor.installEventFilter(self)
@@ -506,6 +521,7 @@ class ItemNameDescriptionWidget(QFrame):
         if editor is self.name_editor:
             show_raw = (
                 not self.hide_control_codes_when_unfocused) or self.name_editor.hasFocus()
+            _set_hard_newline_markers(self.name_editor, self.name_editor.hasFocus())
             if (not force) and show_raw == self._showing_raw_name:
                 return
             self._showing_raw_name = show_raw
@@ -516,6 +532,7 @@ class ItemNameDescriptionWidget(QFrame):
 
         show_raw = (
             not self.hide_control_codes_when_unfocused) or self.desc_editor.hasFocus()
+        _set_hard_newline_markers(self.desc_editor, self.desc_editor.hasFocus())
         if (not force) and show_raw == self._showing_raw_desc:
             return
         self._showing_raw_desc = show_raw
@@ -898,6 +915,7 @@ class DialogueBlockWidget(QFrame):
 
         self.editor = QPlainTextEdit()
         self.editor.setFont(mono)
+        _set_hard_newline_markers(self.editor, False)
         edited_lines = self.segment.translation_lines if self.translator_mode else self.segment.lines
         if not edited_lines:
             edited_lines = [""]
@@ -1255,6 +1273,7 @@ class DialogueBlockWidget(QFrame):
 
     def _sync_control_code_visibility(self, force: bool = False) -> None:
         show_raw = self._should_show_raw_codes()
+        _set_hard_newline_markers(self.editor, self.editor.hasFocus())
         currently_showing_raw = not self._displaying_masked_text
         if not force and show_raw == currently_showing_raw:
             return
