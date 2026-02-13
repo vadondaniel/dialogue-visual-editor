@@ -281,6 +281,14 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             QLabel("Entries In Selected Group"))
         consistency_entries_list = QListWidget()
         consistency_entries_layout.addWidget(consistency_entries_list, 1)
+        consistency_entries_layout.addWidget(QLabel("Original Source"))
+        consistency_source_edit = QPlainTextEdit()
+        consistency_source_edit.setReadOnly(True)
+        consistency_source_edit.setPlaceholderText(
+            "Selected duplicate group's source text."
+        )
+        consistency_source_edit.setFixedHeight(84)
+        consistency_entries_layout.addWidget(consistency_source_edit)
         consistency_entries_layout.addWidget(QLabel("Sync Translation Target"))
         consistency_target_edit = QPlainTextEdit()
         consistency_target_edit.setPlaceholderText(
@@ -291,15 +299,12 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_actions_row = QHBoxLayout()
         consistency_actions_row.setContentsMargins(0, 0, 0, 0)
         consistency_actions_row.setSpacing(6)
-        consistency_use_selected_btn = QPushButton("Use Selected")
         consistency_use_common_btn = QPushButton("Use Most Common")
         consistency_apply_btn = QPushButton("Apply To Group")
         consistency_goto_btn = QPushButton("Go To Entry")
-        consistency_use_selected_btn.setEnabled(False)
         consistency_use_common_btn.setEnabled(False)
         consistency_apply_btn.setEnabled(False)
         consistency_goto_btn.setEnabled(False)
-        consistency_actions_row.addWidget(consistency_use_selected_btn)
         consistency_actions_row.addWidget(consistency_use_common_btn)
         consistency_actions_row.addStretch(1)
         consistency_actions_row.addWidget(consistency_apply_btn)
@@ -352,11 +357,11 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_consistency_sort_combo = consistency_sort_combo
         self.audit_consistency_groups_list = consistency_groups_list
         self.audit_consistency_entries_list = consistency_entries_list
+        self.audit_consistency_source_edit = consistency_source_edit
         self.audit_consistency_target_edit = consistency_target_edit
         self.audit_consistency_status_label = consistency_status_label
         self.audit_consistency_goto_btn = consistency_goto_btn
         self.audit_consistency_apply_btn = consistency_apply_btn
-        self.audit_consistency_use_selected_btn = consistency_use_selected_btn
         self.audit_consistency_use_common_btn = consistency_use_common_btn
 
         for rule_id, label, find_text, replace_text in SANITIZE_CHAR_RULES:
@@ -490,7 +495,6 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_entries_list.currentItemChanged.connect(
             lambda current, _previous: (
                 consistency_goto_btn.setEnabled(current is not None),
-                consistency_use_selected_btn.setEnabled(current is not None),
                 self._on_audit_consistency_entry_selected(),
             )
         )
@@ -502,9 +506,6 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         consistency_goto_btn.clicked.connect(
             self._go_to_selected_audit_consistency_entry
-        )
-        consistency_use_selected_btn.clicked.connect(
-            self._use_selected_audit_consistency_entry
         )
         consistency_use_common_btn.clicked.connect(
             self._use_most_common_audit_consistency_translation

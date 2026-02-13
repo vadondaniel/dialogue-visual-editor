@@ -147,10 +147,10 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         if (
             self.audit_consistency_groups_list is None
             or self.audit_consistency_entries_list is None
+            or self.audit_consistency_source_edit is None
             or self.audit_consistency_target_edit is None
             or self.audit_consistency_goto_btn is None
             or self.audit_consistency_apply_btn is None
-            or self.audit_consistency_use_selected_btn is None
             or self.audit_consistency_use_common_btn is None
         ):
             return
@@ -159,15 +159,21 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         )
         self.audit_consistency_entries_list.clear()
         self.audit_consistency_goto_btn.setEnabled(False)
-        self.audit_consistency_use_selected_btn.setEnabled(False)
         self.audit_consistency_apply_btn.setEnabled(group_payload is not None)
         self.audit_consistency_use_common_btn.setEnabled(group_payload is not None)
         if group_payload is None:
+            self.audit_consistency_source_edit.setPlainText("")
             self.audit_consistency_target_edit.setPlainText("")
             return
+        source_text = group_payload.get("source_text")
+        if isinstance(source_text, str):
+            self.audit_consistency_source_edit.setPlainText(source_text)
+        else:
+            self.audit_consistency_source_edit.setPlainText("")
 
         entries = group_payload.get("entries")
         if not isinstance(entries, list):
+            self.audit_consistency_source_edit.setPlainText("")
             self.audit_consistency_target_edit.setPlainText("")
             return
         for entry in entries:
@@ -268,24 +274,6 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             f"Duplicate groups: {len(groups)} | Duplicate entries: {total_entries}"
         )
         self._refresh_audit_consistency_entries()
-
-    def _use_selected_audit_consistency_entry(self) -> None:
-        if (
-            self.audit_consistency_entries_list is None
-            or self.audit_consistency_target_edit is None
-        ):
-            return
-        payload = self._audit_consistency_entry_payload(
-            self.audit_consistency_entries_list.currentItem()
-        )
-        if payload is None:
-            self.statusBar().showMessage("Select an entry first.")
-            return
-        translation = payload.get("translation")
-        if not isinstance(translation, str):
-            translation = ""
-        self.audit_consistency_target_edit.setPlainText(translation)
-        self.statusBar().showMessage("Loaded selected entry translation as target.")
 
     def _use_most_common_audit_consistency_translation(self) -> None:
         if self.audit_consistency_groups_list is None or self.audit_consistency_target_edit is None:
