@@ -4,11 +4,12 @@ import html
 import re
 from typing import Any, Callable, Optional, Protocol, cast
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QFontMetrics,
+    QHelpEvent,
     QPalette,
     QSyntaxHighlighter,
     QTextCharFormat,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QToolTip,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -46,6 +48,7 @@ from ..core.text_utils import (
 )
 
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
+VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
 
 
 class SpeakerManagerHost(Protocol):
@@ -122,6 +125,25 @@ def _split_masked_text_and_spans(
                 (start - line_start, end - line_start, color_hex)
             )
     return lines, spans_per_line
+
+
+def _variable_token_id_at_editor_position(
+    editor: QPlainTextEdit,
+    pos: QPoint,
+) -> Optional[int]:
+    cursor = editor.cursorForPosition(pos)
+    block = cursor.block()
+    if not block.isValid():
+        return None
+    line_text = block.text()
+    in_block_pos = cursor.position() - block.position()
+    for match in VARIABLE_TOKEN_RE.finditer(line_text):
+        if match.start() <= in_block_pos <= match.end():
+            try:
+                return int(match.group(1))
+            except Exception:
+                return None
+    return None
 
 
 class ControlCodeHighlighter(QSyntaxHighlighter):
@@ -384,6 +406,7 @@ class ItemNameDescriptionWidget(QFrame):
             Callable[[str], tuple[str, list[tuple[int, int, str]]]]
         ],
         color_code_resolver: Optional[Callable[[int], str]],
+        variable_label_resolver: Optional[Callable[[int], str]],
         translator_mode: bool,
         name_index_label: str,
         parent: Optional[QWidget] = None,
@@ -395,6 +418,7 @@ class ItemNameDescriptionWidget(QFrame):
         self.hidden_control_line_transform = hidden_control_line_transform
         self.hidden_control_colored_line_resolver = hidden_control_colored_line_resolver
         self.color_code_resolver = color_code_resolver
+        self.variable_label_resolver = variable_label_resolver
         self.translator_mode = translator_mode
         self.name_index_label = name_index_label.strip() or "Item"
         self._dark_theme = is_dark_palette()
@@ -462,6 +486,8 @@ class ItemNameDescriptionWidget(QFrame):
         self.name_editor.setFixedHeight(
             max(52, QFontMetrics(mono).lineSpacing() * 2 + 16))
         self.name_editor.installEventFilter(self)
+        self.name_editor.viewport().setMouseTracking(True)
+        self.name_editor.viewport().installEventFilter(self)
         self.name_editor.textChanged.connect(self._on_name_text_changed)
         self._name_highlighter = ControlCodeHighlighter(
             self.name_editor.document(),
@@ -479,6 +505,8 @@ class ItemNameDescriptionWidget(QFrame):
         self.desc_editor.setFixedHeight(
             max(130, QFontMetrics(mono).lineSpacing() * 7 + 18))
         self.desc_editor.installEventFilter(self)
+        self.desc_editor.viewport().setMouseTracking(True)
+        self.desc_editor.viewport().installEventFilter(self)
         self.desc_editor.textChanged.connect(self._on_desc_text_changed)
         self._desc_highlighter = ControlCodeHighlighter(
             self.desc_editor.document(),
@@ -648,7 +676,37 @@ class ItemNameDescriptionWidget(QFrame):
                     cast(QPlainTextEdit, watched), force=True)
             elif event.type() == QEvent.Type.MouseButtonPress:
                 self.activated.emit(self.segment.uid)
+        elif watched is self.name_editor.viewport():
+            if self._handle_variable_tooltip_event(self.name_editor, event):
+                return True
+        elif watched is self.desc_editor.viewport():
+            if self._handle_variable_tooltip_event(self.desc_editor, event):
+                return True
         return super().eventFilter(watched, event)
+
+    def _variable_tooltip_text(self, editor: QPlainTextEdit, event_pos: QPoint) -> str:
+        variable_id = _variable_token_id_at_editor_position(editor, event_pos)
+        if variable_id is None:
+            return ""
+        details = (
+            self.variable_label_resolver(variable_id).strip()
+            if self.variable_label_resolver is not None
+            else ""
+        )
+        if details:
+            return f"\\V[{variable_id}] -> {details}"
+        return f"\\V[{variable_id}] -> system.variables[{variable_id}]"
+
+    def _handle_variable_tooltip_event(self, editor: QPlainTextEdit, event: QEvent) -> bool:
+        if event.type() != QEvent.Type.ToolTip:
+            return False
+        help_event = cast(QHelpEvent, event)
+        text = self._variable_tooltip_text(editor, help_event.pos())
+        if not text:
+            QToolTip.hideText()
+            return False
+        QToolTip.showText(help_event.globalPos(), text, editor.viewport())
+        return True
 
     def _refresh_block_style(self) -> None:
         block_bg = "#13293d" if self._dark_theme else "#e9f6ff"
@@ -792,6 +850,7 @@ class DialogueBlockWidget(QFrame):
         speaker_display_html_resolver: Optional[Callable[[str], str]],
         hint_display_html_resolver: Optional[Callable[[str], str]],
         color_code_resolver: Optional[Callable[[int], str]],
+        variable_label_resolver: Optional[Callable[[int], str]],
         speaker_tint_color: str,
         translator_mode: bool,
         actor_mode: bool,
@@ -814,6 +873,7 @@ class DialogueBlockWidget(QFrame):
         self.speaker_display_html_resolver = speaker_display_html_resolver
         self.hint_display_html_resolver = hint_display_html_resolver
         self.color_code_resolver = color_code_resolver
+        self.variable_label_resolver = variable_label_resolver
         self.speaker_tint_color = speaker_tint_color
         self.translator_mode = translator_mode
         self.actor_mode = actor_mode
@@ -980,7 +1040,8 @@ class DialogueBlockWidget(QFrame):
             )
             self._source_hint_overlay.setStyleSheet("background: transparent;")
             self._source_hint_overlay.setFont(mono)
-            self.editor.viewport().installEventFilter(self)
+        self.editor.viewport().setMouseTracking(True)
+        self.editor.viewport().installEventFilter(self)
         self._apply_editor_width()
         self.editor.installEventFilter(self)
         self.editor.textChanged.connect(self._on_text_changed)
@@ -1078,10 +1139,36 @@ class DialogueBlockWidget(QFrame):
                 self._sync_control_code_visibility(force=True)
             elif event.type() == QEvent.Type.MouseButtonPress:
                 self.activated.emit(self.segment.uid)
-        elif self._source_hint_overlay is not None and watched is self.editor.viewport():
+        elif watched is self.editor.viewport():
+            if self._handle_variable_tooltip_event(event):
+                return True
             if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
                 self._refresh_source_hint_overlay()
         return super().eventFilter(watched, event)
+
+    def _variable_tooltip_text(self, event_pos: QPoint) -> str:
+        variable_id = _variable_token_id_at_editor_position(self.editor, event_pos)
+        if variable_id is None:
+            return ""
+        details = (
+            self.variable_label_resolver(variable_id).strip()
+            if self.variable_label_resolver is not None
+            else ""
+        )
+        if details:
+            return f"\\V[{variable_id}] -> {details}"
+        return f"\\V[{variable_id}] -> system.variables[{variable_id}]"
+
+    def _handle_variable_tooltip_event(self, event: QEvent) -> bool:
+        if event.type() != QEvent.Type.ToolTip:
+            return False
+        help_event = cast(QHelpEvent, event)
+        text = self._variable_tooltip_text(help_event.pos())
+        if not text:
+            QToolTip.hideText()
+            return False
+        QToolTip.showText(help_event.globalPos(), text, self.editor.viewport())
+        return True
 
     def mousePressEvent(self, event: Any) -> None:
         self.activated.emit(self.segment.uid)

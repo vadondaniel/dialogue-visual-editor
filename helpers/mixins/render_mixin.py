@@ -253,6 +253,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 hidden_control_line_transform=self._hidden_control_line_transform,
                 hidden_control_colored_line_resolver=self._hidden_control_line_with_color_spans,
                 color_code_resolver=self._color_for_rpgm_code,
+                variable_label_resolver=self._variable_label_for_rpgm_index,
                 translator_mode=translator_mode,
                 name_index_label=name_index_label,
             )
@@ -271,6 +272,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 speaker_display_html_resolver=self._render_text_with_color_codes_html,
                 hint_display_html_resolver=self._render_text_with_color_codes_html_muted,
                 color_code_resolver=self._color_for_rpgm_code,
+                variable_label_resolver=self._variable_label_for_rpgm_index,
                 speaker_tint_color=self._speaker_color_for_segment(segment),
                 translator_mode=translator_mode,
                 actor_mode=actor_mode,

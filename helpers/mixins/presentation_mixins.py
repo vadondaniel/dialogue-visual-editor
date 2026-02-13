@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
@@ -58,6 +59,107 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
     def _segment_source_lines_for_display(self, segment: DialogueSegment) -> list[str]:
         lines = segment.source_lines or segment.original_lines or segment.lines
         return lines if lines else [""]
+
+    def _selected_variable_label_version(self) -> str:
+        resolver = getattr(self, "_selected_apply_version", None)
+        if callable(resolver):
+            try:
+                selected = resolver()
+                if selected in {"original", "working", "translated"}:
+                    return cast(str, selected)
+            except Exception:
+                pass
+        return "translated" if self._is_translator_mode() else "working"
+
+    def _system_session(self) -> Optional[FileSession]:
+        for path, session in self.sessions.items():
+            if path.name.lower() == "system.json":
+                return session
+        return None
+
+    def _system_variables_from_original_snapshot(self) -> dict[int, str]:
+        session = self._system_session()
+        if session is None:
+            return {}
+        if self.version_db is None:
+            return {}
+        try:
+            payload = self.version_db.get_snapshot_payload(
+                self._relative_path(session.path),
+                "original",
+            )
+        except Exception:
+            return {}
+        if not payload:
+            return {}
+        try:
+            decoded = json.loads(payload)
+        except Exception:
+            return {}
+        if not isinstance(decoded, dict):
+            return {}
+        raw_variables = decoded.get("variables")
+        if not isinstance(raw_variables, list):
+            return {}
+        mapped: dict[int, str] = {}
+        for idx, value in enumerate(raw_variables):
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if cleaned:
+                    mapped[idx] = cleaned
+        return mapped
+
+    def _system_variables_from_session(self, translated: bool) -> dict[int, str]:
+        session = self._system_session()
+        if session is None:
+            return {}
+        mapped: dict[int, str] = {}
+        for segment in session.segments:
+            path_tokens_raw = getattr(segment, "system_text_path", ())
+            if not isinstance(path_tokens_raw, tuple):
+                continue
+            if len(path_tokens_raw) != 2:
+                continue
+            if path_tokens_raw[0] != "variables":
+                continue
+            variable_id = path_tokens_raw[1]
+            if not isinstance(variable_id, int):
+                continue
+            if translated:
+                translated_lines = self._normalize_translation_lines(
+                    segment.translation_lines
+                )
+                text_value = "\n".join(translated_lines).strip()
+                if not text_value:
+                    base_lines = (
+                        segment.source_lines
+                        or segment.original_lines
+                        or segment.lines
+                        or [""]
+                    )
+                    text_value = "\n".join(base_lines).strip()
+            else:
+                text_value = "\n".join(segment.lines or [""]).strip()
+            if text_value:
+                mapped[variable_id] = text_value
+        return mapped
+
+    def _variable_label_for_rpgm_index(self, variable_id: int) -> str:
+        safe_id = max(0, int(variable_id))
+        version = self._selected_variable_label_version()
+        if version == "original":
+            values = self._system_variables_from_original_snapshot()
+            label = values.get(safe_id, "")
+        elif version == "translated":
+            values = self._system_variables_from_session(translated=True)
+            label = values.get(safe_id, "")
+        else:
+            values = self._system_variables_from_session(translated=False)
+            label = values.get(safe_id, "")
+
+        if label:
+            return f"system.variables[{safe_id}]: {label}"
+        return f"system.variables[{safe_id}]: (empty)"
 
     def _name_index_kind(self, session: FileSession) -> str:
         raw_kind = getattr(session, "name_index_kind", "")
