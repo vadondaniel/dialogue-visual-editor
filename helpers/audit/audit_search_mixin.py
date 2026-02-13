@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QListWidgetItem
 
 from ..core.models import FileSession
+from ..core.text_utils import strip_control_tokens
 
 
 class _AuditSearchHostTypingFallback:
@@ -17,21 +18,91 @@ class _AuditSearchHostTypingFallback:
 
 
 class AuditSearchMixin(_AuditSearchHostTypingFallback):
+    _CONTROL_QUERY_RE = re.compile(
+        r"""
+        \\[A-Za-z]+\d*<[^>]*>        |
+        \\[A-Za-z]+\d*\[[^\]]*\]     |
+        \\[\.\!\|\{\}\^]             |
+        \\[ntr]
+        """,
+        re.VERBOSE,
+    )
+
+    def _is_control_code_search_query(self, query: str) -> bool:
+        return bool(self._CONTROL_QUERY_RE.search(query or ""))
+
+    def _normalize_text_for_natural_search(self, text: str) -> str:
+        without_codes = strip_control_tokens(text or "")
+        return "".join(without_codes.casefold().split())
+
+    def _natural_match_spans(self, source_text: str, needle: str) -> list[tuple[int, int]]:
+        if not source_text or not needle:
+            return []
+
+        compact_chars: list[str] = []
+        compact_source_positions: list[int] = []
+        next_visible_start = 0
+        for match in self._CONTROL_QUERY_RE.finditer(source_text):
+            segment = source_text[next_visible_start:match.start()]
+            for idx, char in enumerate(segment):
+                if char.isspace():
+                    continue
+                compact_chars.append(char.casefold())
+                compact_source_positions.append(next_visible_start + idx)
+            next_visible_start = match.end()
+        tail = source_text[next_visible_start:]
+        for idx, char in enumerate(tail):
+            if char.isspace():
+                continue
+            compact_chars.append(char.casefold())
+            compact_source_positions.append(next_visible_start + idx)
+
+        compact_text = "".join(compact_chars)
+        if not compact_text:
+            return []
+
+        spans: list[tuple[int, int]] = []
+        search_from = 0
+        while search_from <= len(compact_text):
+            found_at = compact_text.find(needle, search_from)
+            if found_at < 0:
+                break
+            end_at = found_at + len(needle) - 1
+            if end_at >= len(compact_source_positions):
+                break
+            start_src = compact_source_positions[found_at]
+            end_src = compact_source_positions[end_at] + 1
+            spans.append((start_src, end_src))
+            search_from = found_at + 1
+        return spans
+
     def _schedule_audit_search(self) -> None:
         if self.audit_search_timer is None:
             return
         self.audit_search_timer.start()
 
-    def _highlight_audit_match_html(self, text: str, query: str) -> str:
+    def _highlight_audit_match_html(
+        self,
+        text: str,
+        query: str,
+        needle: str,
+        natural_mode: bool,
+    ) -> str:
         source_text = text or ""
         if not query:
             return html.escape(source_text).replace("\n", "<br>")
-        pattern = re.compile(re.escape(query), re.IGNORECASE)
         highlight_style = self._audit_highlight_style()
+        spans: list[tuple[int, int]] = []
+        if natural_mode:
+            spans = self._natural_match_spans(source_text, needle)
+        else:
+            pattern = re.compile(re.escape(query), re.IGNORECASE)
+            spans = [match.span() for match in pattern.finditer(source_text)]
+        if not spans:
+            return html.escape(source_text).replace("\n", "<br>")
         parts: list[str] = []
         last_idx = 0
-        for match in pattern.finditer(source_text):
-            start, end = match.span()
+        for start, end in spans:
             if start > last_idx:
                 parts.append(html.escape(source_text[last_idx:start]))
             parts.append(
@@ -55,6 +126,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         matched_field: str,
         matched_text: str,
         query: str,
+        needle: str,
+        natural_mode: bool,
     ) -> None:
         if self.audit_search_results_list is None:
             return
@@ -83,7 +156,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         body.setText(
             "<div style=\"padding: 4px 0;\">"
             f"<b>{html.escape(header_text)}</b><br>"
-            f"{self._highlight_audit_match_html(matched_text, query)}"
+            f"{self._highlight_audit_match_html(matched_text, query, needle, natural_mode)}"
             "</div>"
         )
 
@@ -95,6 +168,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         path_sessions: list[tuple[Path, FileSession]],
         scope: str,
         needle: str,
+        natural_mode: bool,
     ) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         for path, session in path_sessions:
@@ -112,7 +186,15 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
                     actor_id = self._actor_id_from_uid(segment.uid)
                     if actor_id is not None:
                         entry_text = f"{name_index_label} ID {actor_id}"
-                if scope in ("original", "both") and needle in original_text.casefold():
+                original_match_text = (
+                    self._normalize_text_for_natural_search(
+                        original_text) if natural_mode else original_text.casefold()
+                )
+                translation_match_text = (
+                    self._normalize_text_for_natural_search(
+                        translation_text) if natural_mode else translation_text.casefold()
+                )
+                if scope in ("original", "both") and needle in original_match_text:
                     records.append(
                         {
                             "path": path,
@@ -122,7 +204,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
                             "matched_text": original_text,
                         }
                     )
-                if scope in ("translation", "both") and needle in translation_text.casefold():
+                if scope in ("translation", "both") and needle in translation_match_text:
                     records.append(
                         {
                             "path": path,
@@ -156,6 +238,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
                 cast(list[tuple[Path, FileSession]], request["path_sessions"]),
                 str(request["scope"]),
                 str(request["needle"]),
+                bool(request.get("natural_mode", False)),
             )
         except Exception as exc:
             self.audit_search_worker_future = None
@@ -236,6 +319,9 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         self.audit_search_render_index = 0
         self.audit_search_render_generation = generation
         self.audit_search_render_query = query
+        self.audit_search_render_needle = needle
+        self.audit_search_render_natural_mode = bool(
+            running_request.get("natural_mode", False))
         self.audit_search_render_scope = scope
         self.audit_search_display_complete = False
         self.audit_search_render_timer.start(
@@ -275,7 +361,11 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self.audit_search_worker_pending_request = None
             return
 
-        needle = query.casefold()
+        control_query = self._is_control_code_search_query(query)
+        if control_query:
+            needle = query.casefold()
+        else:
+            needle = self._normalize_text_for_natural_search(query)
         requested_key = (self.audit_cache_generation, scope, needle)
         if (
             self.audit_search_display_complete
@@ -323,6 +413,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self.audit_search_render_index = 0
             self.audit_search_render_generation = self.audit_cache_generation
             self.audit_search_render_query = query
+            self.audit_search_render_needle = needle
+            self.audit_search_render_natural_mode = not control_query
             self.audit_search_render_scope = scope
             self.audit_search_render_timer.start(
                 self.audit_render_batch_interval_ms)
@@ -333,6 +425,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             "query": query,
             "scope": scope,
             "needle": needle,
+            "natural_mode": not control_query,
             "path_sessions": self._audit_path_sessions_snapshot(),
         }
         self.audit_search_status_label.setText(
@@ -357,6 +450,9 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         start = self.audit_search_render_index
         end = min(start + self.audit_result_batch_size, total)
         query = self.audit_search_render_query
+        needle = str(getattr(self, "audit_search_render_needle", query.casefold()))
+        natural_mode = bool(
+            getattr(self, "audit_search_render_natural_mode", False))
         scope = self.audit_search_render_scope
         prev_updates = self.audit_search_results_list.updatesEnabled()
         self.audit_search_results_list.setUpdatesEnabled(False)
@@ -369,6 +465,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
                     matched_field=str(record["matched_field"]),
                     matched_text=str(record["matched_text"]),
                     query=query,
+                    needle=needle,
+                    natural_mode=natural_mode,
                 )
         finally:
             self.audit_search_results_list.setUpdatesEnabled(prev_updates)
@@ -388,7 +486,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         self.audit_search_displayed_key = (
             self.audit_search_render_generation,
             scope,
-            query.casefold(),
+            needle,
         )
         self.audit_search_display_complete = True
         self.audit_search_status_label.setText(
