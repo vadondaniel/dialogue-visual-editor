@@ -152,6 +152,8 @@ class DialogueVisualEditor(
         self.translation_uid_counter = 0
         self.speaker_custom_colors: dict[str, str] = {}
         self.speaker_translation_map: dict[str, str] = {}
+        self._speaker_auto_color_map: dict[str, str] = {}
+        self._speaker_auto_color_theme_dark: Optional[bool] = None
         self._windowskin_text_colors: dict[int, str] = {}
         self._windowskin_text_colors_loaded = False
         self.translation_state_path: Optional[Path] = None
@@ -1111,18 +1113,57 @@ class DialogueVisualEditor(
                 keys.add(self._speaker_key_for_segment(segment))
         return sorted(keys, key=natural_sort_key)
 
+    def _invalidate_speaker_auto_color_cache(self) -> None:
+        self._speaker_auto_color_map.clear()
+        self._speaker_auto_color_theme_dark = None
+
     def _auto_speaker_color_for_key(self, speaker_key: str) -> str:
         if speaker_key == NO_SPEAKER_KEY:
             return "#64748b"
 
-        seed = 0
-        for idx, ch in enumerate(speaker_key):
-            seed = (seed * 131 + ord(ch) + idx) % 360
-        hue = seed % 360
+        dark = is_dark_palette()
+        if (
+            self._speaker_auto_color_theme_dark is None
+            or self._speaker_auto_color_theme_dark != dark
+            or speaker_key not in self._speaker_auto_color_map
+        ):
+            self._rebuild_speaker_auto_color_map(dark)
+
+        cached = self._speaker_auto_color_map.get(speaker_key)
+        if isinstance(cached, str):
+            return cached
+
+        # Fallback should be rare; keep deterministic per key.
+        fallback_hash = self._speaker_color_hash(speaker_key)
+        hue = fallback_hash % 360
         saturation = 172
-        lightness = 158 if is_dark_palette() else 106
+        lightness = 158 if dark else 106
         color = QColor.fromHsl(hue, saturation, lightness)
         return color.name(QColor.NameFormat.HexRgb)
+
+    def _speaker_color_hash(self, speaker_key: str) -> int:
+        seed = 0
+        for idx, ch in enumerate(speaker_key):
+            seed = (seed * 131 + ord(ch) + idx) % 2147483647
+        return seed
+
+    def _rebuild_speaker_auto_color_map(self, dark: bool) -> None:
+        speaker_keys = [
+            key
+            for key in self._collect_speaker_keys()
+            if key != NO_SPEAKER_KEY
+        ]
+        ordered_keys = sorted(speaker_keys, key=self._speaker_color_hash)
+        total = len(ordered_keys)
+        saturation = 172
+        lightness = 158 if dark else 106
+        color_map: dict[str, str] = {}
+        for index, key in enumerate(ordered_keys):
+            hue = int((index * 360) / max(total, 1)) % 360
+            color = QColor.fromHsl(hue, saturation, lightness)
+            color_map[key] = color.name(QColor.NameFormat.HexRgb)
+        self._speaker_auto_color_map = color_map
+        self._speaker_auto_color_theme_dark = dark
 
     def _speaker_color_for_key(self, speaker_key: str) -> str:
         key = self._normalize_speaker_key(speaker_key)
@@ -1185,6 +1226,7 @@ class DialogueVisualEditor(
             if new_name not in self.speaker_translation_map:
                 self.speaker_translation_map[new_name] = self.speaker_translation_map[old_name]
             del self.speaker_translation_map[old_name]
+        self._invalidate_speaker_auto_color_cache()
 
         if self.current_path is not None:
             session = self.sessions.get(self.current_path)
@@ -1524,6 +1566,7 @@ class DialogueVisualEditor(
         self.current_reference_map = {}
         self.segment_uid_counter = 0
         self.speaker_custom_colors.clear()
+        self._invalidate_speaker_auto_color_cache()
         self.audit_sanitize_ignored_entries_by_rule.clear()
         self.structural_undo_stack.clear()
         self.structural_redo_stack.clear()
