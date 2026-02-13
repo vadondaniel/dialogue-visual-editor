@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QLabel, QWidget
 
 from ..core.models import FileSession
@@ -16,6 +16,12 @@ class _AuditCoreHostTypingFallback:
 
 
 class AuditCoreMixin(_AuditCoreHostTypingFallback):
+    def _set_audit_pinned_uid(self, uid: Optional[str]) -> None:
+        self.audit_pinned_uid = uid
+        refresh_visuals = getattr(self, "_refresh_block_visual_states", None)
+        if callable(refresh_visuals):
+            refresh_visuals()
+
     def _overlay_host_widget(self, target_widget: QWidget) -> QWidget:
         viewport_getter = getattr(target_widget, "viewport", None)
         if callable(viewport_getter):
@@ -192,8 +198,29 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
                 self.file_list.setCurrentRow(row)
                 self.file_list.blockSignals(False)
 
+        self.pending_audit_flash_uid = uid_raw
+        self._set_audit_pinned_uid(uid_raw)
         self._open_file(path, focus_uid=uid_raw)
+        self._schedule_audit_target_flash(uid_raw)
         self.statusBar().showMessage(
             f"Jumped to {self._relative_path(path)} ({uid_raw})."
         )
         return True
+
+    def _schedule_audit_target_flash(self, uid: str) -> None:
+        for delay_ms in (0, 90, 220):
+            QTimer.singleShot(
+                delay_ms, lambda target_uid=uid: self._flash_audit_target_block(target_uid)
+            )
+
+    def _flash_audit_target_block(self, uid: str) -> None:
+        if self.pending_audit_flash_uid != uid:
+            return
+        widget = self.block_widgets.get(uid)
+        if widget is None:
+            return
+        flash_highlight = getattr(widget, "flash_highlight", None)
+        if callable(flash_highlight):
+            flash_highlight()
+            self.pending_audit_flash_uid = None
+            self._set_audit_pinned_uid(uid)

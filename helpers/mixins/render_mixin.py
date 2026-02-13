@@ -18,6 +18,27 @@ class _RenderHostTypingFallback:
 
 
 class RenderMixin(_RenderHostTypingFallback):
+    def _apply_block_visual_state(self, uid: str, widget: BlockWidgetType) -> None:
+        set_selected = getattr(widget, "set_selected_state", None)
+        if callable(set_selected):
+            set_selected(self.selected_segment_uid == uid)
+        set_pinned = getattr(widget, "set_audit_pinned_state", None)
+        if callable(set_pinned):
+            set_pinned(self.audit_pinned_uid == uid)
+
+    def _flash_pending_audit_target(
+        self, focus_uid: Optional[str], target_widget: Optional[BlockWidgetType]
+    ) -> None:
+        if focus_uid is None or target_widget is None:
+            return
+        if self.pending_audit_flash_uid != focus_uid:
+            return
+        flash_highlight = getattr(target_widget, "flash_highlight", None)
+        if not callable(flash_highlight):
+            return
+        flash_highlight()
+        self.pending_audit_flash_uid = None
+
     def _block_view_meta(
         self,
         *,
@@ -106,6 +127,8 @@ class RenderMixin(_RenderHostTypingFallback):
             self.blocks_layout = layout_obj
         self.block_widgets = cast(
             dict[str, BlockWidgetType], cached_block_widgets)
+        for uid, widget in self.block_widgets.items():
+            self._apply_block_visual_state(uid, widget)
         self.rendered_blocks_path = session.path
         self.rendered_block_uid_order = target_uid_order
         self.rendered_block_view_meta = view_meta
@@ -118,6 +141,7 @@ class RenderMixin(_RenderHostTypingFallback):
             if focus_uid and focus_uid in self.block_widgets
             else None
         )
+        self._flash_pending_audit_target(focus_uid, target_widget)
         if preserve_scroll and previous_scroll_value is not None:
             def restore_scroll_and_focus_cached_container() -> None:
                 self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
@@ -440,6 +464,7 @@ class RenderMixin(_RenderHostTypingFallback):
             self.blocks_layout.addWidget(widget)
             widget.show()
             self.block_widgets[segment.uid] = widget
+            self._apply_block_visual_state(segment.uid, widget)
 
             if (not translator_mode) and (not actor_mode) and idx < segment_count - 1:
                 next_segment = session.segments[idx + 1]
@@ -615,6 +640,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 self.blocks_layout.removeWidget(placeholder)
                 placeholder.deleteLater()
             self.block_widgets[segment.uid] = widget
+            self._apply_block_visual_state(segment.uid, widget)
 
             if focus_uid and focus_uid == segment.uid:
                 state["target_widget"] = widget
@@ -660,6 +686,10 @@ class RenderMixin(_RenderHostTypingFallback):
         start_at_top = bool(state.get("start_at_top", False))
         target_widget = cast(
             Optional[BlockWidgetType], state.get("target_widget"))
+        self._flash_pending_audit_target(
+            cast(Optional[str], state.get("focus_uid")),
+            target_widget,
+        )
         self.rendered_blocks_path = session_path
         self.rendered_block_uid_order = [segment.uid for segment in segments]
         self.rendered_block_view_meta = cast(
@@ -798,6 +828,7 @@ class RenderMixin(_RenderHostTypingFallback):
                     block_number=idx,
                     name_index_label=name_index_label,
                 )
+                self._apply_block_visual_state(segment.uid, widget)
             self.rendered_blocks_path = session.path
             self.rendered_block_uid_order = [
                 segment.uid for segment in session.segments]
@@ -810,6 +841,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 if focus_uid and focus_uid in self.block_widgets
                 else None
             )
+            self._flash_pending_audit_target(focus_uid, target_widget)
             if preserve_scroll and previous_scroll_value is not None:
                 def restore_scroll_and_focus_reused() -> None:
                     self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
@@ -898,6 +930,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 if focus_uid and focus_uid in self.block_widgets
                 else None
             )
+            self._flash_pending_audit_target(focus_uid, target_widget)
             if preserve_scroll and previous_scroll_value is not None:
                 def restore_scroll_and_focus_cached() -> None:
                     self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)

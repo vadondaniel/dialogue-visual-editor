@@ -158,6 +158,8 @@ class DialogueVisualEditor(
         self.audit_search_results_list: Optional[QListWidget] = None
         self.audit_search_status_label: Optional[QLabel] = None
         self.audit_search_goto_btn: Optional[QPushButton] = None
+        self.pending_audit_flash_uid: Optional[str] = None
+        self.audit_pinned_uid: Optional[str] = None
         self.audit_search_progress_overlay: Optional[QLabel] = None
         self.audit_search_timer: Optional[QTimer] = None
         self.audit_sanitize_scope_combo: Optional[QComboBox] = None
@@ -757,10 +759,25 @@ class DialogueVisualEditor(
     def _on_block_activated(self, uid: str) -> None:
         if uid not in self.current_segment_lookup:
             return
+        if self.audit_pinned_uid is not None:
+            self.audit_pinned_uid = None
         if self.selected_segment_uid == uid:
+            self._refresh_block_visual_states()
             return
         self.selected_segment_uid = uid
+        self._refresh_block_visual_states()
         self._refresh_translator_detail_panel()
+
+    def _refresh_block_visual_states(self) -> None:
+        selected_uid = self.selected_segment_uid
+        pinned_uid = self.audit_pinned_uid
+        for uid, widget in self.block_widgets.items():
+            set_selected = getattr(widget, "set_selected_state", None)
+            if callable(set_selected):
+                set_selected(selected_uid == uid)
+            set_pinned = getattr(widget, "set_audit_pinned_state", None)
+            if callable(set_pinned):
+                set_pinned(pinned_uid == uid)
 
     def _speaker_translation_for_key(self, speaker_key: str) -> str:
         key = self._normalize_speaker_key(speaker_key)

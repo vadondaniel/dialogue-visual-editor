@@ -4,7 +4,7 @@ import html
 import re
 from typing import Any, Callable, Optional, Protocol, cast
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -356,6 +356,11 @@ class ItemNameDescriptionWidget(QFrame):
         self._suppress_desc_changed = False
         self._showing_raw_name = True
         self._showing_raw_desc = True
+        self._selected = False
+        self._audit_pinned = False
+        self._flash_timer: Optional[QTimer] = None
+        self._flash_step = 0
+        self._flash_level = 0
 
         edited_lines = segment.translation_lines if translator_mode else segment.lines
         if not edited_lines:
@@ -533,6 +538,52 @@ class ItemNameDescriptionWidget(QFrame):
     def focus_editor(self) -> None:
         self.name_editor.setFocus()
 
+    def set_selected_state(self, selected: bool) -> None:
+        new_value = bool(selected)
+        if self._selected == new_value:
+            return
+        self._selected = new_value
+        self._refresh_block_style()
+        self._apply_editor_style()
+
+    def set_audit_pinned_state(self, pinned: bool) -> None:
+        new_value = bool(pinned)
+        if self._audit_pinned == new_value:
+            return
+        self._audit_pinned = new_value
+        self._refresh_block_style()
+        self._apply_editor_style()
+
+    def flash_highlight(self) -> None:
+        if self._flash_timer is None:
+            self._flash_timer = QTimer(self)
+            self._flash_timer.setInterval(95)
+            self._flash_timer.timeout.connect(self._advance_flash_highlight)
+        self._flash_timer.stop()
+        self._flash_step = 0
+        self._advance_flash_highlight()
+        if self._flash_timer is not None and self._flash_level > 0:
+            self._flash_timer.start()
+
+    def _clear_flash_highlight(self) -> None:
+        self._flash_level = 0
+        self._refresh_block_style()
+        self._apply_editor_style()
+
+    def _advance_flash_highlight(self) -> None:
+        levels = (2, 1, 2, 0)
+        if self._flash_step >= len(levels):
+            if self._flash_timer is not None:
+                self._flash_timer.stop()
+            self._clear_flash_highlight()
+            return
+        self._flash_level = int(levels[self._flash_step])
+        self._flash_step += 1
+        self._refresh_block_style()
+        self._apply_editor_style()
+        if self._flash_level == 0 and self._flash_timer is not None:
+            self._flash_timer.stop()
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.name_editor or watched is self.desc_editor:
             if event.type() == QEvent.Type.FocusIn:
@@ -550,6 +601,19 @@ class ItemNameDescriptionWidget(QFrame):
         block_bg = "#13293d" if self._dark_theme else "#e9f6ff"
         block_border = "#0ea5e9" if self._dark_theme else "#0284c7"
         meta_color = "#7dd3fc" if self._dark_theme else "#075985"
+        border_width = 2
+        if self._selected:
+            block_bg = "#14362e" if self._dark_theme else "#dcfce7"
+            meta_color = "#bbf7d0" if self._dark_theme else "#166534"
+        if self._flash_level > 0 and not self._audit_pinned:
+            block_bg = "#5b3f00" if self._dark_theme else "#fef08a"
+            meta_color = "#fde68a" if self._dark_theme else "#854d0e"
+            if self._flash_level == 1:
+                block_bg = "#4b3500" if self._dark_theme else "#fef9c3"
+        if self._audit_pinned:
+            block_bg = "#3f1d1d" if self._dark_theme else "#fee2e2"
+            block_border = "#ef4444" if self._dark_theme else "#b91c1c"
+            meta_color = "#fecaca" if self._dark_theme else "#7f1d1d"
         self.title_label.setText(
             f"{self.name_index_label} {self._actor_id}"
             if self._actor_id is not None
@@ -559,7 +623,7 @@ class ItemNameDescriptionWidget(QFrame):
             f"""
             QFrame#DialogueBlock {{
                 background: {block_bg};
-                border: 2px solid {block_border};
+                border: {border_width}px solid {block_border};
                 border-radius: 8px;
             }}
             QLabel#MetaDim {{
@@ -572,6 +636,13 @@ class ItemNameDescriptionWidget(QFrame):
         bg = "#0b1e2d" if self._dark_theme else "#f8fcff"
         fg = "#e2e8f0" if self._dark_theme else "#0f172a"
         border = "#38bdf8" if self._dark_theme else "#0284c7"
+        if self._selected:
+            bg = "#0f2d22" if self._dark_theme else "#f0fdf4"
+        if self._flash_level > 0 and not self._audit_pinned:
+            bg = "#3b2a00" if self._dark_theme else "#fefce8"
+        if self._audit_pinned:
+            bg = "#2a1515" if self._dark_theme else "#fff1f2"
+            border = "#ef4444" if self._dark_theme else "#b91c1c"
         style = (
             "QPlainTextEdit {"
             f"background: {bg}; color: {fg}; border: 2px solid {border}; border-radius: 6px;"
@@ -704,6 +775,11 @@ class DialogueBlockWidget(QFrame):
         self._masked_color_spans: list[list[tuple[int, int, str]]] = []
         self._source_hint_lines: list[str] = []
         self._source_hint_overlay: Optional[QLabel] = None
+        self._selected = False
+        self._audit_pinned = False
+        self._flash_timer: Optional[QTimer] = None
+        self._flash_step = 0
+        self._flash_level = 0
         self._dark_theme = is_dark_palette()
         if self._dark_theme:
             self._meta_dim_color = "#cbd5e1"
@@ -893,6 +969,52 @@ class DialogueBlockWidget(QFrame):
     def focus_editor(self) -> None:
         self.editor.setFocus()
 
+    def set_selected_state(self, selected: bool) -> None:
+        new_value = bool(selected)
+        if self._selected == new_value:
+            return
+        self._selected = new_value
+        self._refresh_block_style()
+        self._apply_editor_style(self._has_warning)
+
+    def set_audit_pinned_state(self, pinned: bool) -> None:
+        new_value = bool(pinned)
+        if self._audit_pinned == new_value:
+            return
+        self._audit_pinned = new_value
+        self._refresh_block_style()
+        self._apply_editor_style(self._has_warning)
+
+    def flash_highlight(self) -> None:
+        if self._flash_timer is None:
+            self._flash_timer = QTimer(self)
+            self._flash_timer.setInterval(95)
+            self._flash_timer.timeout.connect(self._advance_flash_highlight)
+        self._flash_timer.stop()
+        self._flash_step = 0
+        self._advance_flash_highlight()
+        if self._flash_timer is not None and self._flash_level > 0:
+            self._flash_timer.start()
+
+    def _clear_flash_highlight(self) -> None:
+        self._flash_level = 0
+        self._refresh_block_style()
+        self._apply_editor_style(self._has_warning)
+
+    def _advance_flash_highlight(self) -> None:
+        levels = (2, 1, 2, 0)
+        if self._flash_step >= len(levels):
+            if self._flash_timer is not None:
+                self._flash_timer.stop()
+            self._clear_flash_highlight()
+            return
+        self._flash_level = int(levels[self._flash_step])
+        self._flash_step += 1
+        self._refresh_block_style()
+        self._apply_editor_style(self._has_warning)
+        if self._flash_level == 0 and self._flash_timer is not None:
+            self._flash_timer.stop()
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.editor:
             if event.type() == QEvent.Type.FocusIn:
@@ -989,7 +1111,19 @@ class DialogueBlockWidget(QFrame):
             speaker_border = QColor(self.speaker_tint_color)
             block_border = self.speaker_tint_color if speaker_border.isValid() else self._block_border
             meta_color = self._meta_dim_color
-
+        border_width = 2
+        if self._selected:
+            block_bg = "#14362e" if self._dark_theme else "#dcfce7"
+            meta_color = "#bbf7d0" if self._dark_theme else "#166534"
+        if self._flash_level > 0 and not self._audit_pinned:
+            block_bg = "#5b3f00" if self._dark_theme else "#fef08a"
+            meta_color = "#fde68a" if self._dark_theme else "#854d0e"
+            if self._flash_level == 1:
+                block_bg = "#4b3500" if self._dark_theme else "#fef9c3"
+        if self._audit_pinned:
+            block_bg = "#3f1d1d" if self._dark_theme else "#fee2e2"
+            block_border = "#ef4444" if self._dark_theme else "#b91c1c"
+            meta_color = "#fecaca" if self._dark_theme else "#7f1d1d"
         title_suffix = f" ({', '.join(tags)})" if tags else ""
 
         if self.actor_mode:
@@ -1006,7 +1140,7 @@ class DialogueBlockWidget(QFrame):
             f"""
             QFrame#DialogueBlock {{
                 background: {block_bg};
-                border: 2px solid {block_border};
+                border: {border_width}px solid {block_border};
                 border-radius: 8px;
             }}
             QLabel#MetaDim {{
@@ -1037,6 +1171,13 @@ class DialogueBlockWidget(QFrame):
             border = self._editor_border_thin if self.segment.has_face else self._editor_border_wide
             if has_warning:
                 border = self._editor_border_warn
+        if self._selected:
+            bg = "#0f2d22" if self._dark_theme else "#f0fdf4"
+        if self._flash_level > 0 and not self._audit_pinned:
+            bg = "#3b2a00" if self._dark_theme else "#fefce8"
+        if self._audit_pinned:
+            bg = "#2a1515" if self._dark_theme else "#fff1f2"
+            border = "#ef4444" if self._dark_theme else "#b91c1c"
         self.editor.setStyleSheet(
             f"""
             QPlainTextEdit {{
