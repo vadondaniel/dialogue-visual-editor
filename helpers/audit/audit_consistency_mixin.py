@@ -56,8 +56,11 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     def _collect_audit_consistency_groups(
         self,
         only_inconsistent: bool,
+        sort_mode: str,
     ) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, str]]] = {}
+        first_seen_order: dict[str, int] = {}
+        source_order = 0
         for path in self.file_paths:
             session = self.sessions.get(path)
             if session is None:
@@ -67,6 +70,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     self._segment_source_lines_for_display(segment)).strip()
                 if not source_text:
                     continue
+                if source_text not in first_seen_order:
+                    first_seen_order[source_text] = source_order
+                    source_order += 1
                 tl_text = "\n".join(
                     self._normalize_translation_lines(
                         segment.translation_lines)
@@ -101,16 +107,40 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     "entry_count": len(entries),
                     "variant_count": unique_count,
                     "most_common_translation": most_common_text,
+                    "first_seen_order": first_seen_order.get(source_text, 0),
                 }
             )
 
-        groups.sort(
-            key=lambda row: (
-                -int(row.get("variant_count", 0)),
-                -int(row.get("entry_count", 0)),
-                str(row.get("source_text", "")),
+        if sort_mode == "occurrence":
+            groups.sort(
+                key=lambda row: (
+                    -int(row.get("entry_count", 0)),
+                    -int(row.get("variant_count", 0)),
+                    int(row.get("first_seen_order", 0)),
+                )
             )
-        )
+        elif sort_mode == "variants":
+            groups.sort(
+                key=lambda row: (
+                    -int(row.get("variant_count", 0)),
+                    -int(row.get("entry_count", 0)),
+                    int(row.get("first_seen_order", 0)),
+                )
+            )
+        elif sort_mode == "alphabetical":
+            groups.sort(
+                key=lambda row: (
+                    str(row.get("source_text", "")).casefold(),
+                    -int(row.get("entry_count", 0)),
+                )
+            )
+        else:
+            groups.sort(
+                key=lambda row: (
+                    int(row.get("first_seen_order", 0)),
+                    -int(row.get("entry_count", 0)),
+                )
+            )
         return groups
 
     def _refresh_audit_consistency_entries(self) -> None:
@@ -182,12 +212,15 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     def _refresh_audit_consistency_panel(self, preferred_source: Optional[str] = None) -> None:
         if (
             self.audit_consistency_only_inconsistent_check is None
+            or self.audit_consistency_sort_combo is None
             or self.audit_consistency_groups_list is None
             or self.audit_consistency_status_label is None
         ):
             return
         only_inconsistent = self.audit_consistency_only_inconsistent_check.isChecked()
-        groups = self._collect_audit_consistency_groups(only_inconsistent)
+        sort_mode_raw = self.audit_consistency_sort_combo.currentData()
+        sort_mode = sort_mode_raw if isinstance(sort_mode_raw, str) else "source_order"
+        groups = self._collect_audit_consistency_groups(only_inconsistent, sort_mode)
         self.audit_consistency_groups_list.clear()
         selected_row = -1
         total_entries = 0

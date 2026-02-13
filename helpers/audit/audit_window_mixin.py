@@ -249,6 +249,13 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_only_inconsistent_check = QCheckBox("Only inconsistent")
         consistency_only_inconsistent_check.setChecked(True)
         consistency_controls_row.addWidget(consistency_only_inconsistent_check)
+        consistency_controls_row.addWidget(QLabel("Sort"))
+        consistency_sort_combo = QComboBox()
+        consistency_sort_combo.addItem("Source order", "source_order")
+        consistency_sort_combo.addItem("Most duplicates", "occurrence")
+        consistency_sort_combo.addItem("Most variants", "variants")
+        consistency_sort_combo.addItem("A-Z", "alphabetical")
+        consistency_controls_row.addWidget(consistency_sort_combo)
         consistency_controls_row.addStretch(1)
         consistency_refresh_btn = QPushButton("Refresh")
         consistency_controls_row.addWidget(consistency_refresh_btn)
@@ -342,6 +349,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_control_mismatch_progress_overlay = control_progress_overlay
         self.audit_control_mismatch_only_translated_check = control_only_translated_check
         self.audit_consistency_only_inconsistent_check = consistency_only_inconsistent_check
+        self.audit_consistency_sort_combo = consistency_sort_combo
         self.audit_consistency_groups_list = consistency_groups_list
         self.audit_consistency_entries_list = consistency_entries_list
         self.audit_consistency_target_edit = consistency_target_edit
@@ -472,6 +480,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         consistency_refresh_btn.clicked.connect(
             lambda: self._refresh_audit_consistency_panel()
+        )
+        consistency_sort_combo.currentIndexChanged.connect(
+            lambda _index: self._refresh_audit_consistency_panel()
         )
         consistency_groups_list.currentItemChanged.connect(
             lambda _current, _previous: self._refresh_audit_consistency_entries()
