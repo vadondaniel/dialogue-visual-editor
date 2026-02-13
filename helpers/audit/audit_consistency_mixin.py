@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QListWidgetItem
 
 from ..core.models import DialogueSegment, FileSession
 from ..core.text_utils import preview_text
+from ..mixins.presentation_mixins import is_dark_palette
 
 
 class _AuditConsistencyHostTypingFallback:
@@ -17,6 +20,52 @@ class _AuditConsistencyHostTypingFallback:
 
 
 class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
+    def _consistency_variant_hash(self, variant_text: str) -> int:
+        digest = hashlib.blake2b(
+            variant_text.encode("utf-8", errors="ignore"),
+            digest_size=8,
+        ).digest()
+        return int.from_bytes(digest, byteorder="big", signed=False)
+
+    def _consistency_variant_color_map(
+        self,
+        variants: set[str],
+    ) -> dict[str, QColor]:
+        if not variants:
+            return {}
+        ordered_variants = sorted(
+            variants,
+            key=lambda text: self._consistency_variant_hash(text),
+        )
+        total = len(ordered_variants)
+        dark = is_dark_palette()
+        if dark:
+            saturation = 110
+            value = 90
+        else:
+            saturation = 65
+            value = 240
+        color_map: dict[str, QColor] = {}
+        for idx, text in enumerate(ordered_variants):
+            hue = int((idx * 360) / max(total, 1)) % 360
+            color_map[text] = QColor.fromHsv(hue, saturation, value)
+        return color_map
+
+    def _consistency_variant_bg(
+        self,
+        variant_text: str,
+        color_map: dict[str, QColor],
+    ) -> QColor:
+        if not variant_text.strip():
+            return QColor("#3f3f46") if is_dark_palette() else QColor("#e5e7eb")
+        return color_map.get(
+            variant_text,
+            QColor("#4b5563") if is_dark_palette() else QColor("#dbeafe"),
+        )
+
+    def _consistency_variant_fg(self) -> QColor:
+        return QColor("#f8fafc") if is_dark_palette() else QColor("#111827")
+
     def _audit_consistency_group_payload(
         self,
         item: Optional[QListWidgetItem],
@@ -176,6 +225,15 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             self.audit_consistency_source_edit.setPlainText("")
             self.audit_consistency_target_edit.setPlainText("")
             return
+        variants = {
+            str(entry.get("translation", ""))
+            for entry in entries
+            if isinstance(entry, dict)
+            and isinstance(entry.get("translation"), str)
+            and str(entry.get("translation", "")).strip()
+        }
+        color_map = self._consistency_variant_color_map(variants)
+        foreground = self._consistency_variant_fg()
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
@@ -197,6 +255,15 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             )
             label = f"{relative} | {entry_label} | {translation_preview}"
             item = QListWidgetItem(label)
+            item.setBackground(
+                QBrush(
+                    self._consistency_variant_bg(
+                        translation,
+                        color_map,
+                    )
+                )
+            )
+            item.setForeground(QBrush(foreground))
             item.setData(
                 Qt.ItemDataRole.UserRole,
                 {
