@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
@@ -33,6 +34,40 @@ class _EditorHostTypingFallback:
 
 
 class StructuralEditingMixin(_EditorHostTypingFallback):
+    _COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]")
+    _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
+
+    def _active_color_code_at_end(self, lines: list[str]) -> int:
+        active = 0
+        joined = "\n".join(lines)
+        for match in self._COLOR_CODE_RE.finditer(joined):
+            try:
+                active = int(match.group(1))
+            except Exception:
+                active = 0
+        return active
+
+    def _line_starts_with_color_code(self, line: str) -> bool:
+        return self._COLOR_CODE_AT_LINE_START_RE.match(line) is not None
+
+    def _apply_split_overflow_color_continuity(
+        self,
+        kept_lines: list[str],
+        moved_lines: list[str],
+    ) -> tuple[list[str], list[str]]:
+        if not kept_lines or not moved_lines:
+            return kept_lines, moved_lines
+
+        active_color = self._active_color_code_at_end(kept_lines)
+        if active_color == 0:
+            return kept_lines, moved_lines
+
+        if not self._line_starts_with_color_code(moved_lines[0]):
+            moved_lines[0] = f"\\C[{active_color}]{moved_lines[0]}"
+
+        kept_lines[-1] = f"{kept_lines[-1]}\\C[0]"
+        return kept_lines, moved_lines
+
     def _segment_line_width(self, segment: DialogueSegment) -> int:
         return self.thin_width_spin.value() if segment.has_face else self.wide_width_spin.value()
 
@@ -315,6 +350,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         kept_lines = source_lines_before[:max_lines]
         moved_lines = source_lines_before[max_lines:]
+        kept_lines, moved_lines = self._apply_split_overflow_color_continuity(
+            list(kept_lines),
+            list(moved_lines),
+        )
         new_segment = DialogueSegment(
             uid=self._new_segment_uid(session.path),
             context=source_segment.context,
