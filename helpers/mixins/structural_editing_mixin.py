@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QMessageBox, QPushButton, QWidget
 
 from ..core.models import (
@@ -21,10 +21,6 @@ from ..core.models import (
     StructuralAction,
 )
 from ..core.text_utils import smart_collapse_lines_space_efficient
-
-if TYPE_CHECKING:
-    from PySide6.QtWidgets import QPushButton
-
 
 class _EditorHostTypingFallback:
     # DialogueVisualEditor provides many attributes/methods consumed by mixins.
@@ -437,6 +433,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             lines=[""],
             original_lines=[""],
             source_lines=[""],
+            code401_template=copy.deepcopy(source_segment.code401_template),
             tl_uid=self._new_translation_uid(),
             translation_lines=[""],
             original_translation_lines=[""],
@@ -514,6 +511,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             lines=list(moved_lines),
             original_lines=list(moved_lines),
             source_lines=list(moved_lines),
+            code401_template=copy.deepcopy(source_segment.code401_template),
             tl_uid=self._new_translation_uid(),
             translation_lines=self._normalize_translation_lines(
                 source_segment.translation_lines[max_lines:]),
