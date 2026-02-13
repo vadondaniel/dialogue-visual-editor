@@ -7,7 +7,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Optional
 
-from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QCloseEvent,
@@ -15,6 +15,7 @@ from PySide6.QtGui import (
     QFont,
     QKeySequence,
     QKeyEvent,
+    QMouseEvent,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -270,10 +271,10 @@ class DialogueVisualEditor(
             self._render_next_block_batch)
         self._middle_autoscroll_active = False
         self._middle_autoscroll_anchor = QPoint()
-        self._middle_autoscroll_cursor_override_active = False
         self._middle_autoscroll_press_started_at: Optional[float] = None
         self._middle_autoscroll_started_from_press = False
         self._middle_autoscroll_hold_release_threshold_sec = 0.22
+        self._middle_autoscroll_indicator: Optional[QLabel] = None
         self._middle_autoscroll_timer = QTimer(self)
         self._middle_autoscroll_timer.setInterval(16)
         self._middle_autoscroll_timer.timeout.connect(
@@ -646,9 +647,7 @@ class DialogueVisualEditor(
     def _start_middle_autoscroll(self, anchor_global: QPoint) -> None:
         self._middle_autoscroll_anchor = QPoint(anchor_global)
         self._middle_autoscroll_active = True
-        if not self._middle_autoscroll_cursor_override_active:
-            QApplication.setOverrideCursor(Qt.CursorShape.SizeAllCursor)
-            self._middle_autoscroll_cursor_override_active = True
+        self._show_middle_autoscroll_indicator(anchor_global)
         self._middle_autoscroll_timer.start()
 
     def _stop_middle_autoscroll(self) -> None:
@@ -658,9 +657,7 @@ class DialogueVisualEditor(
         self._middle_autoscroll_press_started_at = None
         self._middle_autoscroll_started_from_press = False
         self._middle_autoscroll_timer.stop()
-        if self._middle_autoscroll_cursor_override_active:
-            QApplication.restoreOverrideCursor()
-            self._middle_autoscroll_cursor_override_active = False
+        self._hide_middle_autoscroll_indicator()
 
     def _tick_middle_autoscroll(self) -> None:
         if not self._middle_autoscroll_active:
@@ -682,15 +679,63 @@ class DialogueVisualEditor(
         local_pos = viewport.mapFromGlobal(global_pos)
         return viewport.rect().contains(local_pos)
 
-    def eventFilter(self, watched: object, event: QEvent) -> bool:
+    def _ensure_middle_autoscroll_indicator(self) -> QLabel:
+        if self._middle_autoscroll_indicator is not None:
+            return self._middle_autoscroll_indicator
+        indicator = QLabel(self.scroll_area.viewport())
+        indicator.setFixedSize(34, 34)
+        indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        indicator.setText("↑\n↓")
+        font = QFont("Segoe UI")
+        font.setPointSize(8)
+        font.setBold(True)
+        indicator.setFont(font)
+        if is_dark_palette():
+            indicator.setStyleSheet(
+                "QLabel {"
+                "background: rgba(15, 23, 42, 210);"
+                "color: #f8fafc;"
+                "border: 2px solid #93c5fd;"
+                "border-radius: 17px;"
+                "}"
+            )
+        else:
+            indicator.setStyleSheet(
+                "QLabel {"
+                "background: rgba(255, 255, 255, 235);"
+                "color: #0f172a;"
+                "border: 2px solid #2563eb;"
+                "border-radius: 17px;"
+                "}"
+            )
+        indicator.hide()
+        self._middle_autoscroll_indicator = indicator
+        return indicator
+
+    def _show_middle_autoscroll_indicator(self, anchor_global: QPoint) -> None:
+        indicator = self._ensure_middle_autoscroll_indicator()
+        viewport = self.scroll_area.viewport()
+        local = viewport.mapFromGlobal(anchor_global)
+        half_w = indicator.width() // 2
+        half_h = indicator.height() // 2
+        x = max(0, min(local.x() - half_w, viewport.width() - indicator.width()))
+        y = max(0, min(local.y() - half_h, viewport.height() - indicator.height()))
+        indicator.move(x, y)
+        indicator.show()
+        indicator.raise_()
+
+    def _hide_middle_autoscroll_indicator(self) -> None:
+        if self._middle_autoscroll_indicator is not None:
+            self._middle_autoscroll_indicator.hide()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.MouseButtonPress:
+            if not isinstance(event, QMouseEvent):
+                return super().eventFilter(watched, event)
             mouse_event = event
-            button = getattr(mouse_event, "button", lambda: None)()
-            pos_getter = getattr(mouse_event, "globalPosition", None)
-            if callable(pos_getter):
-                anchor = pos_getter().toPoint()
-            else:
-                anchor = QCursor.pos()
+            button = mouse_event.button()
+            anchor = mouse_event.globalPosition().toPoint()
             if button == Qt.MouseButton.MiddleButton and self._point_in_editor_viewport(anchor):
                 if self._middle_autoscroll_active:
                     self._stop_middle_autoscroll()
@@ -706,8 +751,10 @@ class DialogueVisualEditor(
             ):
                 self._stop_middle_autoscroll()
         elif event.type() == QEvent.Type.MouseButtonRelease:
+            if not isinstance(event, QMouseEvent):
+                return super().eventFilter(watched, event)
             mouse_event = event
-            button = getattr(mouse_event, "button", lambda: None)()
+            button = mouse_event.button()
             if (
                 button == Qt.MouseButton.MiddleButton
                 and self._middle_autoscroll_active
