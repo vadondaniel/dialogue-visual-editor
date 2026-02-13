@@ -3,9 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from PySide6.QtWidgets import QMessageBox
-
-from ..core.models import DialogueSegment
+from ..core.models import DialogueSegment, FileSession
 
 
 class _AuditSanitizeHostTypingFallback:

@@ -13,10 +13,6 @@ from ..core.models import DialogueSegment, FileSession
 from ..core.parser import parse_dialogue_file
 from ..core.text_utils import chunk_lines
 
-if TYPE_CHECKING:
-    from PySide6.QtWidgets import QCheckBox, QComboBox, QPushButton
-
-
 
 class _EditorHostTypingFallback:
     # DialogueVisualEditor provides many attributes/methods consumed by mixins.

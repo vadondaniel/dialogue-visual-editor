@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, cast
 
+from .audit_constants import SANITIZE_CHAR_RULES
 from ..core.models import FileSession
 
 

@@ -3,12 +3,12 @@ from __future__ import annotations
 import html
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QListWidgetItem
 
-from ..core.models import DialogueSegment, FileSession
+from ..core.models import FileSession
 
 
 class _AuditSearchHostTypingFallback:

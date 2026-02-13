@@ -3,15 +3,14 @@ from __future__ import annotations
 from collections import Counter
 from difflib import SequenceMatcher
 import html
-import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QListWidgetItem
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QListWidgetItem
 
 from .audit_constants import COLOR_CODE_TOKEN_RE
-from ..mixins.presentation_mixins import is_dark_palette
+from ..core.models import FileSession
 from ..core.text_utils import CONTROL_TOKEN_RE
 
 

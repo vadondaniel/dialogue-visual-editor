@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -55,7 +55,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             self.audit_search_query_edit.setFocus()
 
     def _build_audit_window(self) -> None:
-        dialog = QDialog(self)
+        dialog = QDialog(cast(QWidget, self))
         dialog.setWindowTitle("Audit")
         dialog.setModal(False)
         dialog.resize(980, 650)

@@ -22,7 +22,7 @@ from ..core.models import (
 from ..core.text_utils import smart_collapse_lines_space_efficient
 
 if TYPE_CHECKING:
-    from PySide6.QtWidgets import QCheckBox, QComboBox, QPushButton
+    from PySide6.QtWidgets import QPushButton
 
 
 

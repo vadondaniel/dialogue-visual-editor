@@ -1,14 +1,10 @@
 ﻿from __future__ import annotations
 
-from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
-from difflib import SequenceMatcher
-import html
 import json
-import re
 import sys
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (
@@ -30,15 +26,12 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSpinBox,
     QSplitter,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
