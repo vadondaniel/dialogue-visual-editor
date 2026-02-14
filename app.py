@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 from time import monotonic
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
@@ -37,6 +37,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QStyledItemDelegate,
+    QStyle,
+    QStyleOptionViewItem,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
@@ -105,6 +108,25 @@ except ImportError:
     )
 
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
+FILE_LIST_SECTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
+
+class FileListItemDelegate(QStyledItemDelegate):
+    def paint(
+        self,
+        painter: Any,
+        option: QStyleOptionViewItem,
+        index: Any,
+    ) -> None:
+        opt = QStyleOptionViewItem(option)
+        if index.data(FILE_LIST_SECTION_ROLE):
+            opt_any = cast(Any, opt)
+            state = getattr(opt_any, "state", None)
+            if state is not None:
+                state = state & ~QStyle.StateFlag.State_MouseOver
+                state = state & ~QStyle.StateFlag.State_Selected
+                setattr(opt_any, "state", state)
+        super().paint(painter, opt, index)
 
 
 DEFAULT_THIN_WIDTH = 47
@@ -399,6 +421,7 @@ class DialogueVisualEditor(
         files_header_row.addWidget(self.show_empty_files_check)
         left_layout.addLayout(files_header_row)
         self.file_list = QListWidget()
+        self.file_list.setItemDelegate(FileListItemDelegate(self.file_list))
         self.file_list.currentItemChanged.connect(self._on_file_selected)
         left_layout.addWidget(self.file_list, 1)
         splitter.addWidget(left_panel)
@@ -2090,6 +2113,24 @@ class DialogueVisualEditor(
             visible_paths.append(path)
         return visible_paths
 
+    def _is_misc_file_session(self, path: Path) -> bool:
+        session = self.sessions.get(path)
+        if session is None:
+            return False
+        return self._is_name_index_session(session)
+
+    def _add_file_list_section(self, title: str) -> None:
+        header_item = QListWidgetItem(f"[ {title.upper()} ]")
+        header_item.setFlags(Qt.ItemFlag.NoItemFlags)
+        header_item.setData(FILE_LIST_SECTION_ROLE, True)
+        header_font = QFont(header_item.font())
+        header_font.setBold(True)
+        header_font.setItalic(True)
+        header_item.setFont(header_font)
+        header_item.setForeground(QColor("#64748b"))
+        header_item.setTextAlignment(int(Qt.AlignmentFlag.AlignCenter))
+        self.file_list.addItem(header_item)
+
     def _rebuild_file_list(self, preferred_path: Optional[Path] = None) -> None:
         visible_paths = self._visible_file_paths()
         target = preferred_path if preferred_path in visible_paths else None
@@ -2097,16 +2138,30 @@ class DialogueVisualEditor(
             target = self.current_path
         if target is None and visible_paths:
             target = visible_paths[0]
+        dialogue_paths = [
+            path for path in visible_paths if not self._is_misc_file_session(path)
+        ]
+        misc_paths = [path for path in visible_paths if self._is_misc_file_session(path)]
 
         self.file_list.blockSignals(True)
         self.file_list.clear()
         self.file_items.clear()
-        for path in visible_paths:
-            item = QListWidgetItem("")
-            item.setData(Qt.ItemDataRole.UserRole, str(path))
-            self.file_list.addItem(item)
-            self.file_items[path] = item
-            self._update_file_item_text(path)
+        if visible_paths:
+            self._add_file_list_section("Dialogues")
+            for path in dialogue_paths:
+                item = QListWidgetItem("")
+                item.setData(Qt.ItemDataRole.UserRole, str(path))
+                self.file_list.addItem(item)
+                self.file_items[path] = item
+                self._update_file_item_text(path)
+
+            self._add_file_list_section("Misc")
+            for path in misc_paths:
+                item = QListWidgetItem("")
+                item.setData(Qt.ItemDataRole.UserRole, str(path))
+                self.file_list.addItem(item)
+                self.file_items[path] = item
+                self._update_file_item_text(path)
         self.file_list.blockSignals(False)
 
         if not visible_paths:
@@ -2125,8 +2180,9 @@ class DialogueVisualEditor(
             return
 
         assert target is not None
-        row = visible_paths.index(target)
-        self.file_list.setCurrentRow(row)
+        target_item = self.file_items.get(target)
+        if target_item is not None:
+            self.file_list.setCurrentItem(target_item)
 
     def _load_data_folder(
         self,
@@ -2344,6 +2400,12 @@ class DialogueVisualEditor(
     def _on_file_selected(self, current: Optional[QListWidgetItem], _previous: Optional[QListWidgetItem]) -> None:
         path = self._file_path_from_item(current)
         if path is None:
+            if self.current_path is not None:
+                selected_item = self.file_items.get(self.current_path)
+                if selected_item is not None and self.file_list.currentItem() is not selected_item:
+                    self.file_list.blockSignals(True)
+                    self.file_list.setCurrentItem(selected_item)
+                    self.file_list.blockSignals(False)
             return
         self._open_file(path)
 
