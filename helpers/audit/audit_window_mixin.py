@@ -90,6 +90,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         dialog = QDialog(cast(QWidget, self))
         dialog.setWindowTitle("Audit")
         dialog.setModal(False)
+        dialog.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
         dialog.resize(980, 650)
 
         root_layout = QVBoxLayout(dialog)
