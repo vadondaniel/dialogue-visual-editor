@@ -2408,7 +2408,16 @@ class DialogueBlockWidget(QFrame):
 
     def _speaker_display_name(self) -> str:
         if self.translator_mode:
-            translated = self.segment.translation_speaker.strip()
+            translated = ""
+            if (
+                self.segment.speaker_name != NO_SPEAKER_KEY
+                and self.speaker_display_resolver is not None
+            ):
+                translated = self.speaker_display_resolver(
+                    self.segment.speaker_name
+                ).strip()
+            if not translated:
+                translated = self.segment.translation_speaker.strip()
             if translated:
                 return translated
         explicit = self.segment.speaker_name
@@ -2446,7 +2455,16 @@ class DialogueBlockWidget(QFrame):
 
     def _speaker_display_name_html(self) -> str:
         if self.translator_mode:
-            translated = self.segment.translation_speaker.strip()
+            translated = ""
+            if (
+                self.segment.speaker_name != NO_SPEAKER_KEY
+                and self.speaker_display_resolver is not None
+            ):
+                translated = self.speaker_display_resolver(
+                    self.segment.speaker_name
+                ).strip()
+            if not translated:
+                translated = self.segment.translation_speaker.strip()
             if translated:
                 return html.escape(translated)
 
