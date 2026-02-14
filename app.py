@@ -1471,6 +1471,8 @@ class DialogueVisualEditor(
         touched_sessions: list[FileSession] = []
 
         for session in self.sessions.values():
+            if self._is_name_index_session(session):
+                continue
             touched = False
             for segment in session.segments:
                 if self._speaker_key_for_segment(segment) != key:
@@ -1561,12 +1563,20 @@ class DialogueVisualEditor(
         return "" if speaker_key == NO_SPEAKER_KEY else speaker_key
 
     def _collect_speaker_keys(self) -> list[str]:
-        keys: set[str] = {NO_SPEAKER_KEY}
-        keys.update(self.speaker_custom_colors.keys())
-        keys.update(self.speaker_translation_map.keys())
+        dialogue_keys: set[str] = set()
         for session in self.sessions.values():
+            if self._is_name_index_session(session):
+                continue
             for segment in session.segments:
-                keys.add(self._speaker_key_for_segment(segment))
+                dialogue_keys.add(self._speaker_key_for_segment(segment))
+        keys: set[str] = {NO_SPEAKER_KEY}
+        keys.update(dialogue_keys)
+        keys.update(
+            key for key in self.speaker_custom_colors.keys() if key in dialogue_keys
+        )
+        keys.update(
+            key for key in self.speaker_translation_map.keys() if key in dialogue_keys
+        )
         return sorted(keys, key=natural_sort_key)
 
     def _invalidate_speaker_auto_color_cache(self) -> None:
@@ -1659,6 +1669,8 @@ class DialogueVisualEditor(
 
         changed_blocks = 0
         for session in self.sessions.values():
+            if self._is_name_index_session(session):
+                continue
             touched = False
             for segment in session.segments:
                 if self._speaker_key_for_segment(segment) != old_name:
