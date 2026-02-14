@@ -324,11 +324,24 @@ class SpeakerManagerDialog(QDialog):
         self.color_btn.setEnabled(has_selection)
         self.auto_btn.setEnabled(has_custom)
 
+    def _rename_prefill_text(self, speaker_key: str) -> str:
+        if speaker_key == NO_SPEAKER_KEY:
+            return ""
+        return speaker_key
+
+    def _translation_prefill_text(self, speaker_key: str) -> str:
+        existing = self.editor._speaker_translation_for_key(speaker_key)
+        if existing.strip():
+            return existing
+        if speaker_key == NO_SPEAKER_KEY:
+            return ""
+        return speaker_key
+
     def _on_rename_clicked(self) -> None:
         current = self._selected_speaker_key()
         if current is None:
             return
-        default_text = "" if current == NO_SPEAKER_KEY else current
+        default_text = self._rename_prefill_text(current)
         new_name, ok = QInputDialog.getText(
             self,
             "Rename Speaker",
@@ -367,7 +380,7 @@ class SpeakerManagerDialog(QDialog):
         current = self._selected_speaker_key()
         if current is None:
             return
-        existing = self.editor._speaker_translation_for_key(current)
+        existing = self._translation_prefill_text(current)
         translated_name, ok = QInputDialog.getText(
             self,
             "Set Speaker EN",
