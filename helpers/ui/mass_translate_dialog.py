@@ -703,10 +703,10 @@ class MassTranslateDialog(QDialog):
         items = list(self.editor.sessions.items())
         items.sort(key=lambda item: natural_sort_key(
             self.editor._relative_path(item[0])))
-        for path, _session in items:
+        for path, session in items:
             key = f"file:{path}"
             done, total = self._scope_completion_counts(key)
-            if total <= 0:
+            if total <= 0 and not self._should_force_scope_visibility(path, session):
                 continue
             rate = (done * 100.0 / total) if total > 0 else 0.0
             next_index = self.scope_combo.count()
@@ -727,6 +727,15 @@ class MassTranslateDialog(QDialog):
         self.scope_combo.setCurrentIndex(index_to_select)
         self.scope_combo.blockSignals(False)
         self._apply_combo_current_text_color(self.scope_combo)
+
+    @staticmethod
+    def _should_force_scope_visibility(path: Path, session: FileSession) -> bool:
+        if path.name.strip().lower() == "plugins.js":
+            return True
+        if not bool(getattr(session, "is_name_index_session", False)):
+            return False
+        kind = str(getattr(session, "name_index_kind", "")).strip().lower()
+        return kind == "plugin"
 
     def _scoped_session_items(self) -> list[tuple[Path, FileSession]]:
         scope = str(self.scope_combo.currentData())
