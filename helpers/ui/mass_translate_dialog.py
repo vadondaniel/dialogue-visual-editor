@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -55,6 +56,7 @@ class MassTranslateHost(Protocol):
 class MassTranslateDialog(QDialog):
     _JSON_FENCE_RE = re.compile(
         r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
+    _WORKFLOW_CONTENT_MODES: tuple[str, ...] = ("speakers", "misc", "dialogues")
 
     def __init__(self, editor: QWidget):
         super().__init__(editor)
@@ -225,8 +227,8 @@ class MassTranslateDialog(QDialog):
         elif idx in self.chunk_drafts:
             del self.chunk_drafts[idx]
 
-    def _content_mode_flags(self) -> tuple[bool, bool, bool]:
-        mode = str(self.content_scope_combo.currentData())
+    @staticmethod
+    def _content_mode_flags_for_mode(mode: str) -> tuple[bool, bool, bool]:
         if mode == "all_content":
             return True, True, True
         if mode == "speakers":
@@ -236,6 +238,59 @@ class MassTranslateDialog(QDialog):
         if mode == "dialogues":
             return True, False, False
         return True, True, True
+
+    def _content_mode_flags(self) -> tuple[bool, bool, bool]:
+        mode = str(self.content_scope_combo.currentData())
+        return self._content_mode_flags_for_mode(mode)
+
+    def _mode_has_pending_entries(self, mode: str) -> bool:
+        include_dialogue, include_misc, include_speakers = self._content_mode_flags_for_mode(
+            mode
+        )
+        if not include_dialogue and not include_misc and not include_speakers:
+            return False
+
+        speaker_keys: set[str] = set()
+        for path, session in self._scoped_session_items():
+            for segment in session.segments:
+                speaker_key = self.editor._speaker_key_for_segment(segment)
+                if include_speakers and speaker_key != NO_SPEAKER_KEY:
+                    speaker_keys.add(speaker_key)
+
+                content_type = self._segment_content_type(path, session, segment)
+                include_segment = (
+                    (content_type == "dialogue" and include_dialogue)
+                    or (content_type == "misc" and include_misc)
+                    or (content_type == "speaker_segment" and include_speakers)
+                )
+                if not include_segment:
+                    continue
+                if not self._segment_has_translation(segment):
+                    return True
+
+        if include_speakers:
+            for speaker_key in speaker_keys:
+                if not self.editor._speaker_translation_for_key(speaker_key).strip():
+                    return True
+        return False
+
+    def _next_incomplete_content_mode(self, current_mode: str) -> Optional[str]:
+        if current_mode not in self._WORKFLOW_CONTENT_MODES:
+            return None
+        start = self._WORKFLOW_CONTENT_MODES.index(current_mode) + 1
+        for mode in self._WORKFLOW_CONTENT_MODES[start:]:
+            if self._mode_has_pending_entries(mode):
+                return mode
+        return None
+
+    def _set_content_scope_mode(self, mode: str) -> Optional[str]:
+        for idx in range(self.content_scope_combo.count()):
+            if str(self.content_scope_combo.itemData(idx)) != mode:
+                continue
+            label = self.content_scope_combo.itemText(idx)
+            self.content_scope_combo.setCurrentIndex(idx)
+            return label
+        return None
 
     def _on_scope_or_filters_changed(self) -> None:
         self._refresh_scope_items()
@@ -498,12 +553,23 @@ class MassTranslateDialog(QDialog):
                     self.misc_targets[entry_id] = (path, segment)
 
         if include_speakers:
+            used_entry_ids: set[str] = set()
+            for entry in entries:
+                raw_entry_id = entry.get("id")
+                if isinstance(raw_entry_id, str):
+                    used_entry_ids.add(raw_entry_id)
             for speaker_key in sorted(speaker_keys, key=natural_sort_key):
                 existing_speaker = self.editor._speaker_translation_for_key(
                     speaker_key)
                 if only_untranslated and existing_speaker:
                     continue
-                entry_id = f"S:{speaker_key}"
+                digest = hashlib.sha1(speaker_key.encode("utf-8")).hexdigest()[:12]
+                entry_id = f"S:{digest}"
+                duplicate_suffix = 2
+                while entry_id in used_entry_ids:
+                    entry_id = f"S:{digest}:{duplicate_suffix}"
+                    duplicate_suffix += 1
+                used_entry_ids.add(entry_id)
                 entries.append(
                     {
                         "id": entry_id,
@@ -1045,10 +1111,15 @@ class MassTranslateDialog(QDialog):
             or line_count_mismatches
             or duplicate_ids
         )
+        clear_paste_after_apply = not has_warnings
         self.chunk_status[idx] = "warning" if has_warnings else "applied"
         self._set_chunk_combo_items()
         if idx < self.chunk_combo.count():
             self.chunk_combo.setCurrentIndex(idx)
+        if clear_paste_after_apply:
+            self.chunk_drafts.pop(idx, None)
+            if self.chunk_combo.currentIndex() == idx:
+                self._set_paste_text("")
         self._update_chunk_controls()
 
         summary_lines: list[str] = [
@@ -1095,13 +1166,15 @@ class MassTranslateDialog(QDialog):
         )
         self._refresh_scope_items()
 
-        # After a successful speaker-only pass, move workflow to dialogue translation.
         current_mode = str(self.content_scope_combo.currentData())
-        if current_mode == "speakers" and speaker_keys_applied > 0:
-            for idx in range(self.content_scope_combo.count()):
-                if str(self.content_scope_combo.itemData(idx)) == "dialogues":
-                    self.content_scope_combo.setCurrentIndex(idx)
-                    break
-            self.result_box.appendPlainText(
-                "\nSwitched content scope to 'Dialogues'."
-            )
+        if (
+            current_mode in self._WORKFLOW_CONTENT_MODES
+            and not self._mode_has_pending_entries(current_mode)
+        ):
+            next_mode = self._next_incomplete_content_mode(current_mode)
+            if next_mode is not None:
+                next_label = self._set_content_scope_mode(next_mode)
+                if next_label:
+                    self.result_box.appendPlainText(
+                        f"\nSwitched content scope to '{next_label}' (next incomplete section)."
+                    )
