@@ -278,8 +278,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 actor_mode=actor_mode,
                 name_index_kind=name_index_kind,
                 name_index_label=name_index_label,
-                allow_structural_actions=(
-                    not translator_mode) and (not actor_mode),
+                allow_structural_actions=(not actor_mode),
             )
         self._bind_block_widget_signals(widget)
         return widget
@@ -316,7 +315,7 @@ class RenderMixin(_RenderHostTypingFallback):
             and int(widget.wide_width) == int(self.wide_width_spin.value())
             and int(widget.max_lines) == int(self.max_lines_spin.value())
             and bool(widget.infer_name_from_first_line) == bool(self.infer_speaker_check.isChecked())
-            and bool(widget.allow_structural_actions) == ((not translator_mode) and (not actor_mode))
+            and bool(widget.allow_structural_actions) == (not actor_mode)
         )
 
     def _sync_reused_item_name_desc_widget(
@@ -452,7 +451,6 @@ class RenderMixin(_RenderHostTypingFallback):
         session: FileSession,
         pool: dict[str, BlockWidgetType],
         *,
-        translator_mode: bool,
         actor_mode: bool,
         name_index_label: str,
         merge_pairs: set[tuple[str, str]],
@@ -468,7 +466,7 @@ class RenderMixin(_RenderHostTypingFallback):
             self.block_widgets[segment.uid] = widget
             self._apply_block_visual_state(segment.uid, widget)
 
-            if (not translator_mode) and (not actor_mode) and idx < segment_count - 1:
+            if (not actor_mode) and idx < segment_count - 1:
                 next_segment = session.segments[idx + 1]
                 if (segment.uid, next_segment.uid) in merge_pairs:
                     connector_widget = self._build_merge_connector_widget(
@@ -526,7 +524,11 @@ class RenderMixin(_RenderHostTypingFallback):
         self._pending_render_state = None
         self.scroll_area.setEnabled(True)
 
-    def _precompute_merge_pairs(self, session: FileSession) -> set[tuple[str, str]]:
+    def _precompute_merge_pairs(
+        self,
+        session: FileSession,
+        translator_mode: bool,
+    ) -> set[tuple[str, str]]:
         pairs: set[tuple[str, str]] = set()
         for bundle in session.bundles:
             tokens = bundle.tokens
@@ -540,6 +542,8 @@ class RenderMixin(_RenderHostTypingFallback):
                 if left_segment is None or right_segment is None:
                     continue
                 if self._same_merge_signature(left_segment, right_segment):
+                    if translator_mode and not right_segment.inserted:
+                        continue
                     pairs.add((left_segment.uid, right_segment.uid))
         return pairs
 
@@ -647,7 +651,7 @@ class RenderMixin(_RenderHostTypingFallback):
             if focus_uid and focus_uid == segment.uid:
                 state["target_widget"] = widget
 
-            if (not translator_mode) and (not actor_mode) and idx < segment_count - 1:
+            if (not actor_mode) and idx < segment_count - 1:
                 next_segment = segments[idx + 1]
                 if (segment.uid, next_segment.uid) in merge_pairs:
                     connector_placeholder = connector_placeholders.get(idx)
@@ -870,8 +874,8 @@ class RenderMixin(_RenderHostTypingFallback):
 
         segment_count = len(session.segments)
         merge_pairs = (
-            self._precompute_merge_pairs(session)
-            if (not translator_mode) and (not actor_mode)
+            self._precompute_merge_pairs(session, translator_mode=translator_mode)
+            if (not actor_mode)
             else set()
         )
         current_cache_widgets: set[QWidget] = set()
@@ -918,7 +922,6 @@ class RenderMixin(_RenderHostTypingFallback):
             self._restore_cached_widget_pool(
                 session,
                 cached_pool,
-                translator_mode=translator_mode,
                 actor_mode=actor_mode,
                 name_index_label=name_index_label,
                 merge_pairs=merge_pairs,

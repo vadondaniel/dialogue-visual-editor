@@ -125,7 +125,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         )
         self.block_widgets = {}
 
-        merge_pairs = self._precompute_merge_pairs(session)
+        merge_pairs = self._precompute_merge_pairs(
+            session,
+            translator_mode=False,
+        )
         segment_count = len(session.segments)
         for idx, segment in enumerate(session.segments):
             reused = existing_widgets.pop(segment.uid, None)
@@ -404,9 +407,6 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             entry for entry in self.structural_redo_stack if entry.path != path]
 
     def _on_insert_after_requested(self, uid: str) -> None:
-        if self._is_translator_mode():
-            self.statusBar().showMessage("Insert is disabled in Translator Edit mode.")
-            return
         if self.current_path is None:
             return
         session = self.sessions.get(self.current_path)
@@ -474,22 +474,26 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self.statusBar().showMessage("Inserted a new code 101 block.")
 
     def _on_split_overflow_requested(self, uid: str) -> None:
-        if self._is_translator_mode():
-            self.statusBar().showMessage("Overflow split is disabled in Translator Edit mode.")
-            return
         if self.current_path is None:
             return
         session = self.sessions.get(self.current_path)
         if session is None:
             return
 
+        translator_mode = self._is_translator_mode()
         source_segment = self.current_segment_lookup.get(uid)
         if source_segment is None:
             return
 
         max_lines = self.max_lines_spin.value()
         source_lines_before = list(source_segment.lines)
-        if len(source_lines_before) <= max_lines:
+        source_tl_before = self._normalize_translation_lines(
+            source_segment.translation_lines
+        )
+        active_lines_before = (
+            source_tl_before if translator_mode else source_lines_before
+        )
+        if len(active_lines_before) <= max_lines:
             self.statusBar().showMessage("No overflow lines to move.")
             return
 
@@ -500,36 +504,47 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if source_index < 0:
             return
 
-        kept_lines = source_lines_before[:max_lines]
-        moved_lines = source_lines_before[max_lines:]
-        kept_lines, moved_lines = self._apply_split_overflow_color_continuity(
-            list(kept_lines),
-            list(moved_lines),
+        kept_active_lines = active_lines_before[:max_lines]
+        moved_active_lines = active_lines_before[max_lines:]
+        kept_active_lines, moved_active_lines = self._apply_split_overflow_color_continuity(
+            list(kept_active_lines),
+            list(moved_active_lines),
         )
+
+        if translator_mode:
+            kept_source_lines = list(source_lines_before)
+            moved_source_lines = [""]
+            kept_tl_lines = list(kept_active_lines)
+            moved_tl_lines = list(moved_active_lines)
+        else:
+            kept_source_lines = list(kept_active_lines)
+            moved_source_lines = list(moved_active_lines)
+            kept_tl_lines = self._normalize_translation_lines(
+                source_segment.translation_lines[:max_lines]
+            )
+            moved_tl_lines = self._normalize_translation_lines(
+                source_segment.translation_lines[max_lines:]
+            )
+
         new_segment = DialogueSegment(
             uid=self._new_segment_uid(session.path),
             context=source_segment.context,
             code101=copy.deepcopy(source_segment.code101),
-            lines=list(moved_lines),
-            original_lines=list(moved_lines),
-            source_lines=list(moved_lines),
+            lines=list(moved_source_lines),
+            original_lines=list(moved_source_lines),
+            source_lines=list(moved_source_lines),
             code401_template=copy.deepcopy(source_segment.code401_template),
             tl_uid=self._new_translation_uid(),
-            translation_lines=self._normalize_translation_lines(
-                source_segment.translation_lines[max_lines:]),
-            original_translation_lines=self._normalize_translation_lines(
-                source_segment.translation_lines[max_lines:]),
+            translation_lines=list(moved_tl_lines),
+            original_translation_lines=list(moved_tl_lines),
             translation_speaker=source_segment.translation_speaker,
             original_translation_speaker=source_segment.translation_speaker,
             inserted=True,
         )
 
-        source_segment.lines = list(kept_lines)
+        source_segment.lines = list(kept_source_lines)
         source_segment.source_lines = list(source_segment.lines)
-        source_tl_before = self._normalize_translation_lines(
-            source_segment.translation_lines)
-        source_segment.translation_lines = self._normalize_translation_lines(
-            source_segment.translation_lines[:max_lines])
+        source_segment.translation_lines = list(kept_tl_lines)
         bundle.tokens.insert(
             token_index + 1, CommandToken(kind="dialogue", segment=new_segment))
         session.segments.insert(source_index + 1, new_segment)
@@ -539,7 +554,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             source_uid=uid,
             moved_uid=new_segment.uid,
             source_lines_before=source_lines_before,
-            source_lines_after=list(kept_lines),
+            source_lines_after=list(kept_source_lines),
             moved_segment=new_segment,
             source_translation_before=source_tl_before,
             source_translation_after=list(source_segment.translation_lines),
@@ -553,21 +568,19 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self._refresh_dirty_state(session)
         self._render_session(
             session, focus_uid=new_segment.uid, preserve_scroll=True)
-        line_label = "line" if len(moved_lines) == 1 else "lines"
+        line_label = "line" if len(moved_active_lines) == 1 else "lines"
         self.statusBar().showMessage(
-            f"Moved {len(moved_lines)} overflow {line_label} to a new block below."
+            f"Moved {len(moved_active_lines)} overflow {line_label} to a new block below."
         )
 
     def _on_merge_pair_requested(self, left_uid: str, right_uid: str) -> None:
-        if self._is_translator_mode():
-            self.statusBar().showMessage("Merge is disabled in Translator Edit mode.")
-            return
         if self.current_path is None:
             return
         session = self.sessions.get(self.current_path)
         if session is None:
             return
 
+        translator_mode = self._is_translator_mode()
         left_index = self._find_segment_index_by_uid(session, left_uid)
         right_index = self._find_segment_index_by_uid(session, right_uid)
         if left_index < 0 or right_index != left_index + 1:
@@ -575,6 +588,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         left_segment = session.segments[left_index]
         right_segment = session.segments[right_index]
+        if translator_mode and not right_segment.inserted:
+            self.statusBar().showMessage(
+                "In Translator Edit mode, merge is only allowed when removing an inserted block."
+            )
+            return
         if not self._can_merge_segments(session, left_segment, right_segment):
             QMessageBox.information(
                 cast(QWidget, self),
@@ -727,13 +745,25 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             self.statusBar().showMessage("Reset block.")
 
     def _on_delete_requested(self, uid: str) -> None:
-        if self._is_translator_mode():
-            self.statusBar().showMessage("Delete is disabled in Translator Edit mode.")
-            return
         if self.current_path is None:
             return
         session = self.sessions.get(self.current_path)
         if session is None:
+            return
+
+        translator_mode = self._is_translator_mode()
+
+        bundle, token_index = self._find_segment_token(session, uid)
+        if bundle is None or token_index < 0:
+            return
+
+        segment = bundle.tokens[token_index].segment
+        if segment is None:
+            return
+        if translator_mode and not segment.inserted:
+            self.statusBar().showMessage(
+                "In Translator Edit mode, only inserted blocks can be deleted."
+            )
             return
 
         if len(session.segments) <= 1:
@@ -752,14 +782,6 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             QMessageBox.StandardButton.No,
         )
         if button != QMessageBox.StandardButton.Yes:
-            return
-
-        bundle, token_index = self._find_segment_token(session, uid)
-        if bundle is None or token_index < 0:
-            return
-
-        segment = bundle.tokens[token_index].segment
-        if segment is None:
             return
 
         try:

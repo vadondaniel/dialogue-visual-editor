@@ -984,7 +984,10 @@ class DialogueBlockWidget(QFrame):
         top_row.addWidget(self.insert_button)
         top_row.addWidget(self.delete_button)
         self.insert_button.setEnabled(self.allow_structural_actions)
-        self.delete_button.setEnabled(self.allow_structural_actions)
+        self.delete_button.setEnabled(
+            self.allow_structural_actions
+            and ((not self.translator_mode) or self.segment.inserted)
+        )
         if self.actor_mode:
             self.collapse_button.setVisible(False)
             self.smart_collapse_button.setVisible(False)
@@ -1680,16 +1683,25 @@ class DialogueBlockWidget(QFrame):
             self.collapse_button.setEnabled(False)
             self.smart_collapse_button.setEnabled(False)
             self.wrap_button.setEnabled(False)
+            self.insert_button.setEnabled(False)
+            self.delete_button.setEnabled(False)
             return
 
         can_collapse = collapse_lines_force(lines, width_chars) != lines
         can_smart_collapse = smart_collapse_lines_space_efficient(
             lines, width_chars) != lines
         can_wrap = wrap_lines_keep_breaks(lines, width_chars) != lines
+        can_insert = self.allow_structural_actions
+        can_delete = (
+            self.allow_structural_actions
+            and ((not self.translator_mode) or self.segment.inserted)
+        )
 
         self.collapse_button.setEnabled(can_collapse)
         self.smart_collapse_button.setEnabled(can_smart_collapse)
         self.wrap_button.setEnabled(can_wrap)
+        self.insert_button.setEnabled(can_insert)
+        self.delete_button.setEnabled(can_delete)
         self.collapse_button.setStyleSheet("")
         self.smart_collapse_button.setStyleSheet("")
         self.wrap_button.setStyleSheet("")
