@@ -87,13 +87,26 @@ class MassTranslateDialog(QDialog):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(10)
+
+        intro_label = QLabel(
+            "Build chunks from selected content, send to your LLM, then paste JSON output and apply."
+        )
+        intro_label.setWordWrap(True)
+        root.addWidget(intro_label)
+
+        controls_widget = QWidget()
+        controls_layout = QVBoxLayout(controls_widget)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(6)
 
         options_row = QHBoxLayout()
+        options_row.setSpacing(6)
         options_row.addWidget(QLabel("Scope"))
         self.scope_combo = QComboBox()
-        options_row.addWidget(self.scope_combo)
+        self.scope_combo.setMinimumWidth(260)
+        options_row.addWidget(self.scope_combo, 2)
 
         options_row.addWidget(QLabel("Content"))
         self.content_scope_combo = QComboBox()
@@ -104,6 +117,7 @@ class MassTranslateDialog(QDialog):
         self.content_scope_combo.setToolTip(
             "Filter translatable entries by category."
         )
+        self.content_scope_combo.setMinimumWidth(130)
         options_row.addWidget(self.content_scope_combo)
 
         self.only_untranslated_check = QCheckBox("Only Untranslated")
@@ -116,7 +130,7 @@ class MassTranslateDialog(QDialog):
         self.only_untranslated_check.toggled.connect(
             lambda _checked: self._on_scope_or_filters_changed())
 
-        self.deduplicate_blocks_check = QCheckBox("Deduplicate Duplicates")
+        self.deduplicate_blocks_check = QCheckBox("Deduplicate Repeats")
         self.deduplicate_blocks_check.setChecked(False)
         self.deduplicate_blocks_check.setToolTip(
             "Include duplicate source blocks once, then apply the result to all duplicates."
@@ -126,29 +140,33 @@ class MassTranslateDialog(QDialog):
         )
         options_row.addWidget(self.deduplicate_blocks_check)
 
-        options_row.addWidget(QLabel("Context boxes/side"))
+        options_row.addWidget(QLabel("Context / side"))
         self.context_boxes_spin = QSpinBox()
         self.context_boxes_spin.setRange(0, 32)
         self.context_boxes_spin.setValue(2)
+        self.context_boxes_spin.setFixedWidth(64)
         self.context_boxes_spin.setToolTip(
             "How many neighboring dialogue boxes to include before/after each chunk."
         )
         options_row.addWidget(self.context_boxes_spin)
 
-        options_row.addWidget(QLabel("Max chars/chunk"))
+        options_row.addWidget(QLabel("Chars / chunk"))
         self.max_chunk_chars_spin = QSpinBox()
         self.max_chunk_chars_spin.setRange(500, 200000)
+        self.max_chunk_chars_spin.setSingleStep(500)
         self.max_chunk_chars_spin.setValue(9000)
+        self.max_chunk_chars_spin.setFixedWidth(92)
         options_row.addWidget(self.max_chunk_chars_spin)
 
         options_row.addStretch(1)
-        self.build_chunks_btn = QPushButton("Build Chunks")
+        self.build_chunks_btn = QPushButton("Rebuild Chunks")
         self.build_chunks_btn.clicked.connect(self._build_chunks)
         options_row.addWidget(self.build_chunks_btn)
-        root.addLayout(options_row)
+        controls_layout.addLayout(options_row)
 
         nav_row = QHBoxLayout()
-        self.prev_chunk_btn = QPushButton("Previous")
+        nav_row.setSpacing(6)
+        self.prev_chunk_btn = QPushButton("Prev")
         self.prev_chunk_btn.clicked.connect(self._on_prev_chunk)
         nav_row.addWidget(self.prev_chunk_btn)
 
@@ -158,10 +176,11 @@ class MassTranslateDialog(QDialog):
 
         nav_row.addWidget(QLabel("Chunk"))
         self.chunk_combo = QComboBox()
+        self.chunk_combo.setMinimumWidth(280)
         self.chunk_combo.currentIndexChanged.connect(self._on_chunk_changed)
         nav_row.addWidget(self.chunk_combo, 1)
 
-        self.copy_chunk_btn = QPushButton("Copy Chunk JSON")
+        self.copy_chunk_btn = QPushButton("Copy JSON")
         self.copy_chunk_btn.clicked.connect(self._copy_active_chunk_json)
         nav_row.addWidget(self.copy_chunk_btn)
 
@@ -169,10 +188,11 @@ class MassTranslateDialog(QDialog):
         self.copy_prompt_btn.clicked.connect(self._copy_active_chunk_prompt)
         nav_row.addWidget(self.copy_prompt_btn)
 
-        root.addLayout(nav_row)
+        controls_layout.addLayout(nav_row)
+        root.addWidget(controls_widget)
 
         self.chunk_summary_label = QLabel(
-            "Build chunks, copy prompt+chunk to your LLM, then paste the JSON output back here."
+            "Build chunks to begin."
         )
         self.chunk_summary_label.setWordWrap(True)
         root.addWidget(self.chunk_summary_label)
@@ -184,9 +204,10 @@ class MassTranslateDialog(QDialog):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(6)
-        left_layout.addWidget(QLabel("Selected Chunk JSON"))
+        left_layout.addWidget(QLabel("Chunk Payload"))
         self.chunk_preview = QPlainTextEdit()
         self.chunk_preview.setReadOnly(True)
+        self.chunk_preview.setPlaceholderText("Built chunk JSON appears here.")
         mono = QFont("Consolas")
         if not mono.exactMatch():
             mono = QFont("Courier New")
@@ -200,27 +221,34 @@ class MassTranslateDialog(QDialog):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
-        right_layout.addWidget(QLabel("Paste LLM Output"))
+        right_layout.addWidget(QLabel("LLM Output"))
         self.paste_box = QPlainTextEdit()
+        self.paste_box.setPlaceholderText(
+            "Paste translated JSON output for the selected chunk."
+        )
+        self.paste_box.setFont(mono)
         self.paste_box.textChanged.connect(self._on_paste_changed)
         right_layout.addWidget(self.paste_box, 1)
 
         apply_row = QHBoxLayout()
-        self.apply_btn = QPushButton("Apply Pasted To Translations")
+        self.apply_btn = QPushButton("Apply To Translations")
         self.apply_btn.clicked.connect(self._apply_pasted_chunk)
         apply_row.addWidget(self.apply_btn)
         apply_row.addStretch(1)
         right_layout.addLayout(apply_row)
 
-        right_layout.addWidget(QLabel("Parse / Apply Result"))
+        right_layout.addWidget(QLabel("Status"))
         self.result_box = QPlainTextEdit()
         self.result_box.setReadOnly(True)
+        self.result_box.setPlaceholderText("Parse and apply results appear here.")
+        self.result_box.setFont(mono)
         self.result_box.setMaximumBlockCount(800)
         right_layout.addWidget(self.result_box, 1)
         splitter.addWidget(right_panel)
 
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([640, 680])
 
         bottom_row = QHBoxLayout()
         bottom_row.addStretch(1)
