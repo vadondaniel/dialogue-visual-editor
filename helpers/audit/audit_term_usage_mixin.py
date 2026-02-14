@@ -321,6 +321,33 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         suffix = "..." if right < len(visible) else ""
         return f"{prefix}{highlighted}{suffix}"
 
+    def _term_highlight_preview(self, source_line: str, term: str) -> str:
+        if not source_line:
+            return ""
+        base_preview = preview_text(source_line, 170)
+        if not term:
+            return base_preview
+        visible = self._visible_text_for_match(source_line)
+        compact_visible, idx_map = self._normalized_no_space_with_map(visible)
+        compact_term, _term_map = self._normalized_no_space_with_map(term)
+        if not compact_visible or not compact_term:
+            return base_preview
+        found = compact_visible.find(compact_term)
+        if found < 0:
+            return base_preview
+        start_idx = idx_map[found]
+        end_compact = min(found + len(compact_term) - 1, len(idx_map) - 1)
+        end_idx = idx_map[end_compact] + 1
+        left = max(0, start_idx - 70)
+        right = min(len(visible), end_idx + 70)
+        snippet = visible[left:right]
+        rel_start = max(0, start_idx - left)
+        rel_end = max(rel_start, end_idx - left)
+        highlighted = f"{snippet[:rel_start]}[[{snippet[rel_start:rel_end]}]]{snippet[rel_end:]}"
+        prefix = "..." if left > 0 else ""
+        suffix = "..." if right < len(visible) else ""
+        return f"{prefix}{highlighted}{suffix}"
+
     def _candidate_group_for_entry(
         self,
         entry: dict[str, Any],
@@ -663,6 +690,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         group_key = self.audit_term_hits_render_group_key
         candidates_raw = getattr(self, "_audit_term_hits_render_candidates", [])
         candidates = candidates_raw if isinstance(candidates_raw, list) else []
+        term = self.audit_term_query_edit.text().strip() if self.audit_term_query_edit is not None else ""
 
         prev_updates = self.audit_term_hits_list.updatesEnabled()
         self.audit_term_hits_list.setUpdatesEnabled(False)
@@ -698,9 +726,10 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                         translation_block_text,
                         group_key,
                     )
+                jp_preview = self._term_highlight_preview(source_line, term)
                 label = (
                     f"{relative} | {entry_label} | line {line_label}\n"
-                    f"JP: {preview_text(source_line, 170)}\n"
+                    f"JP: {jp_preview}\n"
                     f"EN: {display_en}"
                 )
                 self._add_audit_term_hit_item(
