@@ -2037,7 +2037,9 @@ class DialogueVisualEditor(
         return changed_blocks
 
     def _normalize_speaker_key(self, value: str) -> str:
-        normalized = value.strip()
+        normalized_raw = value.strip()
+        normalized, _count = normalize_control_code_word_case(normalized_raw)
+        normalized = normalized.strip()
         return normalized if normalized else NO_SPEAKER_KEY
 
     def _inferred_speaker_from_segment_line1(self, segment: DialogueSegment) -> str:

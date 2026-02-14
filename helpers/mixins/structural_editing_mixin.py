@@ -695,9 +695,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             translation_lines=list(new_translation_lines),
             original_translation_lines=list(new_translation_lines),
             translation_speaker=self.speaker_translation_map.get(
-                source_segment.speaker_name, ""),
+                self._normalize_speaker_key(source_segment.speaker_name), ""),
             original_translation_speaker=self.speaker_translation_map.get(
-                source_segment.speaker_name, ""),
+                self._normalize_speaker_key(source_segment.speaker_name), ""),
             disable_line1_speaker_inference=source_segment.disable_line1_speaker_inference,
             original_disable_line1_speaker_inference=source_segment.disable_line1_speaker_inference,
             force_line1_speaker_inference=source_segment.force_line1_speaker_inference,
@@ -971,7 +971,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         left_segment.translation_lines = list(merged_tl_lines)
         left_segment.translation_speaker = merged_speaker_translation
         if merged_speaker_translation:
-            self.speaker_translation_map[left_segment.speaker_name] = merged_speaker_translation
+            self.speaker_translation_map[
+                self._normalize_speaker_key(left_segment.speaker_name)
+            ] = merged_speaker_translation
         if source_affected:
             left_segment.merged_segments.append(right_segment)
         if left_bundle is not None and right_token_index >= 0:
@@ -1036,7 +1038,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 segment.original_force_line1_speaker_inference
             )
             if speaker_after:
-                self.speaker_translation_map[segment.speaker_name] = speaker_after
+                self.speaker_translation_map[
+                    self._normalize_speaker_key(segment.speaker_name)
+                ] = speaker_after
             self._refresh_dirty_state(session)
             if not self._refresh_after_structure_change_without_full_rerender(
                 session,
@@ -1494,7 +1498,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 action.left_translation_before)
         left_segment.translation_speaker = action.left_speaker_translation_before
         if left_segment.translation_speaker:
-            self.speaker_translation_map[left_segment.speaker_name] = left_segment.translation_speaker
+            self.speaker_translation_map[
+                self._normalize_speaker_key(left_segment.speaker_name)
+            ] = left_segment.translation_speaker
         left_segment.merged_segments = list(action.left_merged_before)
 
         self._refresh_dirty_state(session)
@@ -1550,7 +1556,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 action.left_translation_after)
         left_segment.translation_speaker = action.left_speaker_translation_after
         if left_segment.translation_speaker:
-            self.speaker_translation_map[left_segment.speaker_name] = left_segment.translation_speaker
+            self.speaker_translation_map[
+                self._normalize_speaker_key(left_segment.speaker_name)
+            ] = left_segment.translation_speaker
         if action.source_affected:
             left_segment.merged_segments = list(
                 action.left_merged_before) + [right_segment]

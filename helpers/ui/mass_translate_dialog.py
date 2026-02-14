@@ -35,6 +35,7 @@ class MassTranslateHost(Protocol):
 
     def _relative_path(self, path: Path) -> str: ...
     def _new_translation_uid(self) -> str: ...
+    def _normalize_speaker_key(self, value: str) -> str: ...
     def _speaker_key_for_segment(self, segment: DialogueSegment) -> str: ...
     def _segment_source_lines_for_display(
         self, segment: DialogueSegment) -> list[str]: ...
@@ -314,6 +315,14 @@ class MassTranslateDialog(QDialog):
         source_text = "\n".join(lines)
         return bool(source_text.strip())
 
+    def _persistent_speaker_key_for_segment(self, segment: DialogueSegment) -> str:
+        # Persistence keys must come from explicit source speaker fields only.
+        raw = segment.speaker_name
+        if not isinstance(raw, str):
+            return NO_SPEAKER_KEY
+        normalized = self.editor._normalize_speaker_key(raw)
+        return normalized if normalized else NO_SPEAKER_KEY
+
     def _mode_has_pending_entries(self, mode: str) -> bool:
         include_dialogue, include_misc, include_speakers = self._content_mode_flags_for_mode(
             mode
@@ -329,7 +338,7 @@ class MassTranslateDialog(QDialog):
             for segment in session.segments:
                 content_type = self._segment_content_type(path, session, segment)
                 if include_speakers and self._should_collect_global_speaker_key(session, content_type):
-                    speaker_key = self.editor._speaker_key_for_segment(segment)
+                    speaker_key = self._persistent_speaker_key_for_segment(segment)
                     if speaker_key != NO_SPEAKER_KEY:
                         speaker_keys.add(speaker_key)
                 include_segment = (
@@ -656,7 +665,7 @@ class MassTranslateDialog(QDialog):
             for segment in session.segments:
                 content_type = self._segment_content_type(path, session, segment)
                 if include_speakers and self._should_collect_global_speaker_key(session, content_type):
-                    speaker_key = self.editor._speaker_key_for_segment(segment)
+                    speaker_key = self._persistent_speaker_key_for_segment(segment)
                     if speaker_key != NO_SPEAKER_KEY:
                         speaker_keys.add(speaker_key)
                 if content_type == "dialogue" and not include_dialogue:
@@ -879,8 +888,9 @@ class MassTranslateDialog(QDialog):
                 is_choice_segment = segment.segment_kind == "choice"
 
                 if include_speakers and self._should_collect_global_speaker_key(session, content_type):
-                    if speaker_key != NO_SPEAKER_KEY:
-                        speaker_keys.add(speaker_key)
+                    persistent_speaker_key = self._persistent_speaker_key_for_segment(segment)
+                    if persistent_speaker_key != NO_SPEAKER_KEY:
+                        speaker_keys.add(persistent_speaker_key)
 
                 include_segment = (
                     (content_type == "dialogue" and include_dialogue)
@@ -1589,7 +1599,7 @@ class MassTranslateDialog(QDialog):
                 for path, session in self.editor.sessions.items():
                     session_touched = False
                     for segment in session.segments:
-                        if self.editor._speaker_key_for_segment(segment) != speaker_key:
+                        if self._persistent_speaker_key_for_segment(segment) != speaker_key:
                             continue
                         if segment.translation_speaker.strip() == cleaned:
                             continue
