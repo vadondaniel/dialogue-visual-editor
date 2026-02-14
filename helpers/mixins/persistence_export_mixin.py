@@ -15,6 +15,7 @@ from ..core.models import NO_SPEAKER_KEY, CommandToken, DialogueSegment, FileSes
 from ..core.parser import is_plugins_js_path, plugins_js_source_from_data
 from ..core.script_message_utils import build_game_message_call
 from ..core.text_utils import (
+    CONTROL_TOKEN_RE,
     chunk_lines_by_row_budget,
     total_display_rows,
     visible_length,
@@ -36,6 +37,71 @@ class _EditorHostTypingFallback:
 
 
 class PersistenceExportMixin(_EditorHostTypingFallback):
+    def _problem_check_char_limit_enabled(self) -> bool:
+        control = getattr(self, "problem_char_limit_check", None)
+        return bool(control.isChecked()) if control is not None else True
+
+    def _problem_check_line_limit_enabled(self) -> bool:
+        control = getattr(self, "problem_line_limit_check", None)
+        return bool(control.isChecked()) if control is not None else True
+
+    def _problem_check_control_mismatch_enabled(self) -> bool:
+        control = getattr(self, "problem_control_mismatch_check", None)
+        return bool(control.isChecked()) if control is not None else False
+
+    def _segment_has_control_code_mismatch_problem(
+        self,
+        segment: DialogueSegment,
+        translator_mode: bool,
+    ) -> bool:
+        _ = translator_mode
+        source_lines_resolver = getattr(
+            self, "_segment_source_lines_for_translation", None
+        )
+        if callable(source_lines_resolver):
+            try:
+                resolved_source = source_lines_resolver(segment)
+            except Exception:
+                resolved_source = None
+            source_lines = (
+                resolved_source
+                if isinstance(resolved_source, list)
+                else list(segment.source_lines or segment.original_lines or segment.lines or [""])
+            )
+        else:
+            source_lines = list(segment.source_lines or segment.original_lines or segment.lines or [""])
+        source_lines = [
+            line if isinstance(line, str) else ("" if line is None else str(line))
+            for line in source_lines
+        ] or [""]
+
+        translation_lines_resolver = getattr(
+            self, "_segment_translation_lines_for_translation", None
+        )
+        if callable(translation_lines_resolver):
+            try:
+                resolved_tl = translation_lines_resolver(segment)
+            except Exception:
+                resolved_tl = None
+            tl_lines = (
+                self._normalize_translation_lines(resolved_tl)
+                if isinstance(resolved_tl, list)
+                else self._normalize_translation_lines(segment.translation_lines)
+            )
+        else:
+            tl_lines = self._normalize_translation_lines(segment.translation_lines)
+
+        if not "\n".join(tl_lines).strip():
+            return False
+
+        source_tokens = [
+            match.group(0) for match in CONTROL_TOKEN_RE.finditer("\n".join(source_lines))
+        ]
+        tl_tokens = [
+            match.group(0) for match in CONTROL_TOKEN_RE.finditer("\n".join(tl_lines))
+        ]
+        return source_tokens != tl_tokens
+
     def _segment_has_layout_problem(
         self,
         session: FileSession,
@@ -48,20 +114,36 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return False
         if (not translator_mode) and segment.translation_only:
             return False
+
+        check_char_limit = self._problem_check_char_limit_enabled()
+        check_line_limit = self._problem_check_line_limit_enabled()
+        check_control_mismatch = self._problem_check_control_mismatch_enabled()
+        if not (check_char_limit or check_line_limit or check_control_mismatch):
+            return False
+
         lines = (
             self._normalize_translation_lines(segment.translation_lines)
             if translator_mode
             else list(segment.lines) if segment.lines else [""]
         )
-        width_chars = (
-            self.thin_width_spin.value()
-            if segment.has_face
-            else self.wide_width_spin.value()
-        )
-        if any(visible_length(line) > width_chars for line in lines):
-            return True
-        max_rows = float(max(1, self.max_lines_spin.value()))
-        return total_display_rows(lines) > max_rows
+        if check_char_limit:
+            width_chars = (
+                self.thin_width_spin.value()
+                if segment.has_face
+                else self.wide_width_spin.value()
+            )
+            if any(visible_length(line) > width_chars for line in lines):
+                return True
+
+        if check_line_limit:
+            max_rows = float(max(1, self.max_lines_spin.value()))
+            if total_display_rows(lines) > max_rows:
+                return True
+
+        if check_control_mismatch:
+            if self._segment_has_control_code_mismatch_problem(segment, translator_mode):
+                return True
+        return False
 
     def _problem_count_for_session(self, session: FileSession) -> int:
         translator_mode = self._is_translator_mode()

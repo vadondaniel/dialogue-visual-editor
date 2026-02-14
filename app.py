@@ -437,6 +437,20 @@ class DialogueVisualEditor(
         self.hide_control_codes_check.toggled.connect(
             self._on_project_setting_changed)
         self.backup_check.toggled.connect(self._on_project_setting_changed)
+        self.problem_char_limit_check.toggled.connect(
+            self._on_problem_checks_changed
+        )
+        self.problem_line_limit_check.toggled.connect(
+            self._on_problem_checks_changed
+        )
+        self.problem_control_mismatch_check.toggled.connect(
+            self._on_problem_checks_changed
+        )
+        self.problem_char_limit_check.toggled.connect(self._on_project_setting_changed)
+        self.problem_line_limit_check.toggled.connect(self._on_project_setting_changed)
+        self.problem_control_mismatch_check.toggled.connect(
+            self._on_project_setting_changed
+        )
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter, 1)
@@ -496,6 +510,7 @@ class DialogueVisualEditor(
         self.next_problem_btn.clicked.connect(self._jump_to_next_problem)
         self.next_problem_btn.setEnabled(False)
         file_header_row.addWidget(self.next_problem_btn)
+        self._update_problem_checks_ui()
         header_row_height = max(
             self.file_header_label.sizeHint().height(),
             self.next_problem_btn.sizeHint().height(),
@@ -664,6 +679,24 @@ class DialogueVisualEditor(
         self.backup_check = QCheckBox(self)
         self.backup_check.setChecked(True)
 
+        self.problem_char_limit_check = QCheckBox(self)
+        self.problem_char_limit_check.setChecked(True)
+        self.problem_char_limit_check.setToolTip(
+            "Treat character-width overflow as a problem."
+        )
+
+        self.problem_line_limit_check = QCheckBox(self)
+        self.problem_line_limit_check.setChecked(True)
+        self.problem_line_limit_check.setToolTip(
+            "Treat line-count overflow as a problem."
+        )
+
+        self.problem_control_mismatch_check = QCheckBox(self)
+        self.problem_control_mismatch_check.setChecked(False)
+        self.problem_control_mismatch_check.setToolTip(
+            "Treat control-code token mismatches between source and translation as a problem."
+        )
+
         self.apply_version_combo = QComboBox(self)
         self.apply_version_combo.addItem("Original", "original")
         self.apply_version_combo.addItem("Working", "working")
@@ -691,6 +724,9 @@ class DialogueVisualEditor(
             self.infer_speaker_check,
             self.hide_control_codes_check,
             self.backup_check,
+            self.problem_char_limit_check,
+            self.problem_line_limit_check,
+            self.problem_control_mismatch_check,
             self.apply_version_combo,
         )
         for control in hidden_controls:
@@ -819,6 +855,28 @@ class DialogueVisualEditor(
         limits_menu.addAction(self._settings_max_lines_action)
         self._sync_settings_limits_menu_labels()
 
+        problem_checks_menu = settings_menu.addMenu("Problem Checks")
+        problem_char_limit_action = QAction("Flag char-width overflow", self)
+        self._bind_toggle_menu_action(
+            problem_char_limit_action, self.problem_char_limit_check
+        )
+        problem_checks_menu.addAction(problem_char_limit_action)
+
+        problem_line_limit_action = QAction("Flag line-count overflow", self)
+        self._bind_toggle_menu_action(
+            problem_line_limit_action, self.problem_line_limit_check
+        )
+        problem_checks_menu.addAction(problem_line_limit_action)
+
+        problem_control_mismatch_action = QAction(
+            "Flag control-code mismatches",
+            self,
+        )
+        self._bind_toggle_menu_action(
+            problem_control_mismatch_action, self.problem_control_mismatch_check
+        )
+        problem_checks_menu.addAction(problem_control_mismatch_action)
+
         settings_menu.addSeparator()
         auto_split_action = QAction("Auto-split overflow on save", self)
         self._bind_toggle_menu_action(auto_split_action, self.auto_split_check)
@@ -845,6 +903,7 @@ class DialogueVisualEditor(
         )
         settings_menu.addAction(remember_folder_action)
         self._sync_settings_toggle_actions_from_controls()
+        self._update_problem_checks_ui()
 
     def _bind_toggle_menu_action(self, action: QAction, checkbox: QCheckBox) -> None:
         action.setCheckable(True)
@@ -2300,6 +2359,11 @@ class DialogueVisualEditor(
             "infer_speaker": bool(self.infer_speaker_check.isChecked()),
             "hide_control_codes": bool(self.hide_control_codes_check.isChecked()),
             "create_backup": bool(self.backup_check.isChecked()),
+            "problem_char_limit": bool(self.problem_char_limit_check.isChecked()),
+            "problem_line_limit": bool(self.problem_line_limit_check.isChecked()),
+            "problem_control_mismatch": bool(
+                self.problem_control_mismatch_check.isChecked()
+            ),
             "show_empty_files": bool(self.show_empty_files_check.isChecked()),
             "default_variable_length": int(self.default_variable_length_estimate),
             "variable_length_overrides": {
@@ -2333,6 +2397,9 @@ class DialogueVisualEditor(
         self.infer_speaker_check.blockSignals(True)
         self.hide_control_codes_check.blockSignals(True)
         self.backup_check.blockSignals(True)
+        self.problem_char_limit_check.blockSignals(True)
+        self.problem_line_limit_check.blockSignals(True)
+        self.problem_control_mismatch_check.blockSignals(True)
         self.show_empty_files_check.blockSignals(True)
         try:
             editor_mode = settings.get("editor_mode")
@@ -2364,6 +2431,17 @@ class DialogueVisualEditor(
             create_backup = settings.get("create_backup")
             if isinstance(create_backup, bool):
                 self.backup_check.setChecked(create_backup)
+            problem_char_limit = settings.get("problem_char_limit")
+            if isinstance(problem_char_limit, bool):
+                self.problem_char_limit_check.setChecked(problem_char_limit)
+            problem_line_limit = settings.get("problem_line_limit")
+            if isinstance(problem_line_limit, bool):
+                self.problem_line_limit_check.setChecked(problem_line_limit)
+            problem_control_mismatch = settings.get("problem_control_mismatch")
+            if isinstance(problem_control_mismatch, bool):
+                self.problem_control_mismatch_check.setChecked(
+                    problem_control_mismatch
+                )
             show_empty_files = settings.get("show_empty_files")
             if isinstance(show_empty_files, bool):
                 self.show_empty_files_check.setChecked(show_empty_files)
@@ -2402,6 +2480,9 @@ class DialogueVisualEditor(
             self.infer_speaker_check.blockSignals(False)
             self.hide_control_codes_check.blockSignals(False)
             self.backup_check.blockSignals(False)
+            self.problem_char_limit_check.blockSignals(False)
+            self.problem_line_limit_check.blockSignals(False)
+            self.problem_control_mismatch_check.blockSignals(False)
             self.show_empty_files_check.blockSignals(False)
             self._applying_project_ui_state = False
 
@@ -2409,6 +2490,7 @@ class DialogueVisualEditor(
         self._update_mode_controls()
         self._sync_settings_menu_from_controls()
         self._sync_settings_toggle_actions_from_controls()
+        self._update_problem_checks_ui()
         self._sync_settings_limits_menu_labels()
         refresh_file_items = getattr(self, "_refresh_all_file_item_text", None)
         if callable(refresh_file_items):
@@ -3135,9 +3217,47 @@ class DialogueVisualEditor(
         self._refresh_all_file_item_text()
         self._rerender_current_file()
 
+    def _problem_checks_summary_text(self) -> str:
+        enabled_checks: list[str] = []
+        if self.problem_char_limit_check.isChecked():
+            enabled_checks.append("char width")
+        if self.problem_line_limit_check.isChecked():
+            enabled_checks.append("line count")
+        if self.problem_control_mismatch_check.isChecked():
+            enabled_checks.append("control-code mismatch")
+        if not enabled_checks:
+            return "none"
+        return ", ".join(enabled_checks)
+
+    def _update_problem_checks_ui(self) -> None:
+        if not hasattr(self, "next_problem_btn"):
+            return
+        checks_text = self._problem_checks_summary_text()
+        if checks_text == "none":
+            tooltip = (
+                "No problem checks enabled. Enable checks in Settings > Problem Checks."
+            )
+        else:
+            tooltip = (
+                "Jump to the next block matching enabled checks "
+                f"({checks_text}) in the current mode."
+            )
+        self.next_problem_btn.setToolTip(tooltip)
+
+    def _on_problem_checks_changed(self, _checked: bool) -> None:
+        self._refresh_all_file_item_text()
+        self._update_problem_checks_ui()
+
     def _jump_to_next_problem(self) -> None:
         if not self.sessions:
             self.statusBar().showMessage("Load files before jumping to problems.")
+            return
+
+        checks_text = self._problem_checks_summary_text()
+        if checks_text == "none":
+            self.statusBar().showMessage(
+                "No problem checks enabled. Enable checks in Settings > Problem Checks."
+            )
             return
 
         translator_mode = self._is_translator_mode()
@@ -3154,7 +3274,8 @@ class DialogueVisualEditor(
         if not problem_targets:
             mode_label = "translator" if translator_mode else "plain"
             self.statusBar().showMessage(
-                f"No layout problems found in {mode_label} mode.")
+                f"No problems found ({checks_text}) in {mode_label} mode."
+            )
             return
 
         start_index = -1
