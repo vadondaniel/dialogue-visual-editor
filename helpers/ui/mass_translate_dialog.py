@@ -1114,12 +1114,15 @@ class MassTranslateDialog(QDialog):
         clear_paste_after_apply = not has_warnings
         self.chunk_status[idx] = "warning" if has_warnings else "applied"
         self._set_chunk_combo_items()
-        if idx < self.chunk_combo.count():
-            self.chunk_combo.setCurrentIndex(idx)
         if clear_paste_after_apply:
             self.chunk_drafts.pop(idx, None)
-            if self.chunk_combo.currentIndex() == idx:
-                self._set_paste_text("")
+            self._set_paste_text("")
+
+        next_chunk_index = idx
+        if clear_paste_after_apply and (idx + 1) < self.chunk_combo.count():
+            next_chunk_index = idx + 1
+        if next_chunk_index < self.chunk_combo.count():
+            self.chunk_combo.setCurrentIndex(next_chunk_index)
         self._update_chunk_controls()
 
         summary_lines: list[str] = [
