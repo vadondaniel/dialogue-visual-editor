@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QListWidgetItem, QMessageBox, QWidget
 
 from ..core.models import FileSession
-from ..core.text_utils import strip_control_tokens
+from ..core.text_utils import CONTROL_TOKEN_RE, strip_control_tokens
 
 
 class _AuditSearchHostTypingFallback:
@@ -18,15 +18,7 @@ class _AuditSearchHostTypingFallback:
 
 
 class AuditSearchMixin(_AuditSearchHostTypingFallback):
-    _CONTROL_QUERY_RE = re.compile(
-        r"""
-        \\[A-Za-z]+\d*<[^>]*>        |
-        \\[A-Za-z]+\d*\[[^\]]*\]     |
-        \\[\.\!\|\{\}\^]             |
-        \\[ntr]
-        """,
-        re.VERBOSE,
-    )
+    _CONTROL_QUERY_RE = CONTROL_TOKEN_RE
 
     def _is_control_code_search_query(self, query: str) -> bool:
         return bool(self._CONTROL_QUERY_RE.search(query or ""))

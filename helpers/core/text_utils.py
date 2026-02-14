@@ -9,8 +9,8 @@ CONTROL_TOKEN_RE = re.compile(
     r"""
     \\[A-Za-z]+\d*<[^>]*>        |
     \\[A-Za-z]+\d*\[[^\]]*\]     |
-    \\[\.\!\|\{\}\^]             |
-    \\[ntr]
+    \\[A-Za-z]+\d*               |
+    \\[^A-Za-z0-9\s]
     """,
     re.VERBOSE,
 )
