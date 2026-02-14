@@ -506,9 +506,15 @@ class DialogueVisualEditor(
         self.problem_control_mismatch_check.toggled.connect(
             self._on_problem_checks_changed
         )
+        self.problem_trailing_color_code_check.toggled.connect(
+            self._on_problem_checks_changed
+        )
         self.problem_char_limit_check.toggled.connect(self._on_project_setting_changed)
         self.problem_line_limit_check.toggled.connect(self._on_project_setting_changed)
         self.problem_control_mismatch_check.toggled.connect(
+            self._on_project_setting_changed
+        )
+        self.problem_trailing_color_code_check.toggled.connect(
             self._on_project_setting_changed
         )
 
@@ -770,6 +776,12 @@ class DialogueVisualEditor(
             "Treat control-code token mismatches between source and translation as a problem."
         )
 
+        self.problem_trailing_color_code_check = QCheckBox(self)
+        self.problem_trailing_color_code_check.setChecked(False)
+        self.problem_trailing_color_code_check.setToolTip(
+            "Treat missing/mismatched trailing \\C[n] token (when JP ends with one) as a problem."
+        )
+
         self.apply_version_combo = QComboBox(self)
         self.apply_version_combo.addItem("Original", "original")
         self.apply_version_combo.addItem("Working", "working")
@@ -805,6 +817,7 @@ class DialogueVisualEditor(
             self.problem_char_limit_check,
             self.problem_line_limit_check,
             self.problem_control_mismatch_check,
+            self.problem_trailing_color_code_check,
             self.apply_version_combo,
         )
         for control in hidden_controls:
@@ -1015,6 +1028,16 @@ class DialogueVisualEditor(
             problem_control_mismatch_action, self.problem_control_mismatch_check
         )
         problem_checks_menu.addAction(problem_control_mismatch_action)
+
+        problem_trailing_color_code_action = QAction(
+            "Flag trailing \\C[n] mismatch",
+            self,
+        )
+        self._bind_toggle_menu_action(
+            problem_trailing_color_code_action,
+            self.problem_trailing_color_code_check,
+        )
+        problem_checks_menu.addAction(problem_trailing_color_code_action)
 
         settings_menu.addSeparator()
         auto_split_action = QAction("Auto-split overflow on save", self)
@@ -2953,6 +2976,9 @@ class DialogueVisualEditor(
             "problem_control_mismatch": bool(
                 self.problem_control_mismatch_check.isChecked()
             ),
+            "problem_trailing_color_code": bool(
+                self.problem_trailing_color_code_check.isChecked()
+            ),
             "show_empty_files": bool(self.show_empty_files_check.isChecked()),
             "default_variable_length": int(self.default_variable_length_estimate),
             "variable_length_overrides": {
@@ -2989,6 +3015,7 @@ class DialogueVisualEditor(
         self.problem_char_limit_check.blockSignals(True)
         self.problem_line_limit_check.blockSignals(True)
         self.problem_control_mismatch_check.blockSignals(True)
+        self.problem_trailing_color_code_check.blockSignals(True)
         self.show_empty_files_check.blockSignals(True)
         try:
             editor_mode = settings.get("editor_mode")
@@ -3074,6 +3101,13 @@ class DialogueVisualEditor(
                 self.problem_control_mismatch_check.setChecked(
                     problem_control_mismatch
                 )
+            problem_trailing_color_code = settings.get(
+                "problem_trailing_color_code"
+            )
+            if isinstance(problem_trailing_color_code, bool):
+                self.problem_trailing_color_code_check.setChecked(
+                    problem_trailing_color_code
+                )
             show_empty_files = settings.get("show_empty_files")
             if isinstance(show_empty_files, bool):
                 self.show_empty_files_check.setChecked(show_empty_files)
@@ -3115,6 +3149,7 @@ class DialogueVisualEditor(
             self.problem_char_limit_check.blockSignals(False)
             self.problem_line_limit_check.blockSignals(False)
             self.problem_control_mismatch_check.blockSignals(False)
+            self.problem_trailing_color_code_check.blockSignals(False)
             self.show_empty_files_check.blockSignals(False)
             self._applying_project_ui_state = False
 
@@ -3876,6 +3911,8 @@ class DialogueVisualEditor(
             enabled_checks.append("line count")
         if self.problem_control_mismatch_check.isChecked():
             enabled_checks.append("control-code mismatch")
+        if self.problem_trailing_color_code_check.isChecked():
+            enabled_checks.append("trailing \\C[n]")
         if not enabled_checks:
             return "none"
         return ", ".join(enabled_checks)
