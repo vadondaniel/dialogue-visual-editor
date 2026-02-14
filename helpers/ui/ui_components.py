@@ -345,13 +345,9 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
         if dark_theme:
             command_color = "#fbbf24"
             symbol_color = "#93c5fd"
-            variable_placeholder_color = "#86efac"
-            name_placeholder_color = "#67e8f9"
         else:
             command_color = "#9a3412"
             symbol_color = "#1d4ed8"
-            variable_placeholder_color = "#166534"
-            name_placeholder_color = "#0e7490"
 
         command_format = QTextCharFormat()
         command_format.setForeground(QColor(command_color))
@@ -361,34 +357,10 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
         symbol_format.setForeground(QColor(symbol_color))
         symbol_format.setFontWeight(QFont.Weight.DemiBold)
 
-        variable_placeholder_format = QTextCharFormat()
-        variable_placeholder_format.setForeground(
-            QColor(variable_placeholder_color))
-        variable_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
-
-        icon_placeholder_format = QTextCharFormat()
-        icon_placeholder_format.setForeground(
-            QColor(variable_placeholder_color))
-        icon_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
-
-        party_placeholder_format = QTextCharFormat()
-        party_placeholder_format.setForeground(
-            QColor(variable_placeholder_color))
-        party_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
-
-        name_placeholder_format = QTextCharFormat()
-        name_placeholder_format.setForeground(QColor(name_placeholder_color))
-        name_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
-
         self._rules: list[tuple[re.Pattern[str], QTextCharFormat]] = [
             (re.compile(r"\\[A-Za-z]+\[[^\]\r\n]*\]"), command_format),
             (re.compile(r"\\[A-Za-z]+"), command_format),
             (re.compile(r"\\[\\{}.$|!><^]"), symbol_format),
-            (re.compile(r"<(?:VAR:|V)\d+>"), variable_placeholder_format),
-            (re.compile(r"<(?:ICON:|I)\d+>"), icon_placeholder_format),
-            (re.compile(r"<(?:PARTY:|P)\d+>"), party_placeholder_format),
-            (re.compile(r"<(?:CUR:|G)>"), symbol_format),
-            (re.compile(r"<(?:NAME:|N)\d+>"), name_placeholder_format),
         ]
 
     def highlightBlock(self, text: str) -> None:
