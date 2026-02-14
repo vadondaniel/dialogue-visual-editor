@@ -90,6 +90,17 @@ class RenderMixin(_RenderHostTypingFallback):
             bool(self.infer_speaker_check.isChecked()),
         )
 
+    def _display_segments_for_session(
+        self,
+        session: FileSession,
+        *,
+        translator_mode: bool,
+        actor_mode: bool,
+    ) -> list[DialogueSegment]:
+        if actor_mode or translator_mode:
+            return list(session.segments)
+        return [segment for segment in session.segments if not segment.translation_only]
+
     def _create_blocks_container(self) -> tuple[QWidget, QVBoxLayout]:
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -112,6 +123,7 @@ class RenderMixin(_RenderHostTypingFallback):
     def _try_restore_cached_block_container(
         self,
         session: FileSession,
+        display_segments: list[DialogueSegment],
         view_meta: tuple[Any, ...],
         *,
         focus_uid: Optional[str],
@@ -134,7 +146,7 @@ class RenderMixin(_RenderHostTypingFallback):
             return False
         if cast(tuple[Any, ...], cached_meta) != view_meta:
             return False
-        target_uid_order = [segment.uid for segment in session.segments]
+        target_uid_order = [segment.uid for segment in display_segments]
         if cached_uid_order != target_uid_order:
             return False
 
@@ -439,6 +451,7 @@ class RenderMixin(_RenderHostTypingFallback):
     def _can_fast_refresh_session_widgets(
         self,
         session: FileSession,
+        display_segments: list[DialogueSegment],
         translator_mode: bool,
         actor_mode: bool,
         name_index_kind: str,
@@ -446,11 +459,11 @@ class RenderMixin(_RenderHostTypingFallback):
     ) -> bool:
         if self.rendered_blocks_path is None or self.rendered_blocks_path != session.path:
             return False
-        if self.rendered_block_uid_order != [segment.uid for segment in session.segments]:
+        if self.rendered_block_uid_order != [segment.uid for segment in display_segments]:
             return False
-        if len(self.block_widgets) != len(session.segments):
+        if len(self.block_widgets) != len(display_segments):
             return False
-        for segment in session.segments:
+        for segment in display_segments:
             widget = self.block_widgets.get(segment.uid)
             if widget is None:
                 return False
@@ -467,7 +480,7 @@ class RenderMixin(_RenderHostTypingFallback):
 
     def _can_restore_cached_widget_pool(
         self,
-        session: FileSession,
+        display_segments: list[DialogueSegment],
         pool: dict[str, BlockWidgetType],
         cached_uid_order: list[str],
         cached_meta: tuple[Any, ...],
@@ -475,7 +488,7 @@ class RenderMixin(_RenderHostTypingFallback):
     ) -> bool:
         if cached_meta != target_meta:
             return False
-        target_uid_order = [segment.uid for segment in session.segments]
+        target_uid_order = [segment.uid for segment in display_segments]
         if cached_uid_order != target_uid_order:
             return False
         return len(pool) == len(target_uid_order)
@@ -483,6 +496,7 @@ class RenderMixin(_RenderHostTypingFallback):
     def _restore_cached_widget_pool(
         self,
         session: FileSession,
+        display_segments: list[DialogueSegment],
         pool: dict[str, BlockWidgetType],
         *,
         actor_mode: bool,
@@ -490,8 +504,8 @@ class RenderMixin(_RenderHostTypingFallback):
         merge_pairs: set[tuple[str, str]],
     ) -> None:
         self.block_widgets = {}
-        segment_count = len(session.segments)
-        for idx, segment in enumerate(session.segments):
+        segment_count = len(display_segments)
+        for idx, segment in enumerate(display_segments):
             widget = pool.pop(segment.uid, None)
             if widget is None:
                 continue
@@ -501,7 +515,7 @@ class RenderMixin(_RenderHostTypingFallback):
             self._apply_block_visual_state(segment.uid, widget)
 
             if (not actor_mode) and idx < segment_count - 1:
-                next_segment = session.segments[idx + 1]
+                next_segment = display_segments[idx + 1]
                 if (segment.uid, next_segment.uid) in merge_pairs:
                     connector_widget = self._build_merge_connector_widget(
                         session,
@@ -564,6 +578,16 @@ class RenderMixin(_RenderHostTypingFallback):
         translator_mode: bool,
     ) -> set[tuple[str, str]]:
         pairs: set[tuple[str, str]] = set()
+        if translator_mode:
+            # Translator mode merges are TL-only structural cleanup.
+            for idx in range(len(session.segments) - 1):
+                left_segment = session.segments[idx]
+                right_segment = session.segments[idx + 1]
+                if not right_segment.translation_only:
+                    continue
+                if self._same_merge_signature(left_segment, right_segment):
+                    pairs.add((left_segment.uid, right_segment.uid))
+            return pairs
         for bundle in session.bundles:
             tokens = bundle.tokens
             for idx in range(len(tokens) - 1):
@@ -576,8 +600,6 @@ class RenderMixin(_RenderHostTypingFallback):
                 if left_segment is None or right_segment is None:
                     continue
                 if self._same_merge_signature(left_segment, right_segment):
-                    if translator_mode and not right_segment.inserted:
-                        continue
                     pairs.add((left_segment.uid, right_segment.uid))
         return pairs
 
@@ -775,12 +797,17 @@ class RenderMixin(_RenderHostTypingFallback):
         ).value() if preserve_scroll else None
         if start_at_top and not preserve_scroll:
             self.scroll_area.verticalScrollBar().setValue(0)
-        self.current_segment_lookup = {
-            segment.uid: segment for segment in session.segments}
         actor_mode = self._is_name_index_session(session)
         name_index_kind = self._name_index_kind(session) if actor_mode else ""
         name_index_label = self._name_index_label(session)
         translator_mode = self._is_translator_mode()
+        display_segments = self._display_segments_for_session(
+            session,
+            translator_mode=translator_mode,
+            actor_mode=actor_mode,
+        )
+        self.current_segment_lookup = {
+            segment.uid: segment for segment in display_segments}
         view_meta = self._block_view_meta(
             translator_mode=translator_mode,
             actor_mode=actor_mode,
@@ -805,14 +832,14 @@ class RenderMixin(_RenderHostTypingFallback):
         source_dirty, tl_dirty = self._session_dirty_flags_cached(session)
 
         if actor_mode:
-            entry_count = len(session.segments)
+            entry_count = len(display_segments)
             entry_label = "entry" if entry_count == 1 else "entries"
             header = (
                 f"{session.path.name} | {entry_count} "
                 f"{name_index_label.lower()} {entry_label}"
             )
         else:
-            block_count = len(session.segments)
+            block_count = len(display_segments)
             block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
             header = f"{session.path.name} | {block_count} {block_label}"
         if source_dirty and tl_dirty:
@@ -827,6 +854,7 @@ class RenderMixin(_RenderHostTypingFallback):
         if self.rendered_blocks_path is not None and self.rendered_blocks_path != session.path:
             if self._try_restore_cached_block_container(
                 session,
+                display_segments,
                 view_meta,
                 focus_uid=focus_uid,
                 preserve_scroll=preserve_scroll,
@@ -836,7 +864,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 return
             self._switch_to_new_active_blocks_container()
 
-        if not session.segments:
+        if not display_segments:
             self._hide_audit_progress_overlay(
                 self.main_render_progress_overlay)
             self._clear_blocks()
@@ -860,12 +888,13 @@ class RenderMixin(_RenderHostTypingFallback):
 
         if self._can_fast_refresh_session_widgets(
             session,
+            display_segments,
             translator_mode=translator_mode,
             actor_mode=actor_mode,
             name_index_kind=name_index_kind,
             name_index_label=name_index_label,
         ):
-            for idx, segment in enumerate(session.segments, start=1):
+            for idx, segment in enumerate(display_segments, start=1):
                 widget = self.block_widgets.get(segment.uid)
                 if widget is None:
                     continue
@@ -878,7 +907,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 self._apply_block_visual_state(segment.uid, widget)
             self.rendered_blocks_path = session.path
             self.rendered_block_uid_order = [
-                segment.uid for segment in session.segments]
+                segment.uid for segment in display_segments]
             self.rendered_block_view_meta = view_meta
             self._hide_audit_progress_overlay(
                 self.main_render_progress_overlay)
@@ -912,7 +941,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 QTimer.singleShot(0, focus_and_reveal_reused)
             return
 
-        segment_count = len(session.segments)
+        segment_count = len(display_segments)
         merge_pairs = (
             self._precompute_merge_pairs(session, translator_mode=translator_mode)
             if (not actor_mode)
@@ -945,7 +974,7 @@ class RenderMixin(_RenderHostTypingFallback):
         )
 
         if cached_pool and self._can_restore_cached_widget_pool(
-            session,
+            display_segments,
             cached_pool,
             cached_uid_order,
             cast(tuple[Any, ...], cached_meta),
@@ -961,6 +990,7 @@ class RenderMixin(_RenderHostTypingFallback):
             )
             self._restore_cached_widget_pool(
                 session,
+                display_segments,
                 cached_pool,
                 actor_mode=actor_mode,
                 name_index_label=name_index_label,
@@ -968,7 +998,7 @@ class RenderMixin(_RenderHostTypingFallback):
             )
             self.rendered_blocks_path = session.path
             self.rendered_block_uid_order = [
-                segment.uid for segment in session.segments]
+                segment.uid for segment in display_segments]
             self.rendered_block_view_meta = view_meta
             self.scroll_area.setEnabled(True)
             self._hide_audit_progress_overlay(
@@ -1026,14 +1056,14 @@ class RenderMixin(_RenderHostTypingFallback):
         connector_placeholder_height = 30
         block_placeholders: list[QWidget] = []
         connector_placeholders: dict[int, QWidget] = {}
-        for idx, segment in enumerate(session.segments):
+        for idx, segment in enumerate(display_segments):
             _ = segment
             block_placeholder = self._new_height_placeholder(
                 block_placeholder_height)
             self.blocks_layout.addWidget(block_placeholder)
             block_placeholders.append(block_placeholder)
             if idx < segment_count - 1:
-                next_segment = session.segments[idx + 1]
+                next_segment = display_segments[idx + 1]
                 if (segment.uid, next_segment.uid) in merge_pairs:
                     connector_placeholder = self._new_height_placeholder(
                         connector_placeholder_height
@@ -1052,7 +1082,7 @@ class RenderMixin(_RenderHostTypingFallback):
         self._pending_render_state = {
             "session": session,
             "session_path": session.path,
-            "segments": session.segments,
+            "segments": display_segments,
             "segment_count": segment_count,
             "index": 0,
             "translator_mode": translator_mode,

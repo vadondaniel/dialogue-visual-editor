@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 
 from PySide6.QtWidgets import QMessageBox, QWidget
 
-from ..core.models import DialogueSegment, FileSession
+from ..core.models import CommandToken, DialogueSegment, FileSession
 from ..core.text_utils import chunk_lines, visible_length
 
 ApplyVersionKind = Literal["original", "working", "translated"]
@@ -29,6 +29,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         translator_mode: bool,
     ) -> bool:
         if self._is_name_index_session(session):
+            return False
+        if (not translator_mode) and segment.translation_only:
             return False
         lines = (
             self._normalize_translation_lines(segment.translation_lines)
@@ -75,7 +77,19 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         session.dirty = source_dirty or tl_dirty
         self._update_file_item_text(session.path)
         if self.current_path == session.path:
-            block_count = len(session.segments)
+            actor_mode = self._is_name_index_session(session)
+            translator_mode = self._is_translator_mode()
+            display_segments_resolver = getattr(self, "_display_segments_for_session", None)
+            if callable(display_segments_resolver):
+                block_count = len(
+                    display_segments_resolver(
+                        session,
+                        translator_mode=translator_mode,
+                        actor_mode=actor_mode,
+                    )
+                )
+            else:
+                block_count = len(session.segments)
             block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
             header = f"{session.path.name} | {block_count} {block_label}"
             if source_dirty and tl_dirty:
@@ -96,11 +110,24 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             item.setText(path.name)
             return
         prefix = "* " if session.dirty else ""
-        suffix = " [empty]" if len(session.segments) == 0 else ""
+        actor_mode = self._is_name_index_session(session)
+        translator_mode = self._is_translator_mode()
+        display_segments_resolver = getattr(self, "_display_segments_for_session", None)
+        if callable(display_segments_resolver):
+            display_count = len(
+                display_segments_resolver(
+                    session,
+                    translator_mode=translator_mode,
+                    actor_mode=actor_mode,
+                )
+            )
+        else:
+            display_count = len(session.segments)
+        suffix = " [empty]" if display_count == 0 else ""
         problems = self._problem_count_for_session(session)
         problem_badge = f" [!{problems}]" if problems > 0 else ""
         item.setText(
-            f"{prefix}{path.name} ({len(session.segments)}){problem_badge}{suffix}")
+            f"{prefix}{path.name} ({display_count}){problem_badge}{suffix}")
 
     def _build_entries_for_segment(self, segment: DialogueSegment) -> list[dict[str, Any]]:
         return self._build_entries_for_segment_lines(segment, segment.lines)
@@ -157,6 +184,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
     def _collect_change_log(self, session: FileSession) -> list[tuple[str, str, str]]:
         changes: list[tuple[str, str, str]] = []
         for segment in session.segments:
+            if segment.translation_only:
+                continue
             old_text = segment.original_text_joined()
             new_text = segment.text_joined()
             if segment.inserted:
@@ -289,6 +318,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
     def _mark_session_source_saved(self, session: FileSession) -> None:
         for segment in session.segments:
+            if segment.translation_only:
+                continue
             normalized = list(segment.lines) if segment.lines else [""]
             segment.lines = normalized
             segment.original_lines = list(normalized)
@@ -592,6 +623,31 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
     def _export_translated_data_for_session(self, session: FileSession) -> Any:
         exported_session = copy.deepcopy(session)
         source_lookup = {segment.uid: segment for segment in session.segments}
+        export_lookup = {segment.uid: segment for segment in exported_session.segments}
+
+        tl_followups_by_source_uid: dict[str, list[str]] = {}
+        last_source_uid = ""
+        orphan_tl_uids: list[str] = []
+        for segment in session.segments:
+            if segment.translation_only:
+                if last_source_uid:
+                    tl_followups_by_source_uid.setdefault(last_source_uid, []).append(segment.uid)
+                else:
+                    orphan_tl_uids.append(segment.uid)
+                continue
+            last_source_uid = segment.uid
+        if orphan_tl_uids and session.segments:
+            first_source_uid = ""
+            for segment in session.segments:
+                if not segment.translation_only:
+                    first_source_uid = segment.uid
+                    break
+            if first_source_uid:
+                tl_followups_by_source_uid.setdefault(first_source_uid, [])
+                tl_followups_by_source_uid[first_source_uid] = (
+                    list(orphan_tl_uids) + tl_followups_by_source_uid[first_source_uid]
+                )
+
         for export_segment in exported_session.segments:
             source_segment = source_lookup.get(export_segment.uid)
             if source_segment is None:
@@ -609,6 +665,32 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     params.append("")
                 params[4] = speaker_en
                 export_segment.code101["parameters"] = params
+
+        if tl_followups_by_source_uid:
+            for bundle in exported_session.bundles:
+                idx = 0
+                while idx < len(bundle.tokens):
+                    token = bundle.tokens[idx]
+                    if token.kind != "dialogue" or token.segment is None:
+                        idx += 1
+                        continue
+                    source_uid = token.segment.uid
+                    followup_uids = tl_followups_by_source_uid.get(source_uid, [])
+                    if not followup_uids:
+                        idx += 1
+                        continue
+                    inserted_tokens: list[CommandToken] = []
+                    for followup_uid in followup_uids:
+                        followup_segment = export_lookup.get(followup_uid)
+                        if followup_segment is None:
+                            continue
+                        inserted_tokens.append(
+                            CommandToken(kind="dialogue", segment=followup_segment)
+                        )
+                    if inserted_tokens:
+                        bundle.tokens[idx + 1:idx + 1] = inserted_tokens
+                        idx += len(inserted_tokens)
+                    idx += 1
 
         self._apply_session_to_json(exported_session)
         return exported_session.data

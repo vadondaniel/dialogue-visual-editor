@@ -22,6 +22,7 @@ class DialogueSegment:
     translation_speaker: str = ""
     original_translation_speaker: str = ""
     inserted: bool = False
+    translation_only: bool = False
     merged_segments: list["DialogueSegment"] = field(default_factory=list)
 
     @property

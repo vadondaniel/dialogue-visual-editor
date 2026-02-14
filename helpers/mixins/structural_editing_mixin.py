@@ -82,6 +82,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             return False
 
         translator_mode = self._is_translator_mode()
+        display_segments_resolver = getattr(self, "_display_segments_for_session", None)
+        if callable(display_segments_resolver):
+            display_segments = display_segments_resolver(
+                session,
+                translator_mode=translator_mode,
+                actor_mode=actor_mode,
+            )
+        else:
+            display_segments = list(session.segments)
         name_index_kind = ""
         name_index_label = self._name_index_label(session)
         target_view_meta = self._block_view_meta(
@@ -110,7 +119,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             self.scroll_area.verticalScrollBar().value() if preserve_scroll else None
         )
         self.current_segment_lookup = {
-            segment.uid: segment for segment in session.segments}
+            segment.uid: segment for segment in display_segments}
         if self.selected_segment_uid and self.selected_segment_uid not in self.current_segment_lookup:
             self.selected_segment_uid = None
         if focus_uid and focus_uid in self.current_segment_lookup:
@@ -140,8 +149,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             session,
             translator_mode=translator_mode,
         )
-        segment_count = len(session.segments)
-        for idx, segment in enumerate(session.segments):
+        segment_count = len(display_segments)
+        for idx, segment in enumerate(display_segments):
             reused = existing_widgets.pop(segment.uid, None)
             if (
                 reused is not None
@@ -178,7 +187,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             self._apply_block_visual_state(segment.uid, widget)
 
             if idx < segment_count - 1:
-                next_segment = session.segments[idx + 1]
+                next_segment = display_segments[idx + 1]
                 if (segment.uid, next_segment.uid) in merge_pairs:
                     connector_widget = self._build_merge_connector_widget(
                         session,
@@ -192,12 +201,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             leftover.deleteLater()
 
         self.rendered_blocks_path = session.path
-        self.rendered_block_uid_order = [segment.uid for segment in session.segments]
+        self.rendered_block_uid_order = [segment.uid for segment in display_segments]
         self.rendered_block_view_meta = target_view_meta
         self._hide_audit_progress_overlay(self.main_render_progress_overlay)
 
         source_dirty, tl_dirty = self._session_dirty_flags_cached(session)
-        block_count = len(session.segments)
+        block_count = len(display_segments)
         block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
         header = f"{session.path.name} | {block_count} {block_label}"
         if source_dirty and tl_dirty:
@@ -343,13 +352,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         return -1
 
     def _remove_segment_by_uid(self, session: FileSession, uid: str) -> bool:
-        bundle, token_index = self._find_segment_token(session, uid)
-        if bundle is None or token_index < 0:
-            return False
         segment_index = self._find_segment_index_by_uid(session, uid)
         if segment_index < 0:
             return False
-        del bundle.tokens[token_index]
+        bundle, token_index = self._find_segment_token(session, uid)
+        if bundle is not None and token_index >= 0:
+            del bundle.tokens[token_index]
         del session.segments[segment_index]
         return True
 
@@ -429,20 +437,22 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if session is None:
             return
 
-        bundle, token_index = self._find_segment_token(session, uid)
-        if bundle is None or token_index < 0:
+        source_idx = self._find_segment_index_by_uid(session, uid)
+        if source_idx < 0:
             return
-
-        source_token = bundle.tokens[token_index]
-        if source_token.segment is None:
-            return
-        source_segment = source_token.segment
-
-        try:
-            bundle_index = session.bundles.index(bundle)
-        except ValueError:
-            return
-        source_idx = session.segments.index(source_segment)
+        source_segment = session.segments[source_idx]
+        translator_mode = self._is_translator_mode()
+        bundle_index = -1
+        token_index = -1
+        bundle: Optional[CommandBundle] = None
+        if not translator_mode:
+            bundle, token_index = self._find_segment_token(session, uid)
+            if bundle is None or token_index < 0:
+                return
+            try:
+                bundle_index = session.bundles.index(bundle)
+            except ValueError:
+                return
 
         new_segment = DialogueSegment(
             uid=self._new_segment_uid(session.path),
@@ -460,16 +470,18 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             original_translation_speaker=self.speaker_translation_map.get(
                 source_segment.speaker_name, ""),
             inserted=True,
+            translation_only=translator_mode,
         )
 
-        bundle.tokens.insert(
-            token_index + 1, CommandToken(kind="dialogue", segment=new_segment))
+        if bundle is not None:
+            bundle.tokens.insert(
+                token_index + 1, CommandToken(kind="dialogue", segment=new_segment))
         session.segments.insert(source_idx + 1, new_segment)
         insert_action = InsertedBlockAction(
             path=session.path,
             uid=new_segment.uid,
             bundle_index=bundle_index,
-            token_index=token_index + 1,
+            token_index=token_index + 1 if token_index >= 0 else -1,
             segment_index=source_idx + 1,
             segment=new_segment,
         )
@@ -487,7 +499,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         ):
             self._render_session(
                 session, focus_uid=new_segment.uid, preserve_scroll=True)
-        self.statusBar().showMessage("Inserted a new code 101 block.")
+        if translator_mode:
+            self.statusBar().showMessage("Inserted a new translation-only block.")
+        else:
+            self.statusBar().showMessage("Inserted a new code 101 block.")
 
     def _on_split_overflow_requested(self, uid: str) -> None:
         if self.current_path is None:
@@ -513,9 +528,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             self.statusBar().showMessage("No overflow lines to move.")
             return
 
-        bundle, token_index = self._find_segment_token(session, uid)
-        if bundle is None or token_index < 0:
-            return
+        bundle: Optional[CommandBundle] = None
+        token_index = -1
+        if not translator_mode:
+            bundle, token_index = self._find_segment_token(session, uid)
+            if bundle is None or token_index < 0:
+                return
         source_index = self._find_segment_index_by_uid(session, uid)
         if source_index < 0:
             return
@@ -556,13 +574,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             translation_speaker=source_segment.translation_speaker,
             original_translation_speaker=source_segment.translation_speaker,
             inserted=True,
+            translation_only=translator_mode,
         )
 
         source_segment.lines = list(kept_source_lines)
         source_segment.source_lines = list(source_segment.lines)
         source_segment.translation_lines = list(kept_tl_lines)
-        bundle.tokens.insert(
-            token_index + 1, CommandToken(kind="dialogue", segment=new_segment))
+        if bundle is not None:
+            bundle.tokens.insert(
+                token_index + 1, CommandToken(kind="dialogue", segment=new_segment))
         session.segments.insert(source_index + 1, new_segment)
 
         split_action = SplitOverflowAction(
@@ -570,7 +590,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             source_uid=uid,
             moved_uid=new_segment.uid,
             source_lines_before=source_lines_before,
-            source_lines_after=list(kept_source_lines),
+            source_lines_after=list(source_lines_before if translator_mode else kept_source_lines),
             moved_segment=new_segment,
             source_translation_before=source_tl_before,
             source_translation_after=list(source_segment.translation_lines),
@@ -609,12 +629,19 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         left_segment = session.segments[left_index]
         right_segment = session.segments[right_index]
-        if translator_mode and not right_segment.inserted:
+        if translator_mode and not right_segment.translation_only:
             self.statusBar().showMessage(
-                "In Translator Edit mode, merge is only allowed when removing an inserted block."
+                "In Translator Edit mode, merge is only allowed when removing a translation-only block."
             )
             return
-        if not self._can_merge_segments(session, left_segment, right_segment):
+        if (not translator_mode) and (not self._can_merge_segments(session, left_segment, right_segment)):
+            QMessageBox.information(
+                cast(QWidget, self),
+                "Cannot merge",
+                "These blocks cannot be merged because their command context/settings differ.",
+            )
+            return
+        if translator_mode and not self._same_merge_signature(left_segment, right_segment):
             QMessageBox.information(
                 cast(QWidget, self),
                 "Cannot merge",
@@ -622,16 +649,21 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             )
             return
 
-        left_bundle, left_token_index = self._find_segment_token(
-            session, left_uid)
-        right_bundle, right_token_index = self._find_segment_token(
-            session, right_uid)
-        if left_bundle is None or right_bundle is None:
-            return
-        if left_bundle is not right_bundle:
-            return
-        if right_token_index != left_token_index + 1:
-            return
+        left_bundle: Optional[CommandBundle] = None
+        right_bundle: Optional[CommandBundle] = None
+        left_token_index = -1
+        right_token_index = -1
+        if not translator_mode:
+            left_bundle, left_token_index = self._find_segment_token(
+                session, left_uid)
+            right_bundle, right_token_index = self._find_segment_token(
+                session, right_uid)
+            if left_bundle is None or right_bundle is None:
+                return
+            if left_bundle is not right_bundle:
+                return
+            if right_token_index != left_token_index + 1:
+                return
 
         left_lines_before = list(left_segment.lines)
         left_merged_before = list(left_segment.merged_segments)
@@ -666,7 +698,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             self.speaker_translation_map[left_segment.speaker_name] = merged_speaker_translation
         if source_affected:
             left_segment.merged_segments.append(right_segment)
-        del left_bundle.tokens[right_token_index]
+        if left_bundle is not None and right_token_index >= 0:
+            del left_bundle.tokens[right_token_index]
         del session.segments[right_index]
 
         merge_action = MergeBlocksAction(
@@ -783,17 +816,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             return
 
         translator_mode = self._is_translator_mode()
-
-        bundle, token_index = self._find_segment_token(session, uid)
-        if bundle is None or token_index < 0:
+        segment_index = self._find_segment_index_by_uid(session, uid)
+        if segment_index < 0:
             return
-
-        segment = bundle.tokens[token_index].segment
-        if segment is None:
-            return
-        if translator_mode and not segment.inserted:
+        segment = session.segments[segment_index]
+        if translator_mode and not (segment.inserted or segment.translation_only):
             self.statusBar().showMessage(
-                "In Translator Edit mode, only inserted blocks can be deleted."
+                "In Translator Edit mode, only translation-only blocks can be deleted."
             )
             return
 
@@ -815,13 +844,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if button != QMessageBox.StandardButton.Yes:
             return
 
-        try:
-            bundle_index = session.bundles.index(bundle)
-        except ValueError:
-            return
-        segment_index = self._find_segment_index_by_uid(session, uid)
-        if segment_index < 0:
-            return
+        bundle_index = -1
+        token_index = -1
+        bundle, found_token_index = self._find_segment_token(session, uid)
+        if bundle is not None and found_token_index >= 0:
+            token_index = found_token_index
+            try:
+                bundle_index = session.bundles.index(bundle)
+            except ValueError:
+                bundle_index = -1
         action = DeletedBlockAction(
             path=session.path,
             uid=uid,
@@ -831,7 +862,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             segment=segment,
         )
 
-        del bundle.tokens[token_index]
+        if bundle is not None and token_index >= 0:
+            del bundle.tokens[token_index]
         del session.segments[segment_index]
 
         self.structural_undo_stack.append(
@@ -851,17 +883,18 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         session = self.sessions.get(action.path)
         if session is None:
             return False
-        if action.bundle_index < 0 or action.bundle_index >= len(session.bundles):
-            return False
         if self._find_segment_index_by_uid(session, action.uid) >= 0:
             return False
 
-        bundle = session.bundles[action.bundle_index]
-        token_index = max(0, min(action.token_index, len(bundle.tokens)))
         segment_index = max(
             0, min(action.segment_index, len(session.segments)))
-        bundle.tokens.insert(token_index, CommandToken(
-            kind="dialogue", segment=action.segment))
+        if action.bundle_index >= 0:
+            if action.bundle_index >= len(session.bundles):
+                return False
+            bundle = session.bundles[action.bundle_index]
+            token_index = max(0, min(action.token_index, len(bundle.tokens)))
+            bundle.tokens.insert(token_index, CommandToken(
+                kind="dialogue", segment=action.segment))
         session.segments.insert(segment_index, action.segment)
 
         self._refresh_dirty_state(session)
@@ -905,17 +938,18 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         session = self.sessions.get(action.path)
         if session is None:
             return False
-        if action.bundle_index < 0 or action.bundle_index >= len(session.bundles):
-            return False
         if self._find_segment_index_by_uid(session, action.uid) >= 0:
             return False
 
-        bundle = session.bundles[action.bundle_index]
-        token_index = max(0, min(action.token_index, len(bundle.tokens)))
         segment_index = max(
             0, min(action.segment_index, len(session.segments)))
-        bundle.tokens.insert(token_index, CommandToken(
-            kind="dialogue", segment=action.segment))
+        if action.bundle_index >= 0:
+            if action.bundle_index >= len(session.bundles):
+                return False
+            bundle = session.bundles[action.bundle_index]
+            token_index = max(0, min(action.token_index, len(bundle.tokens)))
+            bundle.tokens.insert(token_index, CommandToken(
+                kind="dialogue", segment=action.segment))
         session.segments.insert(segment_index, action.segment)
 
         self._refresh_dirty_state(session)
@@ -937,16 +971,18 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         session = self.sessions.get(action.path)
         if session is None:
             return False
-        if action.bundle_index < 0 or action.bundle_index >= len(session.bundles):
-            return False
-
-        bundle = session.bundles[action.bundle_index]
-        token_index = self._find_bundle_token_index_by_uid(bundle, action.uid)
         segment_index = self._find_segment_index_by_uid(session, action.uid)
-        if token_index < 0 or segment_index < 0:
+        if segment_index < 0:
             return False
 
-        del bundle.tokens[token_index]
+        if action.bundle_index >= 0:
+            if action.bundle_index >= len(session.bundles):
+                return False
+            bundle = session.bundles[action.bundle_index]
+            token_index = self._find_bundle_token_index_by_uid(bundle, action.uid)
+            if token_index < 0:
+                return False
+            del bundle.tokens[token_index]
         del session.segments[segment_index]
 
         self._refresh_dirty_state(session)
@@ -1084,18 +1120,22 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if source_index < 0:
             return False
         source_segment = session.segments[source_index]
-        bundle, token_index = self._find_segment_token(
-            session, action.source_uid)
-        if bundle is None or token_index < 0:
-            return False
+        bundle: Optional[CommandBundle] = None
+        token_index = -1
+        if not action.moved_segment.translation_only:
+            bundle, token_index = self._find_segment_token(
+                session, action.source_uid)
+            if bundle is None or token_index < 0:
+                return False
 
         source_segment.lines = list(action.source_lines_after)
         source_segment.source_lines = list(source_segment.lines)
         if action.source_translation_after:
             source_segment.translation_lines = self._normalize_translation_lines(
                 action.source_translation_after)
-        bundle.tokens.insert(
-            token_index + 1, CommandToken(kind="dialogue", segment=action.moved_segment))
+        if bundle is not None:
+            bundle.tokens.insert(
+                token_index + 1, CommandToken(kind="dialogue", segment=action.moved_segment))
         session.segments.insert(source_index + 1, action.moved_segment)
 
         self._refresh_dirty_state(session)
@@ -1124,10 +1164,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             return False
 
         left_segment = session.segments[left_index]
-        restored = self._restore_merged_segments_after(
-            session, action.left_uid, [action.right_segment])
-        if restored <= 0:
-            return False
+        if action.source_affected:
+            restored = self._restore_merged_segments_after(
+                session, action.left_uid, [action.right_segment])
+            if restored <= 0:
+                return False
+        else:
+            session.segments.insert(left_index + 1, action.right_segment)
         if action.source_affected:
             left_segment.lines = list(action.left_lines_before)
             left_segment.source_lines = list(left_segment.lines)
@@ -1168,16 +1211,21 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         left_segment = session.segments[left_index]
         right_segment = session.segments[right_index]
-        left_bundle, left_token_index = self._find_segment_token(
-            session, action.left_uid)
-        right_bundle, right_token_index = self._find_segment_token(
-            session, action.right_uid)
-        if left_bundle is None or right_bundle is None:
-            return False
-        if left_bundle is not right_bundle:
-            return False
-        if right_token_index != left_token_index + 1:
-            return False
+        left_bundle: Optional[CommandBundle] = None
+        right_bundle: Optional[CommandBundle] = None
+        left_token_index = -1
+        right_token_index = -1
+        if action.source_affected:
+            left_bundle, left_token_index = self._find_segment_token(
+                session, action.left_uid)
+            right_bundle, right_token_index = self._find_segment_token(
+                session, action.right_uid)
+            if left_bundle is None or right_bundle is None:
+                return False
+            if left_bundle is not right_bundle:
+                return False
+            if right_token_index != left_token_index + 1:
+                return False
 
         if action.source_affected:
             left_segment.lines = list(action.left_lines_after)
@@ -1193,7 +1241,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 action.left_merged_before) + [right_segment]
         else:
             left_segment.merged_segments = list(action.left_merged_before)
-        del left_bundle.tokens[right_token_index]
+        if action.source_affected and left_bundle is not None and right_token_index >= 0:
+            del left_bundle.tokens[right_token_index]
         del session.segments[right_index]
 
         self._refresh_dirty_state(session)

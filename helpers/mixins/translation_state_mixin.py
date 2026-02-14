@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -146,6 +147,76 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             ]
         )
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+    def _translation_only_segment_uid(self, session: FileSession, tl_uid: str) -> str:
+        safe_uid = tl_uid if tl_uid else self._new_translation_uid()
+        return f"{session.path.name}:TI:{safe_uid}"
+
+    def _build_translation_only_segment_from_state(
+        self,
+        session: FileSession,
+        tl_uid: str,
+        entry: dict[str, Any],
+        template_segment: Optional[DialogueSegment],
+    ) -> DialogueSegment:
+        template = template_segment
+        context_raw = entry.get("context")
+        context = context_raw if isinstance(context_raw, str) else (
+            template.context if template is not None else ""
+        )
+        code101_raw = entry.get("code101")
+        if isinstance(code101_raw, dict):
+            code101 = copy.deepcopy(code101_raw)
+        elif template is not None:
+            code101 = copy.deepcopy(template.code101)
+        else:
+            code101 = {"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]}
+        code401_template_raw = entry.get("code401_template")
+        if isinstance(code401_template_raw, dict):
+            code401_template = copy.deepcopy(code401_template_raw)
+        elif template is not None:
+            code401_template = copy.deepcopy(template.code401_template)
+        else:
+            code401_template = {"code": 401, "indent": 0, "parameters": [""]}
+
+        source_lines = self._normalize_translation_lines(entry.get("source_lines"))
+        if not source_lines and template is not None:
+            source_lines = list(
+                template.source_lines or template.original_lines or template.lines or [""]
+            )
+        if not source_lines:
+            source_lines = [""]
+
+        original_lines = self._normalize_translation_lines(entry.get("original_lines"))
+        if not original_lines:
+            original_lines = list(source_lines)
+
+        tl_lines = self._normalize_translation_lines(entry.get("translation_lines"))
+        speaker_en_raw = entry.get("speaker_en")
+        speaker_en = speaker_en_raw.strip() if isinstance(speaker_en_raw, str) else ""
+        uid_raw = entry.get("segment_uid")
+        segment_uid = (
+            uid_raw.strip()
+            if isinstance(uid_raw, str) and uid_raw.strip()
+            else self._translation_only_segment_uid(session, tl_uid)
+        )
+
+        return DialogueSegment(
+            uid=segment_uid,
+            context=context,
+            code101=code101,
+            lines=list(source_lines),
+            original_lines=list(original_lines),
+            source_lines=list(source_lines),
+            code401_template=code401_template,
+            tl_uid=tl_uid,
+            translation_lines=list(tl_lines),
+            original_translation_lines=list(tl_lines),
+            translation_speaker=speaker_en,
+            original_translation_speaker=speaker_en,
+            inserted=False,
+            translation_only=True,
+        )
 
     def _segment_reference_source_text(self, segment: DialogueSegment) -> str:
         source_lines = segment.source_lines or segment.original_lines or segment.lines or [
@@ -299,6 +370,57 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             if speaker_en:
                 self.speaker_translation_map[speaker_key] = speaker_en
 
+        source_segments_by_tl_uid: dict[str, DialogueSegment] = {}
+        for segment in session.segments:
+            if segment.translation_only:
+                continue
+            if segment.tl_uid:
+                source_segments_by_tl_uid[segment.tl_uid] = segment
+
+        ordered_segments: list[DialogueSegment] = []
+        appended_source_uids: set[str] = set()
+
+        def template_for_translation_only() -> Optional[DialogueSegment]:
+            for candidate in reversed(ordered_segments):
+                if not candidate.translation_only:
+                    return candidate
+            for candidate in session.segments:
+                if not candidate.translation_only:
+                    return candidate
+            return session.segments[0] if session.segments else None
+
+        for tl_uid in order:
+            source_segment = source_segments_by_tl_uid.get(tl_uid)
+            if source_segment is not None:
+                if source_segment.uid not in appended_source_uids:
+                    ordered_segments.append(source_segment)
+                    appended_source_uids.add(source_segment.uid)
+                continue
+
+            entry = entries.get(tl_uid)
+            if not isinstance(entry, dict):
+                continue
+            if not bool(entry.get("translation_only")):
+                continue
+            tl_only_segment = self._build_translation_only_segment_from_state(
+                session,
+                tl_uid,
+                entry,
+                template_for_translation_only(),
+            )
+            ordered_segments.append(tl_only_segment)
+
+        for source_segment in session.segments:
+            if source_segment.translation_only:
+                continue
+            if source_segment.uid in appended_source_uids:
+                continue
+            ordered_segments.append(source_segment)
+            appended_source_uids.add(source_segment.uid)
+
+        session.segments = ordered_segments
+        setattr(session, "_original_tl_order", [segment.tl_uid for segment in session.segments])
+
     def _sync_translation_state_from_sessions(self) -> None:
         files_state: dict[str, Any] = {}
         for path, session in self.sessions.items():
@@ -329,13 +451,25 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 segment.translation_lines)
             speaker_en = segment.translation_speaker.strip()
             speaker_key = self._speaker_key_for_state(segment)
-            entries[segment.tl_uid] = {
-                "source_hash": self._segment_source_hash(segment),
+            source_lines = list(
+                segment.source_lines or segment.original_lines or segment.lines or [""]
+            )
+            entry: dict[str, Any] = {
+                "source_hash": "" if segment.translation_only else self._segment_source_hash(segment),
                 "source_preview": preview_text(self._segment_reference_source_text(segment), 130),
                 "speaker_jp": speaker_key,
                 "speaker_en": speaker_en,
                 "translation_lines": translation_lines,
+                "translation_only": bool(segment.translation_only),
             }
+            if segment.translation_only:
+                entry["segment_uid"] = segment.uid
+                entry["context"] = segment.context
+                entry["code101"] = copy.deepcopy(segment.code101)
+                entry["code401_template"] = copy.deepcopy(segment.code401_template)
+                entry["source_lines"] = source_lines
+                entry["original_lines"] = list(segment.original_lines or source_lines)
+            entries[segment.tl_uid] = entry
             if speaker_en:
                 self.speaker_translation_map[speaker_key] = speaker_en
         return {"order": order, "entries": entries}
@@ -381,6 +515,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
     def _session_has_source_changes(self, session: FileSession) -> bool:
         for segment in session.segments:
+            if segment.translation_only:
+                continue
             if segment.inserted:
                 return True
             if segment.merged_segments:
@@ -390,6 +526,12 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         return False
 
     def _session_has_translation_changes(self, session: FileSession) -> bool:
+        original_order_raw = getattr(session, "_original_tl_order", None)
+        if isinstance(original_order_raw, list):
+            original_order = [item for item in original_order_raw if isinstance(item, str)]
+            current_order = [segment.tl_uid for segment in session.segments if isinstance(segment.tl_uid, str)]
+            if current_order != original_order:
+                return True
         for segment in session.segments:
             if self._normalize_translation_lines(segment.translation_lines) != self._normalize_translation_lines(
                 segment.original_translation_lines
@@ -407,6 +549,9 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 segment.translation_lines)
             segment.translation_speaker = segment.translation_speaker.strip()
             segment.original_translation_speaker = segment.translation_speaker
+            if segment.translation_only:
+                segment.inserted = False
+        setattr(session, "_original_tl_order", [segment.tl_uid for segment in session.segments])
 
     def _build_reference_summary_for_session(self, session: FileSession) -> dict[str, tuple[str, str]]:
         rows: list[dict[str, Any]] = []

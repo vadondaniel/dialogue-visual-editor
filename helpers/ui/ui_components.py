@@ -992,7 +992,11 @@ class DialogueBlockWidget(QFrame):
         self.insert_button.setEnabled(self.allow_structural_actions)
         self.delete_button.setEnabled(
             self.allow_structural_actions
-            and ((not self.translator_mode) or self.segment.inserted)
+            and (
+                (not self.translator_mode)
+                or self.segment.inserted
+                or self.segment.translation_only
+            )
         )
         if self.actor_mode:
             self.collapse_button.setVisible(False)
@@ -1725,7 +1729,11 @@ class DialogueBlockWidget(QFrame):
         can_insert = self.allow_structural_actions
         can_delete = (
             self.allow_structural_actions
-            and ((not self.translator_mode) or self.segment.inserted)
+            and (
+                (not self.translator_mode)
+                or self.segment.inserted
+                or self.segment.translation_only
+            )
         )
 
         self.collapse_button.setEnabled(can_collapse)
