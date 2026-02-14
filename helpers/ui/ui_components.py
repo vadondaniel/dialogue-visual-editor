@@ -54,6 +54,8 @@ from ..core.text_utils import (
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
 VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
 ICON_TOKEN_RE = re.compile(r"\\[Ii]\[(\d+)\]")
+PARTY_TOKEN_RE = re.compile(r"\\[Pp]\[(\d+)\]")
+CURRENCY_TOKEN_RE = re.compile(r"\\[Gg](?![A-Za-z0-9_])")
 ControlMismatchStatus = Literal["matched", "missing", "extra"]
 ControlMismatchSpan = tuple[int, int, ControlMismatchStatus]
 
@@ -284,6 +286,23 @@ def _token_id_at_editor_position(
     return None
 
 
+def _token_present_at_editor_position(
+    editor: QPlainTextEdit,
+    pos: QPoint,
+    token_pattern: re.Pattern[str],
+) -> bool:
+    cursor = editor.cursorForPosition(pos)
+    block = cursor.block()
+    if not block.isValid():
+        return False
+    line_text = block.text()
+    in_block_pos = cursor.position() - block.position()
+    for match in token_pattern.finditer(line_text):
+        if match.start() <= in_block_pos <= match.end():
+            return True
+    return False
+
+
 def _variable_token_id_at_editor_position(
     editor: QPlainTextEdit,
     pos: QPoint,
@@ -296,6 +315,20 @@ def _icon_token_id_at_editor_position(
     pos: QPoint,
 ) -> Optional[int]:
     return _token_id_at_editor_position(editor, pos, ICON_TOKEN_RE)
+
+
+def _party_token_id_at_editor_position(
+    editor: QPlainTextEdit,
+    pos: QPoint,
+) -> Optional[int]:
+    return _token_id_at_editor_position(editor, pos, PARTY_TOKEN_RE)
+
+
+def _currency_token_at_editor_position(
+    editor: QPlainTextEdit,
+    pos: QPoint,
+) -> bool:
+    return _token_present_at_editor_position(editor, pos, CURRENCY_TOKEN_RE)
 
 
 class ControlCodeHighlighter(QSyntaxHighlighter):
@@ -338,6 +371,11 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
             QColor(variable_placeholder_color))
         icon_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
 
+        party_placeholder_format = QTextCharFormat()
+        party_placeholder_format.setForeground(
+            QColor(variable_placeholder_color))
+        party_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
+
         name_placeholder_format = QTextCharFormat()
         name_placeholder_format.setForeground(QColor(name_placeholder_color))
         name_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
@@ -348,6 +386,8 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
             (re.compile(r"\\[\\{}.$|!><^]"), symbol_format),
             (re.compile(r"<(?:VAR:|V)\d+>"), variable_placeholder_format),
             (re.compile(r"<(?:ICON:|I)\d+>"), icon_placeholder_format),
+            (re.compile(r"<(?:PARTY:|P)\d+>"), party_placeholder_format),
+            (re.compile(r"<(?:CUR:|G)>"), symbol_format),
             (re.compile(r"<(?:NAME:|N)\d+>"), name_placeholder_format),
         ]
 
@@ -1022,6 +1062,11 @@ class ItemNameDescriptionWidget(QFrame):
         icon_id = _icon_token_id_at_editor_position(editor, event_pos)
         if icon_id is not None:
             return f"\\I[{icon_id}] -> icon[{icon_id}]"
+        party_id = _party_token_id_at_editor_position(editor, event_pos)
+        if party_id is not None:
+            return f"\\P[{party_id}] -> party member[{party_id}]"
+        if _currency_token_at_editor_position(editor, event_pos):
+            return r"\G -> currency unit"
         return ""
 
     def _handle_variable_tooltip_event(self, editor: QPlainTextEdit, event: QEvent) -> bool:
@@ -1525,6 +1570,11 @@ class DialogueBlockWidget(QFrame):
         icon_id = _icon_token_id_at_editor_position(self.editor, event_pos)
         if icon_id is not None:
             return f"\\I[{icon_id}] -> icon[{icon_id}]"
+        party_id = _party_token_id_at_editor_position(self.editor, event_pos)
+        if party_id is not None:
+            return f"\\P[{party_id}] -> party member[{party_id}]"
+        if _currency_token_at_editor_position(self.editor, event_pos):
+            return r"\G -> currency unit"
         return ""
 
     def _handle_variable_tooltip_event(self, event: QEvent) -> bool:
