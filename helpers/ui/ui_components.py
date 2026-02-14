@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QTreeWidget,
+    QTreeWidgetItem,
     QToolTip,
     QTextEdit,
     QVBoxLayout,
@@ -209,6 +211,15 @@ class VariableLengthManagerHost(Protocol):
     def _set_default_variable_length_estimate(self, value: int) -> int: ...
     def _set_variable_length_override(self, variable_id: int, length: int) -> int: ...
     def _clear_variable_length_override(self, variable_id: int) -> bool: ...
+
+
+def _preview_dialog_text(value: str, limit: int = 76) -> str:
+    cleaned = " ".join((value or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    if limit <= 3:
+        return cleaned[:limit]
+    return cleaned[: limit - 3] + "..."
 
 
 def is_dark_palette() -> bool:
@@ -756,6 +767,243 @@ class VariableLengthManagerDialog(QDialog):
         self.editor._set_default_variable_length_estimate(int(new_default))
         selected_id = self._selected_variable_id()
         self._refresh_list(select_variable_id=selected_id)
+
+
+class ExactMatchReviewDialog(QDialog):
+    def __init__(
+        self,
+        parent: QWidget,
+        *,
+        current_block_label: str,
+        current_snapshot: dict[str, str],
+        match_rows: list[dict[str, Any]],
+        color_code_resolver: Optional[Callable[[int], str]] = None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Exact Match Review")
+        self.resize(920, 680)
+        self.match_rows = list(match_rows)
+        self.selected_match_row: Optional[dict[str, Any]] = None
+        self.selected_action: str = ""
+
+        root = QVBoxLayout(self)
+        info = QLabel(
+            "Inspect exact JP matches with neighboring blocks before reusing translations."
+        )
+        info.setWordWrap(True)
+        root.addWidget(info)
+
+        self.current_block_label = QLabel(current_block_label)
+        self.current_block_label.setObjectName("MetaDim")
+        root.addWidget(self.current_block_label)
+
+        self.current_preview = QPlainTextEdit()
+        self.current_preview.setReadOnly(True)
+        self.current_preview.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        preview_font = QFont("Consolas")
+        if not preview_font.exactMatch():
+            preview_font = QFont("Courier New")
+        preview_font.setStyleHint(QFont.StyleHint.Monospace)
+        preview_font.setPointSize(10)
+        self.current_preview.setFont(preview_font)
+        self.current_preview_highlighter = ControlCodeHighlighter(
+            self.current_preview.document(),
+            is_dark_palette(),
+            color_code_resolver=color_code_resolver,
+        )
+        root.addWidget(self.current_preview, 1)
+
+        self.match_tree = QTreeWidget()
+        self.match_tree.setRootIsDecorated(True)
+        self.match_tree.setUniformRowHeights(True)
+        self.match_tree.setAlternatingRowColors(True)
+        self.match_tree.setColumnCount(5)
+        self.match_tree.setHeaderLabels(
+            ["EN Variant", "Count", "File", "Block", "Neighbors"]
+        )
+        self.match_tree.currentItemChanged.connect(
+            lambda _current, _previous: self._on_selected_match_changed()
+        )
+        self.match_tree.setSortingEnabled(False)
+        self.match_tree.header().setStretchLastSection(False)
+        self.match_tree.setColumnWidth(0, 420)
+        self.match_tree.setColumnWidth(1, 70)
+        self.match_tree.setColumnWidth(2, 210)
+        self.match_tree.setColumnWidth(3, 70)
+        self.match_tree.setColumnWidth(4, 100)
+        root.addWidget(self.match_tree, 1)
+
+        self.match_preview = QPlainTextEdit()
+        self.match_preview.setReadOnly(True)
+        self.match_preview.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.match_preview.setFont(preview_font)
+        self.match_preview_highlighter = ControlCodeHighlighter(
+            self.match_preview.document(),
+            is_dark_palette(),
+            color_code_resolver=color_code_resolver,
+        )
+        root.addWidget(self.match_preview, 1)
+
+        actions = QHBoxLayout()
+        self.selected_to_current_btn = QPushButton("Use Selected -> Current")
+        self.selected_to_all_btn = QPushButton("Use Selected -> All Listed")
+        self.current_to_selected_btn = QPushButton("Use Current -> Selected")
+        self.current_to_all_btn = QPushButton("Use Current -> All Listed")
+        close_btn = QPushButton("Close")
+
+        self.selected_to_current_btn.clicked.connect(self._accept_selected_to_current)
+        self.selected_to_all_btn.clicked.connect(self._accept_selected_to_all)
+        self.current_to_selected_btn.clicked.connect(self._accept_current_to_selected)
+        self.current_to_all_btn.clicked.connect(self._accept_current_to_all)
+        close_btn.clicked.connect(self.reject)
+
+        actions.addWidget(self.selected_to_current_btn)
+        actions.addWidget(self.selected_to_all_btn)
+        actions.addWidget(self.current_to_selected_btn)
+        actions.addWidget(self.current_to_all_btn)
+        actions.addStretch(1)
+        actions.addWidget(close_btn)
+        root.addLayout(actions)
+
+        self.current_preview.setPlainText(
+            self._build_snapshot_text("Current block", current_snapshot)
+        )
+        self._populate_list()
+        self._sync_action_buttons()
+
+    def _build_snapshot_text(self, title: str, snapshot: dict[str, str]) -> str:
+        prev_source = snapshot.get("prev_source", "").strip()
+        curr_source = snapshot.get("current_source", "").strip()
+        next_source = snapshot.get("next_source", "").strip()
+        prev_tl = snapshot.get("prev_tl", "").strip()
+        curr_tl = snapshot.get("current_tl", "").strip()
+        next_tl = snapshot.get("next_tl", "").strip()
+        lines = [
+            title,
+            "",
+            f"Prev JP: {prev_source or '-'}",
+            f"Curr JP: {curr_source or '-'}",
+            f"Next JP: {next_source or '-'}",
+            "",
+            f"Prev EN: {prev_tl or '-'}",
+            f"Curr EN: {curr_tl or '-'}",
+            f"Next EN: {next_tl or '-'}",
+        ]
+        return "\n".join(lines)
+
+    def _populate_list(self) -> None:
+        self.match_tree.clear()
+        grouped_rows: dict[str, list[dict[str, Any]]] = {}
+        for row in self.match_rows:
+            variant = str(row.get("current_tl", "")).strip() or "(empty)"
+            grouped_rows.setdefault(variant, []).append(row)
+
+        sorted_groups = sorted(
+            grouped_rows.items(),
+            key=lambda entry: (-len(entry[1]), entry[0]),
+        )
+
+        first_child_to_select: Optional[QTreeWidgetItem] = None
+        for variant, rows in sorted_groups:
+            group_item = QTreeWidgetItem(
+                [
+                    _preview_dialog_text(variant),
+                    str(len(rows)),
+                    "",
+                    "",
+                    "",
+                ]
+            )
+            group_item.setData(0, Qt.ItemDataRole.UserRole, None)
+            self.match_tree.addTopLevelItem(group_item)
+            for row in sorted(
+                rows,
+                key=lambda value: (
+                    str(value.get("file", "")),
+                    int(value.get("block_number", 0)),
+                ),
+            ):
+                file_name = str(row.get("file", ""))
+                block_number = int(row.get("block_number", 0))
+                same_neighbors = bool(row.get("same_neighbors", False))
+                child = QTreeWidgetItem(
+                    [
+                        _preview_dialog_text(str(row.get("current_tl", "")).strip() or "(empty)"),
+                        "",
+                        file_name,
+                        str(block_number),
+                        "same" if same_neighbors else "diff",
+                    ]
+                )
+                child.setData(0, Qt.ItemDataRole.UserRole, row)
+                group_item.addChild(child)
+                if first_child_to_select is None:
+                    first_child_to_select = child
+            group_item.setExpanded(True)
+
+        if first_child_to_select is not None:
+            self.match_tree.setCurrentItem(first_child_to_select)
+        else:
+            self.match_preview.setPlainText("No exact matches available.")
+
+    def _selected_row(self) -> Optional[dict[str, Any]]:
+        item = self.match_tree.currentItem()
+        if item is None:
+            return None
+        row = item.data(0, Qt.ItemDataRole.UserRole)
+        if isinstance(row, dict):
+            return row
+        return None
+
+    def _on_selected_match_changed(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            self.match_preview.setPlainText(
+                "Select a specific match row to inspect neighbors."
+            )
+        else:
+            file_name = str(row.get("file", ""))
+            block_number = int(row.get("block_number", 0))
+            title = f"Match block {file_name}#{block_number}"
+            self.match_preview.setPlainText(self._build_snapshot_text(title, row))
+        self._sync_action_buttons()
+
+    def _sync_action_buttons(self) -> None:
+        has_selection = self._selected_row() is not None
+        has_rows = len(self.match_rows) > 0
+        self.selected_to_current_btn.setEnabled(has_selection)
+        self.selected_to_all_btn.setEnabled(has_selection and has_rows)
+        self.current_to_selected_btn.setEnabled(has_selection)
+        self.current_to_all_btn.setEnabled(has_rows)
+
+    def _accept_selected_to_current(self) -> None:
+        selected = self._selected_row()
+        if selected is None:
+            return
+        self.selected_match_row = selected
+        self.selected_action = "selected_to_current"
+        self.accept()
+
+    def _accept_current_to_selected(self) -> None:
+        selected = self._selected_row()
+        if selected is None:
+            return
+        self.selected_match_row = selected
+        self.selected_action = "current_to_selected"
+        self.accept()
+
+    def _accept_selected_to_all(self) -> None:
+        selected = self._selected_row()
+        if selected is None:
+            return
+        self.selected_match_row = selected
+        self.selected_action = "selected_to_all"
+        self.accept()
+
+    def _accept_current_to_all(self) -> None:
+        self.selected_match_row = None
+        self.selected_action = "current_to_all"
+        self.accept()
 
 
 class ItemNameDescriptionWidget(QFrame):
@@ -2267,7 +2515,7 @@ class DialogueBlockWidget(QFrame):
             option_label = "option" if option_count == 1 else "options"
             view_text = "EN choices" if self.translator_mode else "JP choices"
             meta_html = (
-                f"Type: Choice (code 102/402) | "
+                f"Type: Choice | "
                 f"{option_count} {option_label} | "
                 f"View: {html.escape(view_text)}"
             )

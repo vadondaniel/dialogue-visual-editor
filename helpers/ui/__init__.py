@@ -4,6 +4,7 @@ from .mass_translate_dialog import MassTranslateDialog
 from .ui_components import (
     ControlCodeHighlighter,
     DialogueBlockWidget,
+    ExactMatchReviewDialog,
     ItemNameDescriptionWidget,
     SpeakerManagerDialog,
     VariableLengthManagerDialog,
@@ -13,6 +14,7 @@ from .ui_components import (
 __all__ = [
     "ControlCodeHighlighter",
     "DialogueBlockWidget",
+    "ExactMatchReviewDialog",
     "ItemNameDescriptionWidget",
     "MassTranslateDialog",
     "SpeakerManagerDialog",

@@ -76,6 +76,7 @@ try:
     from .helpers.ui import (
         ControlCodeHighlighter,
         DialogueBlockWidget,
+        ExactMatchReviewDialog,
         ItemNameDescriptionWidget,
         MassTranslateDialog,
         SpeakerManagerDialog,
@@ -110,6 +111,7 @@ except ImportError:
     from helpers.ui import (
         ControlCodeHighlighter,
         DialogueBlockWidget,
+        ExactMatchReviewDialog,
         ItemNameDescriptionWidget,
         MassTranslateDialog,
         SpeakerManagerDialog,
@@ -615,10 +617,23 @@ class DialogueVisualEditor(
 
         self.translator_reference_exact_label = QLabel("")
         self.translator_reference_exact_label.setWordWrap(True)
+        self.translator_reference_exact_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         detail_content_layout.addWidget(self.translator_reference_exact_label)
+        self.translator_review_exact_matches_btn = QPushButton(
+            "Review Exact Matches..."
+        )
+        self.translator_review_exact_matches_btn.clicked.connect(
+            self._open_exact_match_review_dialog
+        )
+        detail_content_layout.addWidget(self.translator_review_exact_matches_btn)
 
         self.translator_reference_similar_label = QLabel("")
         self.translator_reference_similar_label.setWordWrap(True)
+        self.translator_reference_similar_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         detail_content_layout.addWidget(
             self.translator_reference_similar_label)
 
@@ -1565,6 +1580,7 @@ class DialogueVisualEditor(
         self.translator_speaker_jp_row.setVisible(not actor_mode)
         self.translator_speaker_en_row.setVisible(not actor_mode)
         self.translator_reference_exact_label.setVisible(not actor_mode)
+        self.translator_review_exact_matches_btn.setVisible(not actor_mode)
         self.translator_reference_similar_label.setVisible(not actor_mode)
         self.translator_source_label.setText(
             f"{field_label} (JP)" if actor_mode else "Source (JP)")
@@ -1586,6 +1602,7 @@ class DialogueVisualEditor(
             self.translator_source_view.setPlainText("")
             self.translator_reference_exact_label.setText("")
             self.translator_reference_similar_label.setText("")
+            self.translator_review_exact_matches_btn.setEnabled(False)
             self.translator_source_view.setExtraSelections([])
             return
 
@@ -1632,6 +1649,7 @@ class DialogueVisualEditor(
         if actor_mode:
             self.translator_reference_exact_label.setText("")
             self.translator_reference_similar_label.setText("")
+            self.translator_review_exact_matches_btn.setEnabled(False)
         else:
             exact, similar = self.current_reference_map.get(
                 segment.uid,
@@ -1642,10 +1660,287 @@ class DialogueVisualEditor(
             )
             self.translator_reference_exact_label.setText(exact)
             self.translator_reference_similar_label.setText(similar)
+            self.translator_review_exact_matches_btn.setEnabled(
+                not exact.startswith("Exact JP matches: none.")
+            )
         self._apply_translator_source_mismatch_highlighting(
             segment,
             actor_mode=actor_mode,
         )
+
+    def _segment_for_exact_match_row(self, row: dict[str, Any]) -> Optional[DialogueSegment]:
+        path = row.get("path")
+        index_raw = row.get("segment_index")
+        if not isinstance(path, Path):
+            return None
+        if not isinstance(index_raw, int):
+            return None
+        session = self.sessions.get(path)
+        if session is None:
+            return None
+        if index_raw < 0 or index_raw >= len(session.segments):
+            return None
+        return session.segments[index_raw]
+
+    def _snapshot_for_segment_index(
+        self,
+        session: FileSession,
+        segment_index: int,
+    ) -> dict[str, str]:
+        def text_for_index(index: int) -> tuple[str, str]:
+            if index < 0 or index >= len(session.segments):
+                return "", ""
+            segment = session.segments[index]
+            source_text = "\n".join(self._segment_source_lines_for_translation(segment)).strip()
+            tl_text = "\n".join(self._segment_translation_lines_for_translation(segment)).strip()
+            return source_text, tl_text
+
+        prev_source, prev_tl = text_for_index(segment_index - 1)
+        curr_source, curr_tl = text_for_index(segment_index)
+        next_source, next_tl = text_for_index(segment_index + 1)
+        return {
+            "prev_source": prev_source,
+            "current_source": curr_source,
+            "next_source": next_source,
+            "prev_tl": prev_tl,
+            "current_tl": curr_tl,
+            "next_tl": next_tl,
+        }
+
+    def _exact_match_review_rows_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        exact_groups: dict[str, list[dict[str, Any]]] = {}
+        for row_path, row_session in self.sessions.items():
+            for segment_index, row_segment in enumerate(row_session.segments):
+                source_text = self._segment_reference_source_text(row_segment).strip()
+                if not source_text:
+                    continue
+                row = {
+                    "path": row_path,
+                    "uid": row_segment.uid,
+                    "file": row_path.name,
+                    "block_number": segment_index + 1,
+                    "segment_index": segment_index,
+                    "source_text": source_text,
+                }
+                rows.append(row)
+                exact_groups.setdefault(source_text, []).append(row)
+
+        own_source = self._segment_reference_source_text(segment).strip()
+        if not own_source:
+            return []
+        exact_pool, _is_cross_file = self._exact_reference_candidates(
+            own_source=own_source,
+            own_path=session.path,
+            own_uid=segment.uid,
+            exact_groups=exact_groups,
+        )
+        current_index = next(
+            (idx for idx, item in enumerate(session.segments) if item.uid == segment.uid),
+            -1,
+        )
+        current_snapshot = (
+            self._snapshot_for_segment_index(session, current_index)
+            if current_index >= 0
+            else {}
+        )
+
+        review_rows: list[dict[str, Any]] = []
+        for row in exact_pool:
+            path = row["path"]
+            segment_index = row["segment_index"]
+            if not isinstance(path, Path) or not isinstance(segment_index, int):
+                continue
+            row_session = self.sessions.get(path)
+            if row_session is None:
+                continue
+            snapshot = self._snapshot_for_segment_index(row_session, segment_index)
+            review_rows.append(
+                {
+                    **row,
+                    **snapshot,
+                    "same_neighbors": (
+                        current_snapshot.get("prev_source", "").strip()
+                        == snapshot.get("prev_source", "").strip()
+                        and current_snapshot.get("next_source", "").strip()
+                        == snapshot.get("next_source", "").strip()
+                    ),
+                }
+            )
+
+        review_rows.sort(
+            key=lambda row: (
+                natural_sort_key(str(row.get("file", ""))),
+                int(row.get("block_number", 0)),
+            )
+        )
+        return review_rows
+
+    def _apply_translation_lines_between_segments(
+        self,
+        source_segment: DialogueSegment,
+        target_rows: list[dict[str, Any]],
+    ) -> int:
+        source_visible_lines = self._segment_translation_lines_for_translation(source_segment)
+        touched_paths: set[Path] = set()
+        changed_count = 0
+
+        for row in target_rows:
+            target_segment = self._segment_for_exact_match_row(row)
+            if target_segment is None:
+                continue
+            target_path = row.get("path")
+            if not isinstance(target_path, Path):
+                continue
+            new_lines = self._compose_translation_lines_for_segment(
+                target_segment,
+                source_visible_lines,
+            )
+            normalized_existing = self._normalize_translation_lines(target_segment.translation_lines)
+            normalized_new = self._normalize_translation_lines(new_lines)
+            if normalized_existing == normalized_new:
+                continue
+            target_segment.translation_lines = list(normalized_new)
+            touched_paths.add(target_path)
+            changed_count += 1
+
+        for path in touched_paths:
+            touched_session = self.sessions.get(path)
+            if touched_session is not None:
+                self._refresh_dirty_state(touched_session)
+
+        if self.current_path is not None:
+            current_session = self.sessions.get(self.current_path)
+            if current_session is not None:
+                self._render_session(current_session, preserve_scroll=True)
+        else:
+            self._refresh_translator_detail_panel()
+        return changed_count
+
+    def _open_exact_match_review_dialog(self) -> None:
+        if not self._is_translator_mode():
+            return
+        if self.current_path is None:
+            return
+        current_session = self.sessions.get(self.current_path)
+        if current_session is None or self._is_name_index_session(current_session):
+            return
+        if not self.selected_segment_uid:
+            QMessageBox.information(
+                self,
+                "No block selected",
+                "Select a dialogue block first.",
+            )
+            return
+        current_segment = self.current_segment_lookup.get(self.selected_segment_uid)
+        if current_segment is None:
+            return
+
+        review_rows = self._exact_match_review_rows_for_segment(
+            current_session,
+            current_segment,
+        )
+        if not review_rows:
+            QMessageBox.information(
+                self,
+                "No exact matches",
+                "No exact JP matches were found for the selected block.",
+            )
+            return
+
+        current_index = next(
+            (idx for idx, item in enumerate(current_session.segments) if item.uid == current_segment.uid),
+            -1,
+        )
+        if current_index < 0:
+            return
+        current_snapshot = self._snapshot_for_segment_index(current_session, current_index)
+        block_number = self._block_number_for_uid(current_segment.uid)
+        current_label = (
+            f"Current: {current_session.path.name}#{block_number}"
+            if block_number is not None
+            else f"Current: {current_session.path.name}"
+        )
+        dialog = ExactMatchReviewDialog(
+            self,
+            current_block_label=current_label,
+            current_snapshot=current_snapshot,
+            match_rows=review_rows,
+            color_code_resolver=self._color_for_rpgm_code,
+        )
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return
+        action = dialog.selected_action
+        selected_row = dialog.selected_match_row
+
+        changed = 0
+        if action == "selected_to_current":
+            if selected_row is None:
+                return
+            source_segment = self._segment_for_exact_match_row(selected_row)
+            if source_segment is None:
+                return
+            target_rows = [
+                {
+                    "path": current_session.path,
+                    "segment_index": current_index,
+                }
+            ]
+            changed = self._apply_translation_lines_between_segments(
+                source_segment=source_segment,
+                target_rows=target_rows,
+            )
+            self.statusBar().showMessage(
+                "Applied selected exact-match translation to current block."
+                if changed > 0
+                else "Current block already matched selected translation."
+            )
+            return
+
+        if action == "selected_to_all":
+            if selected_row is None:
+                return
+            source_segment = self._segment_for_exact_match_row(selected_row)
+            if source_segment is None:
+                return
+            changed = self._apply_translation_lines_between_segments(
+                source_segment=source_segment,
+                target_rows=review_rows,
+            )
+            target_label = "block" if changed == 1 else "blocks"
+            self.statusBar().showMessage(
+                f"Applied selected exact-match translation to {changed} listed {target_label}."
+            )
+            return
+
+        if action == "current_to_selected":
+            if selected_row is None:
+                return
+            changed = self._apply_translation_lines_between_segments(
+                source_segment=current_segment,
+                target_rows=[selected_row],
+            )
+            self.statusBar().showMessage(
+                "Applied current block translation to selected exact match."
+                if changed > 0
+                else "Selected exact match already had current translation."
+            )
+            return
+
+        if action == "current_to_all":
+            changed = self._apply_translation_lines_between_segments(
+                source_segment=current_segment,
+                target_rows=review_rows,
+            )
+            target_label = "block" if changed == 1 else "blocks"
+            self.statusBar().showMessage(
+                f"Applied current block translation to {changed} exact-match {target_label}."
+            )
+            return
 
     def _on_block_activated(self, uid: str) -> None:
         if uid not in self.current_segment_lookup:

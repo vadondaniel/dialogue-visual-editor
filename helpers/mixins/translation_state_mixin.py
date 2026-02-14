@@ -22,7 +22,6 @@ from ..core.text_utils import (
     preview_text,
     similarity_signature,
     split_lines_preserve_empty,
-    unique_preserve_order,
 )
 
 if TYPE_CHECKING:
@@ -622,6 +621,92 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 segment.inserted = False
         setattr(session, "_original_tl_order", [segment.tl_uid for segment in session.segments])
 
+    def _exact_reference_candidates(
+        self,
+        own_source: str,
+        own_path: Path,
+        own_uid: str,
+        exact_groups: dict[str, list[dict[str, Any]]],
+    ) -> tuple[list[dict[str, Any]], bool]:
+        exact_candidates = [
+            row for row in exact_groups.get(own_source, [])
+            if not (row["path"] == own_path and row["uid"] == own_uid)
+        ]
+        exact_cross_file = [
+            row for row in exact_candidates if row["path"] != own_path]
+        if exact_cross_file:
+            return exact_cross_file, True
+        return exact_candidates, False
+
+    def _build_exact_reference_summary(
+        self,
+        own_source: str,
+        own_path: Path,
+        own_uid: str,
+        exact_groups: dict[str, list[dict[str, Any]]],
+    ) -> str:
+        exact_pool, is_cross_file = self._exact_reference_candidates(
+            own_source=own_source,
+            own_path=own_path,
+            own_uid=own_uid,
+            exact_groups=exact_groups,
+        )
+        if not exact_pool:
+            return "Exact JP matches: none."
+
+        translated_rows: list[dict[str, Any]] = []
+        variant_counts: dict[str, int] = {}
+        variant_first_seen: dict[str, int] = {}
+        variant_example_ref: dict[str, str] = {}
+
+        for index, row in enumerate(exact_pool):
+            translation = cast(str, row["translation_text"]).strip()
+            if not translation:
+                continue
+            translated_rows.append(row)
+            if translation not in variant_counts:
+                variant_counts[translation] = 0
+                variant_first_seen[translation] = index
+                variant_example_ref[translation] = f"{row['file']}#{row['block_number']}"
+            variant_counts[translation] += 1
+
+        scope = "other files" if is_cross_file else "this file/folder"
+        block_label = "block" if len(exact_pool) == 1 else "blocks"
+        summary = f"Exact JP matches in {scope}: {len(exact_pool)} {block_label}."
+
+        if not translated_rows:
+            return summary + " No EN translations in matches yet."
+
+        ranked_variants = sorted(
+            variant_counts.keys(),
+            key=lambda text: (
+                -variant_counts[text],
+                variant_first_seen.get(text, 0),
+            ),
+        )
+
+        variant_label = "variant" if len(ranked_variants) == 1 else "variants"
+        summary += (
+            f" Filled EN: {len(translated_rows)}/{len(exact_pool)}."
+            f" {len(ranked_variants)} {variant_label}."
+        )
+
+        top_variants: list[str] = []
+        for translation in ranked_variants[:3]:
+            count = variant_counts[translation]
+            sample_ref = variant_example_ref.get(translation, "")
+            top_variants.append(
+                f"x{count} {preview_text(translation, 64)} ({sample_ref})"
+            )
+        if top_variants:
+            summary += " Top EN: " + " | ".join(top_variants)
+
+        empty_count = len(exact_pool) - len(translated_rows)
+        if empty_count > 0:
+            empty_label = "entry" if empty_count == 1 else "entries"
+            summary += f" Empty EN: {empty_count} {empty_label}."
+        return summary
+
     def _build_reference_summary_for_session(self, session: FileSession) -> dict[str, tuple[str, str]]:
         rows: list[dict[str, Any]] = []
         for row_path, row_session in self.sessions.items():
@@ -657,35 +742,12 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             own_path = session.path
             own_uid = segment.uid
 
-            exact_candidates = [
-                row for row in exact_groups.get(own_source, [])
-                if not (row["path"] == own_path and row["uid"] == own_uid)
-            ]
-            exact_cross_file = [
-                row for row in exact_candidates if row["path"] != own_path]
-            exact_pool = exact_cross_file if exact_cross_file else exact_candidates
-            if exact_pool:
-                en_variants = unique_preserve_order(
-                    [cast(str, row["translation_text"])
-                     for row in exact_pool if cast(str, row["translation_text"])]
-                )
-                samples = []
-                for row in exact_pool[:3]:
-                    sample_tl = cast(
-                        str, row["translation_text"]) or "(no EN yet)"
-                    samples.append(
-                        f"{row['file']}#{row['block_number']}: {preview_text(sample_tl, 48)}"
-                    )
-                exact_scope = "in other files" if exact_cross_file else "in this file/folder"
-                block_label = "block" if len(exact_pool) == 1 else "blocks"
-                variant_label = "variant" if len(en_variants) == 1 else "variants"
-                exact_summary = (
-                    f"Exact JP matches {exact_scope}: {len(exact_pool)} {block_label}, EN {variant_label}: {len(en_variants)}."
-                )
-                if samples:
-                    exact_summary += " " + " | ".join(samples)
-            else:
-                exact_summary = "Exact JP matches: none."
+            exact_summary = self._build_exact_reference_summary(
+                own_source=own_source,
+                own_path=own_path,
+                own_uid=own_uid,
+                exact_groups=exact_groups,
+            )
 
             similar_signature = similarity_signature(own_source)
             similar_rows = [
