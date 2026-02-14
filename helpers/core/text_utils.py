@@ -50,6 +50,7 @@ NAME_CONNECTOR_WORDS = {
 }
 _FONT_SIZE_SET_TOKEN_RE = re.compile(r"^\\[Ff][Ss]\[(\d+)\]$")
 _VARIABLE_TOKEN_RE = re.compile(r"^\\[Vv]\[(\d+)\]$")
+_ICON_TOKEN_RE = re.compile(r"^\\[Ii]\[(\d+)\]$")
 _DEFAULT_FONT_SIZE = 28
 _MIN_FONT_SIZE = 1
 _MAX_FONT_SIZE = 512
@@ -61,6 +62,7 @@ _LINE_HEIGHT_PADDING = 8.0
 _FLOAT_EPSILON = 1e-6
 _DEFAULT_VARIABLE_VISIBLE_LENGTH = 4
 _MAX_VARIABLE_VISIBLE_LENGTH = 64
+_DEFAULT_ICON_VISIBLE_LENGTH = 2
 _VARIABLE_VISIBLE_LENGTH_RESOLVER: Optional[Callable[[int], int]] = None
 
 
@@ -152,6 +154,13 @@ def _variable_visible_units_for_token(token: str, current_font_size: int) -> flo
     return float(estimated_chars) * _font_scale_for_size(current_font_size)
 
 
+def _icon_visible_units_for_token(token: str, current_font_size: int) -> float:
+    match = _ICON_TOKEN_RE.match(token)
+    if match is None:
+        return 0.0
+    return float(_DEFAULT_ICON_VISIBLE_LENGTH) * _font_scale_for_size(current_font_size)
+
+
 def _clamp_font_size(value: int) -> int:
     return clamp_message_font_size(value)
 
@@ -238,6 +247,9 @@ def parse_units_for_measure(text: str) -> list[dict[str, Any]]:
         token = match.group(0)
         token_visible = _variable_visible_units_for_token(
             token, current_font_size)
+        if token_visible <= _FLOAT_EPSILON:
+            token_visible = _icon_visible_units_for_token(
+                token, current_font_size)
         units.append({"text": token, "visible": token_visible, "is_newline": False})
         current_font_size = _next_font_size_for_token(token, current_font_size)
         cursor = match.end()

@@ -21,6 +21,7 @@ from ..core.text_utils import (
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
 NAME_TOKEN_RE = re.compile(r"\\[Nn]\[(\d+)\]")
 VAR_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
+ICON_TOKEN_RE = re.compile(r"\\[Ii]\[(\d+)\]")
 COLOR_TOKEN_RE = re.compile(r"\\[Cc]\[(\d+)\]")
 HIDDEN_STYLE_TOKEN_RE = re.compile(
     r"""
@@ -504,6 +505,7 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             unresolved_placeholder=True,
         )
         resolved = VAR_TOKEN_RE.sub(lambda m: f"<V{m.group(1)}>", resolved)
+        resolved = ICON_TOKEN_RE.sub(lambda m: f"<I{m.group(1)}>", resolved)
 
         parts: list[str] = []
         cursor = 0
@@ -612,6 +614,7 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             unresolved_placeholder=True,
         )
         resolved = VAR_TOKEN_RE.sub(lambda m: f"<V{m.group(1)}>", resolved)
+        resolved = ICON_TOKEN_RE.sub(lambda m: f"<I{m.group(1)}>", resolved)
 
         output_parts: list[str] = []
         spans: list[MaskedStyleSpan] = []

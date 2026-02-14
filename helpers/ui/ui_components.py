@@ -53,6 +53,7 @@ from ..core.text_utils import (
 
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
 VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
+ICON_TOKEN_RE = re.compile(r"\\[Ii]\[(\d+)\]")
 ControlMismatchStatus = Literal["matched", "missing", "extra"]
 ControlMismatchSpan = tuple[int, int, ControlMismatchStatus]
 
@@ -263,9 +264,10 @@ def _split_masked_text_and_spans(
     return lines, spans_per_line
 
 
-def _variable_token_id_at_editor_position(
+def _token_id_at_editor_position(
     editor: QPlainTextEdit,
     pos: QPoint,
+    token_pattern: re.Pattern[str],
 ) -> Optional[int]:
     cursor = editor.cursorForPosition(pos)
     block = cursor.block()
@@ -273,13 +275,27 @@ def _variable_token_id_at_editor_position(
         return None
     line_text = block.text()
     in_block_pos = cursor.position() - block.position()
-    for match in VARIABLE_TOKEN_RE.finditer(line_text):
+    for match in token_pattern.finditer(line_text):
         if match.start() <= in_block_pos <= match.end():
             try:
                 return int(match.group(1))
             except Exception:
                 return None
     return None
+
+
+def _variable_token_id_at_editor_position(
+    editor: QPlainTextEdit,
+    pos: QPoint,
+) -> Optional[int]:
+    return _token_id_at_editor_position(editor, pos, VARIABLE_TOKEN_RE)
+
+
+def _icon_token_id_at_editor_position(
+    editor: QPlainTextEdit,
+    pos: QPoint,
+) -> Optional[int]:
+    return _token_id_at_editor_position(editor, pos, ICON_TOKEN_RE)
 
 
 class ControlCodeHighlighter(QSyntaxHighlighter):
@@ -317,6 +333,11 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
             QColor(variable_placeholder_color))
         variable_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
 
+        icon_placeholder_format = QTextCharFormat()
+        icon_placeholder_format.setForeground(
+            QColor(variable_placeholder_color))
+        icon_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
+
         name_placeholder_format = QTextCharFormat()
         name_placeholder_format.setForeground(QColor(name_placeholder_color))
         name_placeholder_format.setFontWeight(QFont.Weight.DemiBold)
@@ -326,6 +347,7 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
             (re.compile(r"\\[A-Za-z]+"), command_format),
             (re.compile(r"\\[\\{}.$|!><^]"), symbol_format),
             (re.compile(r"<(?:VAR:|V)\d+>"), variable_placeholder_format),
+            (re.compile(r"<(?:ICON:|I)\d+>"), icon_placeholder_format),
             (re.compile(r"<(?:NAME:|N)\d+>"), name_placeholder_format),
         ]
 
@@ -988,16 +1010,19 @@ class ItemNameDescriptionWidget(QFrame):
 
     def _variable_tooltip_text(self, editor: QPlainTextEdit, event_pos: QPoint) -> str:
         variable_id = _variable_token_id_at_editor_position(editor, event_pos)
-        if variable_id is None:
-            return ""
-        details = (
-            self.variable_label_resolver(variable_id).strip()
-            if self.variable_label_resolver is not None
-            else ""
-        )
-        if details:
-            return f"\\V[{variable_id}] -> {details}"
-        return f"\\V[{variable_id}] -> system.variables[{variable_id}]"
+        if variable_id is not None:
+            details = (
+                self.variable_label_resolver(variable_id).strip()
+                if self.variable_label_resolver is not None
+                else ""
+            )
+            if details:
+                return f"\\V[{variable_id}] -> {details}"
+            return f"\\V[{variable_id}] -> system.variables[{variable_id}]"
+        icon_id = _icon_token_id_at_editor_position(editor, event_pos)
+        if icon_id is not None:
+            return f"\\I[{icon_id}] -> icon[{icon_id}]"
+        return ""
 
     def _handle_variable_tooltip_event(self, editor: QPlainTextEdit, event: QEvent) -> bool:
         if event.type() != QEvent.Type.ToolTip:
@@ -1488,16 +1513,19 @@ class DialogueBlockWidget(QFrame):
 
     def _variable_tooltip_text(self, event_pos: QPoint) -> str:
         variable_id = _variable_token_id_at_editor_position(self.editor, event_pos)
-        if variable_id is None:
-            return ""
-        details = (
-            self.variable_label_resolver(variable_id).strip()
-            if self.variable_label_resolver is not None
-            else ""
-        )
-        if details:
-            return f"\\V[{variable_id}] -> {details}"
-        return f"\\V[{variable_id}] -> system.variables[{variable_id}]"
+        if variable_id is not None:
+            details = (
+                self.variable_label_resolver(variable_id).strip()
+                if self.variable_label_resolver is not None
+                else ""
+            )
+            if details:
+                return f"\\V[{variable_id}] -> {details}"
+            return f"\\V[{variable_id}] -> system.variables[{variable_id}]"
+        icon_id = _icon_token_id_at_editor_position(self.editor, event_pos)
+        if icon_id is not None:
+            return f"\\I[{icon_id}] -> icon[{icon_id}]"
+        return ""
 
     def _handle_variable_tooltip_event(self, event: QEvent) -> bool:
         if event.type() != QEvent.Type.ToolTip:
