@@ -840,7 +840,7 @@ class DialogueBlockWidget(QFrame):
     delete_requested = Signal(str)
     reset_requested = Signal(str)
     split_overflow_requested = Signal(str)
-    line1_inference_override_changed = Signal(str, bool)
+    line1_inference_override_changed = Signal(str, bool, bool)
 
     def __init__(
         self,
@@ -1080,7 +1080,7 @@ class DialogueBlockWidget(QFrame):
         self.line1_not_speaker_button = QPushButton("Line1 Not Speaker")
         self.line1_not_speaker_button.setCheckable(True)
         self.line1_not_speaker_button.setToolTip(
-            "Treat this block's first line as regular text, not inferred speaker."
+            "Checked: treat line 1 as dialogue text. Unchecked: infer line 1 as speaker."
         )
         self.line1_not_speaker_button.clicked.connect(
             self._on_line1_not_speaker_clicked
@@ -1250,6 +1250,9 @@ class DialogueBlockWidget(QFrame):
     def _line1_inference_is_disabled(self) -> bool:
         return bool(getattr(self.segment, "disable_line1_speaker_inference", False))
 
+    def _line1_inference_is_forced(self) -> bool:
+        return bool(getattr(self.segment, "force_line1_speaker_inference", False))
+
     def _segment_storage_lines(self) -> list[str]:
         lines = self.segment.translation_lines if self.translator_mode else self.segment.lines
         if lines:
@@ -1315,7 +1318,7 @@ class DialogueBlockWidget(QFrame):
         available = self._line1_inference_override_available()
         self.line1_not_speaker_button.setVisible(available)
         self.line1_not_speaker_button.setEnabled(available)
-        checked = self._line1_inference_is_disabled()
+        checked = not self._line1_inference_active()
         if self.line1_not_speaker_button.isChecked() == checked:
             return
         self.line1_not_speaker_button.blockSignals(True)
@@ -1326,18 +1329,26 @@ class DialogueBlockWidget(QFrame):
 
     def _on_line1_not_speaker_clicked(self, checked: bool) -> None:
         disabled = bool(checked)
-        if self._line1_inference_is_disabled() == disabled:
+        forced = not disabled
+        if (
+            self._line1_inference_is_disabled() == disabled
+            and self._line1_inference_is_forced() == forced
+        ):
             return
         self.segment.disable_line1_speaker_inference = disabled
+        self.segment.force_line1_speaker_inference = forced
         self._load_editor_lines_from_segment()
         self._sync_control_code_visibility(force=True)
-        self.line1_inference_override_changed.emit(self.segment.uid, disabled)
+        self.line1_inference_override_changed.emit(
+            self.segment.uid, disabled, forced)
         self.refresh_metadata()
 
     def _is_changed(self) -> bool:
         line1_override_changed = (
             bool(self.segment.disable_line1_speaker_inference)
             != bool(self.segment.original_disable_line1_speaker_inference)
+            or bool(self.segment.force_line1_speaker_inference)
+            != bool(self.segment.original_force_line1_speaker_inference)
         )
         if self.translator_mode:
             speaker_changed = self.segment.translation_speaker.strip(
@@ -1636,7 +1647,11 @@ class DialogueBlockWidget(QFrame):
             if resolved:
                 display_name = resolved
 
-        if looks_like_name_line(first_line) or (display_name != first_line and looks_like_name_line(display_name)):
+        if (
+            self._line1_inference_is_forced()
+            or looks_like_name_line(first_line)
+            or (display_name != first_line and looks_like_name_line(display_name))
+        ):
             return f"{display_name} (line 1)"
         return NO_SPEAKER_KEY
 
@@ -1679,7 +1694,11 @@ class DialogueBlockWidget(QFrame):
             if rendered:
                 display_html = rendered
 
-        if looks_like_name_line(first_line) or (display_name != first_line and looks_like_name_line(display_name)):
+        if (
+            self._line1_inference_is_forced()
+            or looks_like_name_line(first_line)
+            or (display_name != first_line and looks_like_name_line(display_name))
+        ):
             return f"{display_html} (line 1)"
         return html.escape(NO_SPEAKER_KEY)
 
@@ -1775,6 +1794,8 @@ class DialogueBlockWidget(QFrame):
         line1_override_changed = (
             bool(self.segment.disable_line1_speaker_inference)
             != bool(self.segment.original_disable_line1_speaker_inference)
+            or bool(self.segment.force_line1_speaker_inference)
+            != bool(self.segment.original_force_line1_speaker_inference)
         )
         if self.actor_mode:
             char_count = sum(len(line) for line in lines)

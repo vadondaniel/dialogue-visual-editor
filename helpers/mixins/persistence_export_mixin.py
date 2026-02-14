@@ -603,6 +603,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 segment.disable_line1_speaker_inference = bool(
                     segment.original_disable_line1_speaker_inference
                 )
+                segment.force_line1_speaker_inference = bool(
+                    segment.original_force_line1_speaker_inference
+                )
             self._refresh_dirty_state(session)
             self._render_session(session)
             self.statusBar().showMessage(

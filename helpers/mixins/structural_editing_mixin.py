@@ -332,7 +332,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             segment.source_lines = list(segment.lines)
         self._refresh_dirty_state(session)
 
-    def _on_line1_inference_override_changed(self, uid: str, disabled: bool) -> None:
+    def _on_line1_inference_override_changed(self, uid: str, disabled: bool, forced: bool) -> None:
         if self.current_path is None:
             return
         session = self.sessions.get(self.current_path)
@@ -341,11 +341,18 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         segment = self.current_segment_lookup.get(uid)
         if segment is None:
             return
-        next_value = bool(disabled)
-        segment.disable_line1_speaker_inference = next_value
+        next_disabled = bool(disabled)
+        next_forced = bool(forced) and (not next_disabled)
+        segment.disable_line1_speaker_inference = next_disabled
+        segment.force_line1_speaker_inference = next_forced
         self._refresh_dirty_state(session)
         self._refresh_translator_detail_panel()
-        state_label = "disabled" if next_value else "enabled"
+        if next_disabled:
+            state_label = "set to not-speaker"
+        elif next_forced:
+            state_label = "forced as speaker"
+        else:
+            state_label = "auto"
         self.statusBar().showMessage(
             f"Line-1 speaker inference {state_label} for block {uid}."
         )
@@ -502,6 +509,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 source_segment.speaker_name, ""),
             disable_line1_speaker_inference=source_segment.disable_line1_speaker_inference,
             original_disable_line1_speaker_inference=source_segment.disable_line1_speaker_inference,
+            force_line1_speaker_inference=source_segment.force_line1_speaker_inference,
+            original_force_line1_speaker_inference=source_segment.force_line1_speaker_inference,
             inserted=True,
             translation_only=translator_mode,
         )
@@ -617,6 +626,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             original_translation_speaker=source_segment.translation_speaker,
             disable_line1_speaker_inference=source_segment.disable_line1_speaker_inference,
             original_disable_line1_speaker_inference=source_segment.disable_line1_speaker_inference,
+            force_line1_speaker_inference=source_segment.force_line1_speaker_inference,
+            original_force_line1_speaker_inference=source_segment.force_line1_speaker_inference,
             inserted=True,
             translation_only=translator_mode,
         )
@@ -804,6 +815,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             segment.disable_line1_speaker_inference = bool(
                 segment.original_disable_line1_speaker_inference
             )
+            segment.force_line1_speaker_inference = bool(
+                segment.original_force_line1_speaker_inference
+            )
             if speaker_after:
                 self.speaker_translation_map[segment.speaker_name] = speaker_after
             self._refresh_dirty_state(session)
@@ -819,6 +833,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         lines_before = list(segment.lines)
         merged_before = list(segment.merged_segments)
         line1_inference_before = bool(segment.disable_line1_speaker_inference)
+        line1_force_before = bool(segment.force_line1_speaker_inference)
         restored_segments = [
             merged for merged in merged_before
             if self._find_segment_index_by_uid(session, merged.uid) < 0
@@ -834,10 +849,14 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         line1_inference_after = bool(
             segment.original_disable_line1_speaker_inference)
         segment.disable_line1_speaker_inference = line1_inference_after
+        line1_force_after = bool(
+            segment.original_force_line1_speaker_inference)
+        segment.force_line1_speaker_inference = line1_force_after
         changed = (
             bool(merged_before)
             or lines_before != lines_after
             or line1_inference_before != line1_inference_after
+            or line1_force_before != line1_force_after
         )
         if changed:
             reset_action = ResetBlockAction(
@@ -849,6 +868,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 restored_segments=restored_segments,
                 line1_inference_disabled_before=line1_inference_before,
                 line1_inference_disabled_after=line1_inference_after,
+                line1_inference_forced_before=line1_force_before,
+                line1_inference_forced_after=line1_force_after,
             )
             self.structural_undo_stack.append(
                 StructuralAction(
@@ -1085,6 +1106,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         segment.disable_line1_speaker_inference = bool(
             action.line1_inference_disabled_before
         )
+        segment.force_line1_speaker_inference = bool(
+            action.line1_inference_forced_before
+        )
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
@@ -1123,6 +1147,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         segment.merged_segments.clear()
         segment.disable_line1_speaker_inference = bool(
             action.line1_inference_disabled_after
+        )
+        segment.force_line1_speaker_inference = bool(
+            action.line1_inference_forced_after
         )
 
         self._refresh_dirty_state(session)

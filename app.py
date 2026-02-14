@@ -1576,6 +1576,8 @@ class DialogueVisualEditor(
             first_line,
             prefer_translated=False,
         ).strip()
+        if bool(getattr(segment, "force_line1_speaker_inference", False)):
+            return resolved_first or first_line
         if first_line and looks_like_name_line(first_line):
             return resolved_first or first_line
         if resolved_first and looks_like_name_line(resolved_first):

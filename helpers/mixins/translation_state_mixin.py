@@ -198,6 +198,11 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         disable_line1_inference_raw = entry.get("line1_speaker_inference_disabled")
         disable_line1_inference = bool(
             disable_line1_inference_raw) if isinstance(disable_line1_inference_raw, bool) else False
+        force_line1_inference_raw = entry.get("line1_speaker_inference_forced")
+        force_line1_inference = bool(
+            force_line1_inference_raw) if isinstance(force_line1_inference_raw, bool) else False
+        if disable_line1_inference:
+            force_line1_inference = False
         uid_raw = entry.get("segment_uid")
         segment_uid = (
             uid_raw.strip()
@@ -220,6 +225,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             original_translation_speaker=speaker_en,
             disable_line1_speaker_inference=disable_line1_inference,
             original_disable_line1_speaker_inference=disable_line1_inference,
+            force_line1_speaker_inference=force_line1_inference,
+            original_force_line1_speaker_inference=force_line1_inference,
             inserted=False,
             translation_only=True,
         )
@@ -367,6 +374,12 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 "line1_speaker_inference_disabled")
             disable_line1_inference = bool(
                 disable_line1_inference_raw) if isinstance(disable_line1_inference_raw, bool) else False
+            force_line1_inference_raw = entry.get(
+                "line1_speaker_inference_forced")
+            force_line1_inference = bool(
+                force_line1_inference_raw) if isinstance(force_line1_inference_raw, bool) else False
+            if disable_line1_inference:
+                force_line1_inference = False
             speaker_key = self._speaker_key_for_state(segment)
             if not speaker_en:
                 speaker_en = self.speaker_translation_map.get(speaker_key, "")
@@ -378,6 +391,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             segment.original_translation_speaker = speaker_en
             segment.disable_line1_speaker_inference = disable_line1_inference
             segment.original_disable_line1_speaker_inference = disable_line1_inference
+            segment.force_line1_speaker_inference = force_line1_inference
+            segment.original_force_line1_speaker_inference = force_line1_inference
 
             if speaker_en:
                 self.speaker_translation_map[speaker_key] = speaker_en
@@ -475,6 +490,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 "translation_only": bool(segment.translation_only),
                 "line1_speaker_inference_disabled": bool(
                     segment.disable_line1_speaker_inference),
+                "line1_speaker_inference_forced": bool(
+                    segment.force_line1_speaker_inference),
             }
             if segment.translation_only:
                 entry["segment_uid"] = segment.uid
@@ -558,6 +575,11 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 != bool(segment.original_disable_line1_speaker_inference)
             ):
                 return True
+            if (
+                bool(segment.force_line1_speaker_inference)
+                != bool(segment.original_force_line1_speaker_inference)
+            ):
+                return True
         return False
 
     def _mark_session_translation_saved(self, session: FileSession) -> None:
@@ -570,6 +592,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             segment.original_translation_speaker = segment.translation_speaker
             segment.original_disable_line1_speaker_inference = bool(
                 segment.disable_line1_speaker_inference)
+            segment.original_force_line1_speaker_inference = bool(
+                segment.force_line1_speaker_inference)
             if segment.translation_only:
                 segment.inserted = False
         setattr(session, "_original_tl_order", [segment.tl_uid for segment in session.segments])

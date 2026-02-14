@@ -29,6 +29,8 @@ class DialogueSegment:
     original_translation_speaker: str = ""
     disable_line1_speaker_inference: bool = False
     original_disable_line1_speaker_inference: bool = False
+    force_line1_speaker_inference: bool = False
+    original_force_line1_speaker_inference: bool = False
     inserted: bool = False
     translation_only: bool = False
     merged_segments: list["DialogueSegment"] = field(default_factory=list)
@@ -156,6 +158,8 @@ class ResetBlockAction:
     restored_segments: list[DialogueSegment]
     line1_inference_disabled_before: bool = False
     line1_inference_disabled_after: bool = False
+    line1_inference_forced_before: bool = False
+    line1_inference_forced_after: bool = False
 
 
 @dataclass
