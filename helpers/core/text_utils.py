@@ -350,9 +350,55 @@ def wrap_lines_keep_breaks(lines: list[str], width: int) -> list[str]:
         return [""]
     wrapped: list[str] = []
     for line in lines:
-        wrapped_line = wrap_text_to_width(line, width)
+        wrapped_line = _wrap_text_to_width_hard(line, width)
         wrapped.extend(wrapped_line or [""])
     return wrapped or [""]
+
+
+def _wrap_text_to_width_hard(text: str, width: int) -> list[str]:
+    safe_width = max(1, width)
+    units = parse_units_for_measure(text)
+    if not units:
+        return [""]
+
+    lines: list[str] = []
+    current_units: list[dict[str, Any]] = []
+    current_visible = 0
+
+    def flush_current() -> None:
+        nonlocal current_units, current_visible
+        lines.append(_units_to_text(current_units).rstrip(" \t\u3000"))
+        current_units = []
+        current_visible = 0
+
+    for unit in units:
+        if unit.get("is_newline"):
+            flush_current()
+            continue
+
+        unit_visible = _unit_visible_value(unit)
+        if unit_visible == 0:
+            current_units.append(unit)
+            continue
+
+        if _unit_is_space(unit):
+            if current_visible == 0:
+                continue
+            if current_visible + unit_visible >= safe_width:
+                continue
+
+        if current_visible + unit_visible > safe_width and current_units:
+            flush_current()
+            if _unit_is_space(unit):
+                continue
+
+        current_units.append(unit)
+        current_visible += unit_visible
+
+    if current_units:
+        flush_current()
+
+    return lines or [""]
 
 
 def collapse_lines_force(lines: list[str], width: int) -> list[str]:
