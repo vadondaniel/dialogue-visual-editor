@@ -1289,6 +1289,14 @@ class DialogueBlockWidget(QFrame):
         source_lines = self.segment.lines or [""]
         return source_lines[0] if source_lines else ""
 
+    def _line1_inference_source_lines(self) -> list[str]:
+        if self.translator_mode:
+            source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
+                ""]
+            return list(source_lines) if source_lines else [""]
+        source_lines = self.segment.lines or [""]
+        return list(source_lines) if source_lines else [""]
+
     def _editor_lines_from_storage_lines(self, storage_lines: list[str]) -> list[str]:
         lines = list(storage_lines) if storage_lines else [""]
         if self._line1_inference_active():
@@ -1314,6 +1322,7 @@ class DialogueBlockWidget(QFrame):
             and self._is_standard_dialogue_block()
             and self.infer_name_from_first_line
             and self.segment.speaker_name == NO_SPEAKER_KEY
+            and len(self._line1_inference_source_lines()) > 1
         )
 
     def _refresh_line1_inference_override_button(self) -> None:
