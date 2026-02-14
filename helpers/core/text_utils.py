@@ -50,38 +50,69 @@ NAME_CONNECTOR_WORDS = {
 }
 _FONT_SIZE_SET_TOKEN_RE = re.compile(r"^\\[Ff][Ss]\[(\d+)\]$")
 _DEFAULT_FONT_SIZE = 28
-_MIN_FONT_SIZE = 24
-_MAX_FONT_SIZE = 96
+_MIN_FONT_SIZE = 1
+_MAX_FONT_SIZE = 512
 _FONT_SIZE_STEP = 12
+_FONT_BIGGER_THRESHOLD = 96
+_FONT_SMALLER_THRESHOLD = 24
 _BASE_LINE_HEIGHT = 36.0
 _LINE_HEIGHT_PADDING = 8.0
 _FLOAT_EPSILON = 1e-6
 
 
-def _clamp_font_size(value: int) -> int:
+def clamp_message_font_size(value: int) -> int:
     return max(_MIN_FONT_SIZE, min(_MAX_FONT_SIZE, value))
 
 
-def _next_font_size_for_token(token: str, current_font_size: int) -> int:
+def message_default_font_size() -> int:
+    return _DEFAULT_FONT_SIZE
+
+
+def next_message_font_size_for_token(token: str, current_font_size: int) -> int:
+    safe_current = clamp_message_font_size(current_font_size)
     if token == r"\{":
-        return _clamp_font_size(current_font_size + _FONT_SIZE_STEP)
+        if safe_current <= _FONT_BIGGER_THRESHOLD:
+            return clamp_message_font_size(safe_current + _FONT_SIZE_STEP)
+        return safe_current
     if token == r"\}":
-        return _clamp_font_size(current_font_size - _FONT_SIZE_STEP)
+        if safe_current >= _FONT_SMALLER_THRESHOLD:
+            return clamp_message_font_size(safe_current - _FONT_SIZE_STEP)
+        return safe_current
     fs_match = _FONT_SIZE_SET_TOKEN_RE.match(token)
     if fs_match is not None:
         try:
             parsed = int(fs_match.group(1))
         except Exception:
-            return current_font_size
-        return _clamp_font_size(parsed)
-    return current_font_size
+            return safe_current
+        return clamp_message_font_size(parsed)
+    return safe_current
 
 
-def _font_scale_for_size(font_size: int) -> float:
+def message_font_scale_for_size(font_size: int) -> float:
     if _DEFAULT_FONT_SIZE <= 0:
         return 1.0
     scale = float(font_size) / float(_DEFAULT_FONT_SIZE)
-    return max(0.5, scale)
+    return max(0.1, scale)
+
+
+def configure_message_text_metrics(base_font_size: int) -> int:
+    global _DEFAULT_FONT_SIZE, _BASE_LINE_HEIGHT
+    safe_base = clamp_message_font_size(int(base_font_size))
+    _DEFAULT_FONT_SIZE = safe_base
+    _BASE_LINE_HEIGHT = float(_DEFAULT_FONT_SIZE + _LINE_HEIGHT_PADDING)
+    return safe_base
+
+
+def _clamp_font_size(value: int) -> int:
+    return clamp_message_font_size(value)
+
+
+def _next_font_size_for_token(token: str, current_font_size: int) -> int:
+    return next_message_font_size_for_token(token, current_font_size)
+
+
+def _font_scale_for_size(font_size: int) -> float:
+    return message_font_scale_for_size(font_size)
 
 
 def visible_length(text: str) -> int:

@@ -10,24 +10,18 @@ from PySide6.QtGui import QColor, QImage, QPalette
 from PySide6.QtWidgets import QApplication
 
 from ..core.models import DialogueSegment, FileSession
-from ..core.text_utils import strip_control_tokens
+from ..core.text_utils import (
+    clamp_message_font_size,
+    message_default_font_size,
+    message_font_scale_for_size,
+    next_message_font_size_for_token,
+    strip_control_tokens,
+)
 
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
 NAME_TOKEN_RE = re.compile(r"\\[Nn]\[(\d+)\]")
 VAR_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
 COLOR_TOKEN_RE = re.compile(r"\\[Cc]\[(\d+)\]")
-SIZE_BRACE_TOKEN_RE = re.compile(r"\\([{}])")
-SIZE_SET_TOKEN_RE = re.compile(r"\\[Ff][Ss]\[(\d+)\]")
-HIDDEN_CONTROL_TOKEN_RE = re.compile(
-    r"""
-    \\[Cc]\[(\d+)\]             |
-    \\[A-Za-z]+\d*<[^>]*>       |
-    \\[A-Za-z]+\d*\[[^\]]*\]    |
-    \\[\.\!\|\{\}\^]            |
-    \\[ntr]
-    """,
-    re.VERBOSE,
-)
 HIDDEN_STYLE_TOKEN_RE = re.compile(
     r"""
     \\[Cc]\[(\d+)\]             |
@@ -40,10 +34,6 @@ HIDDEN_STYLE_TOKEN_RE = re.compile(
     """,
     re.VERBOSE,
 )
-DEFAULT_PREVIEW_FONT_SIZE = 28
-MIN_PREVIEW_FONT_SIZE = 24
-MAX_PREVIEW_FONT_SIZE = 96
-PREVIEW_FONT_SIZE_STEP = 12
 
 MaskedStyleSpan = tuple[int, int, str, float]
 
@@ -77,29 +67,13 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
         def _speaker_translation_for_key(self, speaker_key: str) -> str: ...
 
     def _clamp_preview_font_size(self, value: int) -> int:
-        return max(MIN_PREVIEW_FONT_SIZE, min(MAX_PREVIEW_FONT_SIZE, value))
+        return clamp_message_font_size(value)
 
     def _next_preview_font_size(self, token: str, current_font_size: int) -> int:
-        brace_match = SIZE_BRACE_TOKEN_RE.fullmatch(token)
-        if brace_match is not None:
-            brace = brace_match.group(1)
-            if brace == "{":
-                return self._clamp_preview_font_size(current_font_size + PREVIEW_FONT_SIZE_STEP)
-            return self._clamp_preview_font_size(current_font_size - PREVIEW_FONT_SIZE_STEP)
-        set_match = SIZE_SET_TOKEN_RE.fullmatch(token)
-        if set_match is not None:
-            try:
-                parsed = int(set_match.group(1))
-            except Exception:
-                return current_font_size
-            return self._clamp_preview_font_size(parsed)
-        return current_font_size
+        return next_message_font_size_for_token(token, current_font_size)
 
     def _preview_font_scale(self, font_size: int) -> float:
-        if DEFAULT_PREVIEW_FONT_SIZE <= 0:
-            return 1.0
-        scale = float(font_size) / float(DEFAULT_PREVIEW_FONT_SIZE)
-        return max(0.5, scale)
+        return message_font_scale_for_size(font_size)
 
     def _segment_source_lines_for_display(self, segment: DialogueSegment) -> list[str]:
         lines = segment.source_lines or segment.original_lines or segment.lines
@@ -533,7 +507,7 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
         parts: list[str] = []
         cursor = 0
         active_color = ""
-        active_font_size = DEFAULT_PREVIEW_FONT_SIZE
+        active_font_size = message_default_font_size()
         default_color = self._muted_base_text_color() if muted else ""
 
         def append_chunk(chunk: str, color_hex: str, font_scale: float) -> None:
@@ -607,7 +581,7 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
         cursor = 0
         out_pos = 0
         active_color = ""
-        active_font_size = DEFAULT_PREVIEW_FONT_SIZE
+        active_font_size = message_default_font_size()
 
         for match in HIDDEN_STYLE_TOKEN_RE.finditer(resolved):
             chunk = resolved[cursor:match.start()]

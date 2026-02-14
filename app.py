@@ -2,6 +2,7 @@
 
 from concurrent.futures import Future, ThreadPoolExecutor
 import json
+import re
 import sys
 from pathlib import Path
 from time import monotonic
@@ -54,6 +55,7 @@ try:
         FileSession,
         NO_SPEAKER_KEY,
         StructuralAction,
+        configure_message_text_metrics,
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
@@ -84,6 +86,7 @@ except ImportError:
         FileSession,
         NO_SPEAKER_KEY,
         StructuralAction,
+        configure_message_text_metrics,
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
@@ -137,6 +140,12 @@ VERSION_DB_FILENAME = ".dialogue_version_state.sqlite3"
 TRANSLATION_STATE_FILENAME = ".dialogue_translation_state.json"
 UI_STATE_FILENAME = ".dialogue_visual_editor_ui_state.json"
 APP_TITLE = "Dialogue Visual Editor"
+_MV_DEFAULT_MESSAGE_FONT_SIZE = 28
+_MZ_DEFAULT_MESSAGE_FONT_SIZE = 26
+_JS_RETURN_INT_RE = re.compile(r"return\s+(-?\d+)\s*;")
+_JS_SYSTEM_ADVANCED_FONT_RE = re.compile(
+    r"\$dataSystem\s*\.\s*advanced\s*\.\s*fontSize"
+)
 
 
 class DialogueVisualEditor(
@@ -186,6 +195,8 @@ class DialogueVisualEditor(
         self.translation_state_path: Optional[Path] = None
         self.last_folder_path = ""
         self.detected_rpg_engine = "unknown"
+        self.detected_message_font_size = _MV_DEFAULT_MESSAGE_FONT_SIZE
+        self.detected_message_font_source = "default"
         self.ui_state_path = Path(
             __file__).resolve().with_name(UI_STATE_FILENAME)
         self.project_ui_settings_by_folder: dict[str, dict[str, Any]] = {}
@@ -1843,7 +1854,7 @@ class DialogueVisualEditor(
         except Exception:
             return str(folder)
 
-    def _detect_rpg_maker_engine(self, folder: Path) -> str:
+    def _candidate_js_dirs(self, folder: Path) -> list[Path]:
         candidate_js_dirs: list[Path] = []
         seen: set[Path] = set()
         for base in (folder, folder.parent, folder.parent.parent):
@@ -1857,6 +1868,10 @@ class DialogueVisualEditor(
             seen.add(resolved)
             if js_dir.exists() and js_dir.is_dir():
                 candidate_js_dirs.append(js_dir)
+        return candidate_js_dirs
+
+    def _detect_rpg_maker_engine(self, folder: Path) -> str:
+        candidate_js_dirs = self._candidate_js_dirs(folder)
         if not candidate_js_dirs:
             return "unknown"
 
@@ -1877,6 +1892,182 @@ class DialogueVisualEditor(
         if has_mz_runtime and has_mv_runtime:
             return "mz"
         return "unknown"
+
+    def _coerce_positive_int(self, value: Any) -> Optional[int]:
+        if isinstance(value, bool):
+            return None
+        parsed: Optional[int] = None
+        if isinstance(value, int):
+            parsed = value
+        elif isinstance(value, float):
+            parsed = int(value)
+        elif isinstance(value, str):
+            stripped = value.strip()
+            if stripped and re.fullmatch(r"-?\d+", stripped):
+                try:
+                    parsed = int(stripped)
+                except Exception:
+                    parsed = None
+        if parsed is None or parsed <= 0:
+            return None
+        return parsed
+
+    def _read_text_file_best_effort(self, path: Path) -> Optional[str]:
+        for encoding in ("utf-8-sig", "utf-8", "cp932"):
+            try:
+                return path.read_text(encoding=encoding)
+            except Exception:
+                continue
+        return None
+
+    def _system_json_candidates(self, folder: Path) -> list[Path]:
+        candidates = [
+            folder / "System.json",
+            folder / "system.json",
+            folder.parent / "data" / "System.json",
+            folder.parent / "data" / "system.json",
+        ]
+        deduped: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except Exception:
+                resolved = candidate
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            deduped.append(candidate)
+        return deduped
+
+    def _font_size_from_system_json(self, folder: Path) -> tuple[Optional[int], str]:
+        for path in self._system_json_candidates(folder):
+            if not path.is_file():
+                continue
+            raw_text = self._read_text_file_best_effort(path)
+            if raw_text is None:
+                continue
+            try:
+                decoded = json.loads(raw_text)
+            except Exception:
+                continue
+            if not isinstance(decoded, dict):
+                continue
+
+            advanced = decoded.get("advanced")
+            if isinstance(advanced, dict):
+                for key in ("fontSize", "mainFontSize"):
+                    parsed = self._coerce_positive_int(advanced.get(key))
+                    if parsed is not None:
+                        return parsed, f"{path.name} advanced.{key}"
+
+            for key in ("fontSize", "mainFontSize"):
+                parsed = self._coerce_positive_int(decoded.get(key))
+                if parsed is not None:
+                    return parsed, f"{path.name} {key}"
+        return None, ""
+
+    def _font_size_from_js_function_body(
+        self,
+        body: str,
+        system_font_size: Optional[int],
+    ) -> Optional[int]:
+        direct_match = _JS_RETURN_INT_RE.search(body)
+        if direct_match is not None:
+            parsed = self._coerce_positive_int(direct_match.group(1))
+            if parsed is not None:
+                return parsed
+        if (
+            system_font_size is not None
+            and _JS_SYSTEM_ADVANCED_FONT_RE.search(body) is not None
+        ):
+            return system_font_size
+        return None
+
+    def _font_size_from_js_source_function(
+        self,
+        source_text: str,
+        function_name: str,
+        system_font_size: Optional[int],
+    ) -> Optional[int]:
+        escaped_name = re.escape(function_name)
+        patterns = (
+            re.compile(
+                rf"{escaped_name}\s*=\s*function\s*\([^)]*\)\s*\{{(?P<body>.*?)\}}",
+                re.DOTALL,
+            ),
+            re.compile(
+                rf"\b{escaped_name}\s*\([^)]*\)\s*\{{(?P<body>.*?)\}}",
+                re.DOTALL,
+            ),
+        )
+        for pattern in patterns:
+            for match in pattern.finditer(source_text):
+                body = match.group("body")
+                parsed = self._font_size_from_js_function_body(
+                    body,
+                    system_font_size,
+                )
+                if parsed is not None:
+                    return parsed
+        return None
+
+    def _font_size_from_runtime_scripts(
+        self,
+        folder: Path,
+        system_font_size: Optional[int],
+    ) -> tuple[Optional[int], str]:
+        if self.detected_rpg_engine == "mv":
+            checks = [("rpg_windows.js", "standardFontSize")]
+        elif self.detected_rpg_engine == "mz":
+            checks = [
+                ("rmmz_objects.js", "mainFontSize"),
+                ("rmmz_windows.js", "mainFontSize"),
+            ]
+        else:
+            checks = [
+                ("rpg_windows.js", "standardFontSize"),
+                ("rmmz_objects.js", "mainFontSize"),
+                ("rmmz_windows.js", "mainFontSize"),
+            ]
+
+        for js_dir in self._candidate_js_dirs(folder):
+            for filename, function_name in checks:
+                script_path = js_dir / filename
+                if not script_path.is_file():
+                    continue
+                source = self._read_text_file_best_effort(script_path)
+                if source is None:
+                    continue
+                parsed = self._font_size_from_js_source_function(
+                    source,
+                    function_name,
+                    system_font_size,
+                )
+                if parsed is not None:
+                    return parsed, f"{filename} {function_name}()"
+        return None, ""
+
+    def _infer_project_message_font_size(self, folder: Path) -> tuple[int, str]:
+        system_font_size, system_source = self._font_size_from_system_json(folder)
+        runtime_font_size, runtime_source = self._font_size_from_runtime_scripts(
+            folder,
+            system_font_size,
+        )
+        if runtime_font_size is not None:
+            return runtime_font_size, runtime_source
+        if system_font_size is not None:
+            return system_font_size, system_source
+        if self.detected_rpg_engine == "mz":
+            return _MZ_DEFAULT_MESSAGE_FONT_SIZE, "MZ default"
+        return _MV_DEFAULT_MESSAGE_FONT_SIZE, "MV default"
+
+    def _configure_project_message_text_metrics(self, folder: Path) -> tuple[int, str]:
+        inferred_size, source = self._infer_project_message_font_size(folder)
+        configured_size = configure_message_text_metrics(inferred_size)
+        self.detected_message_font_size = configured_size
+        self.detected_message_font_source = source
+        return configured_size, source
 
     def _rpg_engine_label(self, engine: str) -> str:
         if engine == "mv":
@@ -2325,6 +2516,7 @@ class DialogueVisualEditor(
         self.data_dir = folder.resolve()
         self.last_folder_path = str(self.data_dir)
         self.detected_rpg_engine = self._detect_rpg_maker_engine(self.data_dir)
+        self._configure_project_message_text_metrics(self.data_dir)
         self._update_window_title()
         project_key = self._project_state_key(self.data_dir)
         project_settings = self.project_ui_settings_by_folder.get(project_key)
@@ -2512,18 +2704,20 @@ class DialogueVisualEditor(
 
         visible_count = len(self._visible_file_paths())
         engine_suffix = f" Engine: {self._rpg_engine_label(self.detected_rpg_engine)}."
+        font_source = self.detected_message_font_source or "default"
+        font_suffix = f" Message font: {self.detected_message_font_size}px ({font_source})."
         infer_suffix = infer_auto_suffix if infer_auto_changed else ""
         if load_errors:
             skipped_label = "file" if len(load_errors) == 1 else "files"
             self.statusBar().showMessage(
                 f"Loaded {len(self.sessions)} files ({visible_count} shown), "
                 f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}. "
-                f"Skipped {len(load_errors)} unreadable {skipped_label}.{engine_suffix}{infer_suffix}"
+                f"Skipped {len(load_errors)} unreadable {skipped_label}.{engine_suffix}{font_suffix}{infer_suffix}"
             )
         else:
             self.statusBar().showMessage(
                 f"Loaded {len(self.sessions)} files ({visible_count} shown), "
-                f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}.{engine_suffix}{infer_suffix}"
+                f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}.{engine_suffix}{font_suffix}{infer_suffix}"
             )
 
     def _file_path_from_item(self, item: Optional[QListWidgetItem]) -> Optional[Path]:
