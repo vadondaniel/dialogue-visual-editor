@@ -3128,6 +3128,18 @@ class DialogueVisualEditor(
             return None
         return Path(str(raw))
 
+    def _sync_file_list_selection(self, path: Path) -> None:
+        target_item = self.file_items.get(path)
+        if target_item is None:
+            return
+        if self.file_list.currentItem() is target_item:
+            return
+        self.file_list.blockSignals(True)
+        try:
+            self.file_list.setCurrentItem(target_item)
+        finally:
+            self.file_list.blockSignals(False)
+
     def _on_file_selected(self, current: Optional[QListWidgetItem], _previous: Optional[QListWidgetItem]) -> None:
         path = self._file_path_from_item(current)
         if path is None:
@@ -3229,6 +3241,7 @@ class DialogueVisualEditor(
             return
 
         self.current_path = path
+        self._sync_file_list_selection(path)
         self._update_window_title()
         self._update_file_item_text(path)
         self._render_session(
