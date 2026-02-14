@@ -636,6 +636,7 @@ def _should_force_break_after_line(
     ending_policy: Literal["default", "allow_comma", "no_punctuation_only"] = "default",
     min_soft_ratio: float = 0.5,
     allow_comma_endings: bool = False,
+    allow_colon_triplet_endings: bool = False,
     collapse_if_no_punctuation: bool = True,
 ) -> bool:
     if ending_policy == "no_punctuation_only":
@@ -647,6 +648,13 @@ def _should_force_break_after_line(
 
     if not _has_visible_nonspace_characters(line):
         return True
+    visible_line = CONTROL_TOKEN_RE.sub("", line or "").rstrip()
+    if allow_colon_triplet_endings and (
+        visible_line.endswith("...")
+        or visible_line.endswith("…")
+        or visible_line.endswith("。。。")
+    ):
+        return False
     last_char = _last_visible_nonspace_character(line)
     if last_char is None:
         return False
@@ -668,6 +676,7 @@ def _build_smart_collapse_body_text(
     ending_policy: Literal["default", "allow_comma", "no_punctuation_only"] = "default",
     min_soft_ratio: float = 0.5,
     allow_comma_endings: bool = False,
+    allow_colon_triplet_endings: bool = False,
     collapse_if_no_punctuation: bool = True,
 ) -> str:
     parts: list[str] = []
@@ -682,6 +691,7 @@ def _build_smart_collapse_body_text(
                     ending_policy=ending_policy,
                     min_soft_ratio=min_soft_ratio,
                     allow_comma_endings=allow_comma_endings,
+                    allow_colon_triplet_endings=allow_colon_triplet_endings,
                     collapse_if_no_punctuation=collapse_if_no_punctuation,
                 )
                 else " "
@@ -887,6 +897,7 @@ def smart_collapse_lines(
     ending_policy: Literal["default", "allow_comma", "no_punctuation_only"] = "default",
     min_soft_ratio: float = 0.5,
     allow_comma_endings: bool = False,
+    allow_colon_triplet_endings: bool = False,
     collapse_if_no_punctuation: bool = True,
 ) -> list[str]:
     safe_width = max(1, width)
@@ -910,6 +921,7 @@ def smart_collapse_lines(
         ending_policy=ending_policy,
         min_soft_ratio=min_soft_ratio,
         allow_comma_endings=allow_comma_endings,
+        allow_colon_triplet_endings=allow_colon_triplet_endings,
         collapse_if_no_punctuation=collapse_if_no_punctuation,
     )
     wrapped_body = wrap_text_word_aware(body_text, safe_width)

@@ -332,6 +332,9 @@ class RenderMixin(_RenderHostTypingFallback):
                 smart_collapse_allow_comma_endings=bool(
                     self.smart_collapse_allow_comma_endings
                 ),
+                smart_collapse_allow_colon_triplet_endings=bool(
+                    self.smart_collapse_allow_colon_triplet_endings
+                ),
                 smart_collapse_collapse_if_no_punctuation=bool(
                     self.smart_collapse_collapse_if_no_punctuation
                 ),
@@ -447,6 +450,9 @@ class RenderMixin(_RenderHostTypingFallback):
         widget.infer_name_from_first_line = self.infer_speaker_check.isChecked()
         widget.smart_collapse_allow_comma_endings = bool(
             self.smart_collapse_allow_comma_endings
+        )
+        widget.smart_collapse_allow_colon_triplet_endings = bool(
+            self.smart_collapse_allow_colon_triplet_endings
         )
         widget.smart_collapse_collapse_if_no_punctuation = bool(
             self.smart_collapse_collapse_if_no_punctuation

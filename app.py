@@ -232,6 +232,7 @@ class DialogueVisualEditor(
         self.variable_length_overrides: dict[int, int] = {}
         self.smart_collapse_soft_ratio_rule_enabled = True
         self.smart_collapse_allow_comma_endings = False
+        self.smart_collapse_allow_colon_triplet_endings = False
         self.smart_collapse_collapse_if_no_punctuation = True
         self.smart_collapse_soft_ratio_percent = _DEFAULT_SMART_COLLAPSE_SOFT_RATIO_PERCENT
         self.ui_state_path = Path(
@@ -785,6 +786,7 @@ class DialogueVisualEditor(
         self._settings_max_lines_action: Optional[QAction] = None
         self._settings_smart_collapse_soft_rule_action: Optional[QAction] = None
         self._settings_smart_collapse_allow_comma_action: Optional[QAction] = None
+        self._settings_smart_collapse_allow_colon_triplet_action: Optional[QAction] = None
         self._settings_smart_collapse_no_punctuation_action: Optional[QAction] = None
         self._settings_smart_collapse_soft_ratio_action: Optional[QAction] = None
         self._settings_toggle_bindings: list[tuple[QAction, QCheckBox]] = []
@@ -959,6 +961,18 @@ class DialogueVisualEditor(
         )
         smart_collapse_menu.addAction(self._settings_smart_collapse_allow_comma_action)
 
+        self._settings_smart_collapse_allow_colon_triplet_action = QAction(
+            "Collapse if previous line ends with ...",
+            self,
+        )
+        self._settings_smart_collapse_allow_colon_triplet_action.setCheckable(True)
+        self._settings_smart_collapse_allow_colon_triplet_action.toggled.connect(
+            self._set_smart_collapse_allow_colon_triplet_enabled
+        )
+        smart_collapse_menu.addAction(
+            self._settings_smart_collapse_allow_colon_triplet_action
+        )
+
         self._settings_smart_collapse_no_punctuation_action = QAction(
             "Collapse if previous line ends without punctuation",
             self,
@@ -1108,6 +1122,7 @@ class DialogueVisualEditor(
         checkbox_actions: tuple[tuple[Optional[QAction], bool], ...] = (
             (self._settings_smart_collapse_soft_rule_action, bool(self.smart_collapse_soft_ratio_rule_enabled)),
             (self._settings_smart_collapse_allow_comma_action, bool(self.smart_collapse_allow_comma_endings)),
+            (self._settings_smart_collapse_allow_colon_triplet_action, bool(self.smart_collapse_allow_colon_triplet_endings)),
             (self._settings_smart_collapse_no_punctuation_action, bool(self.smart_collapse_collapse_if_no_punctuation)),
         )
         for action, checked in checkbox_actions:
@@ -1139,6 +1154,16 @@ class DialogueVisualEditor(
         if next_value == self.smart_collapse_allow_comma_endings:
             return
         self.smart_collapse_allow_comma_endings = next_value
+        self._sync_smart_collapse_menu_state()
+        self._on_project_setting_changed()
+        if self.current_path is not None:
+            self._rerender_current_file()
+
+    def _set_smart_collapse_allow_colon_triplet_enabled(self, checked: bool) -> None:
+        next_value = bool(checked)
+        if next_value == self.smart_collapse_allow_colon_triplet_endings:
+            return
+        self.smart_collapse_allow_colon_triplet_endings = next_value
         self._sync_smart_collapse_menu_state()
         self._on_project_setting_changed()
         if self.current_path is not None:
@@ -2912,6 +2937,9 @@ class DialogueVisualEditor(
             "smart_collapse_allow_comma_endings": bool(
                 self.smart_collapse_allow_comma_endings
             ),
+            "smart_collapse_allow_colon_triplet_endings": bool(
+                self.smart_collapse_allow_colon_triplet_endings
+            ),
             "smart_collapse_collapse_if_no_punctuation": bool(
                 self.smart_collapse_collapse_if_no_punctuation
             ),
@@ -2999,6 +3027,13 @@ class DialogueVisualEditor(
             if isinstance(smart_collapse_allow_comma_endings, bool):
                 self.smart_collapse_allow_comma_endings = (
                     smart_collapse_allow_comma_endings
+                )
+            smart_collapse_allow_colon_triplet_endings = settings.get(
+                "smart_collapse_allow_colon_triplet_endings"
+            )
+            if isinstance(smart_collapse_allow_colon_triplet_endings, bool):
+                self.smart_collapse_allow_colon_triplet_endings = (
+                    smart_collapse_allow_colon_triplet_endings
                 )
             collapse_if_no_punctuation = settings.get(
                 "smart_collapse_collapse_if_no_punctuation"
@@ -3447,6 +3482,7 @@ class DialogueVisualEditor(
         self.variable_length_overrides = {}
         self.smart_collapse_soft_ratio_rule_enabled = True
         self.smart_collapse_allow_comma_endings = False
+        self.smart_collapse_allow_colon_triplet_endings = False
         self.smart_collapse_collapse_if_no_punctuation = True
         self.smart_collapse_soft_ratio_percent = _DEFAULT_SMART_COLLAPSE_SOFT_RATIO_PERCENT
         self._sync_variable_length_measurement_settings()

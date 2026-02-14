@@ -51,7 +51,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
     def _prompt_smart_collapse_all_options(
         self,
-    ) -> Optional[tuple[bool, bool, float, bool]]:
+    ) -> Optional[tuple[bool, bool, bool, float, bool]]:
         dialog = QDialog(cast(QWidget, self))
         dialog.setWindowTitle("Smart Collapse All")
         dialog.resize(420, 220)
@@ -75,6 +75,14 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             bool(getattr(self, "smart_collapse_allow_comma_endings", False))
         )
         form.addRow(allow_comma_check)
+
+        allow_colon_triplet_check = QCheckBox(
+            "Collapse if previous line ends with ..."
+        )
+        allow_colon_triplet_check.setChecked(
+            bool(getattr(self, "smart_collapse_allow_colon_triplet_endings", False))
+        )
+        form.addRow(allow_colon_triplet_check)
 
         no_punctuation_check = QCheckBox(
             "Collapse if previous line ends without punctuation"
@@ -111,6 +119,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             return None
 
         allow_comma_endings = bool(allow_comma_check.isChecked())
+        allow_colon_triplet_endings = bool(allow_colon_triplet_check.isChecked())
         collapse_if_no_punctuation = bool(no_punctuation_check.isChecked())
         min_soft_ratio = (
             float(int(threshold_spin.value())) / 100.0
@@ -119,6 +128,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         )
         return (
             allow_comma_endings,
+            allow_colon_triplet_endings,
             collapse_if_no_punctuation,
             max(0.0, min(1.0, min_soft_ratio)),
             bool(scope_all_files_check.isChecked()),
@@ -134,6 +144,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         segment: DialogueSegment,
         *,
         allow_comma_endings: bool,
+        allow_colon_triplet_endings: bool,
         collapse_if_no_punctuation: bool,
         min_soft_ratio: float,
     ) -> list[str]:
@@ -150,6 +161,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 self.infer_speaker_check.isChecked() and (not has_inferred_speaker)
             ),
             allow_comma_endings=allow_comma_endings,
+            allow_colon_triplet_endings=allow_colon_triplet_endings,
             collapse_if_no_punctuation=collapse_if_no_punctuation,
             min_soft_ratio=max(0.0, min(1.0, float(min_soft_ratio))),
         )
@@ -163,6 +175,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         segment: DialogueSegment,
         *,
         allow_comma_endings: bool,
+        allow_colon_triplet_endings: bool,
         collapse_if_no_punctuation: bool,
         min_soft_ratio: float,
     ) -> list[str]:
@@ -175,6 +188,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 and (not self._segment_has_inferred_line1_speaker(segment))
             ),
             allow_comma_endings=allow_comma_endings,
+            allow_colon_triplet_endings=allow_colon_triplet_endings,
             collapse_if_no_punctuation=collapse_if_no_punctuation,
             min_soft_ratio=max(0.0, min(1.0, float(min_soft_ratio))),
         )
@@ -189,6 +203,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         (
             allow_comma_endings,
+            allow_colon_triplet_endings,
             collapse_if_no_punctuation,
             min_soft_ratio,
             apply_all_files,
@@ -217,22 +232,24 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                         segment.translation_lines
                     )
                     collapsed_lines = self._collapsed_translation_lines_for_segment(
-                        segment,
-                        allow_comma_endings=allow_comma_endings,
-                        collapse_if_no_punctuation=collapse_if_no_punctuation,
-                        min_soft_ratio=min_soft_ratio,
-                    )
+                    segment,
+                    allow_comma_endings=allow_comma_endings,
+                    allow_colon_triplet_endings=allow_colon_triplet_endings,
+                    collapse_if_no_punctuation=collapse_if_no_punctuation,
+                    min_soft_ratio=min_soft_ratio,
+                )
                     if collapsed_lines == current_lines:
                         continue
                     segment.translation_lines = list(collapsed_lines)
                 else:
                     current_lines = list(segment.lines) if segment.lines else [""]
                     collapsed_lines = self._collapsed_source_lines_for_segment(
-                        segment,
-                        allow_comma_endings=allow_comma_endings,
-                        collapse_if_no_punctuation=collapse_if_no_punctuation,
-                        min_soft_ratio=min_soft_ratio,
-                    )
+                    segment,
+                    allow_comma_endings=allow_comma_endings,
+                    allow_colon_triplet_endings=allow_colon_triplet_endings,
+                    collapse_if_no_punctuation=collapse_if_no_punctuation,
+                    min_soft_ratio=min_soft_ratio,
+                )
                     if collapsed_lines == current_lines:
                         continue
                     segment.lines = list(collapsed_lines)
