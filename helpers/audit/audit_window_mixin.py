@@ -77,6 +77,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             self._refresh_audit_sanitize_panel()
         self._refresh_audit_control_mismatch_panel()
         self._refresh_audit_consistency_panel()
+        self._refresh_audit_term_panel()
         if self.audit_window is None:
             return
         self.audit_window.show()
@@ -318,6 +319,67 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
 
         tabs.addTab(consistency_tab, "Consistency")
 
+        term_tab = QWidget()
+        term_layout = QVBoxLayout(term_tab)
+        term_layout.setContentsMargins(8, 8, 8, 8)
+        term_layout.setSpacing(8)
+
+        term_controls_row = QHBoxLayout()
+        term_controls_row.setContentsMargins(0, 0, 0, 0)
+        term_controls_row.setSpacing(6)
+        term_controls_row.addWidget(QLabel("Source term"))
+        term_query_edit = QLineEdit()
+        term_query_edit.setPlaceholderText("e.g. 魔王")
+        term_query_edit.setClearButtonEnabled(True)
+        term_controls_row.addWidget(term_query_edit, 1)
+        term_controls_row.addWidget(QLabel("Candidates"))
+        term_candidates_edit = QLineEdit()
+        term_candidates_edit.setPlaceholderText(
+            "comma / | / ; separated, e.g. Demon Lord, Demon King"
+        )
+        term_candidates_edit.setClearButtonEnabled(True)
+        term_controls_row.addWidget(term_candidates_edit, 2)
+        term_dialogue_only_check = QCheckBox("Dialogue only")
+        term_dialogue_only_check.setChecked(True)
+        term_controls_row.addWidget(term_dialogue_only_check)
+        term_refresh_btn = QPushButton("Refresh")
+        term_controls_row.addWidget(term_refresh_btn)
+        term_layout.addLayout(term_controls_row)
+
+        term_splitter = QSplitter(Qt.Orientation.Horizontal)
+        term_layout.addWidget(term_splitter, 1)
+
+        term_variants_panel = QWidget()
+        term_variants_layout = QVBoxLayout(term_variants_panel)
+        term_variants_layout.setContentsMargins(0, 0, 0, 0)
+        term_variants_layout.setSpacing(6)
+        term_variants_layout.addWidget(QLabel("Translation Variants"))
+        term_variants_list = QListWidget()
+        term_variants_layout.addWidget(term_variants_list, 1)
+        term_splitter.addWidget(term_variants_panel)
+
+        term_hits_panel = QWidget()
+        term_hits_layout = QVBoxLayout(term_hits_panel)
+        term_hits_layout.setContentsMargins(0, 0, 0, 0)
+        term_hits_layout.setSpacing(6)
+        term_hits_layout.addWidget(QLabel("Matching Source Lines"))
+        term_hits_list = QListWidget()
+        term_hits_layout.addWidget(term_hits_list, 1)
+        term_footer = QHBoxLayout()
+        term_footer.setContentsMargins(0, 0, 0, 0)
+        term_footer.setSpacing(6)
+        term_status_label = QLabel("Type a JP source term to inspect variants.")
+        term_footer.addWidget(term_status_label, 1)
+        term_goto_btn = QPushButton("Go To")
+        term_goto_btn.setEnabled(False)
+        term_footer.addWidget(term_goto_btn)
+        term_hits_layout.addLayout(term_footer)
+        term_splitter.addWidget(term_hits_panel)
+        term_splitter.setStretchFactor(0, 4)
+        term_splitter.setStretchFactor(1, 6)
+
+        tabs.addTab(term_tab, "Term Usage")
+
         search_progress_overlay = self._create_audit_progress_overlay(
             results_list)
         sanitize_progress_overlay = self._create_audit_progress_overlay(
@@ -363,6 +425,13 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_consistency_goto_btn = consistency_goto_btn
         self.audit_consistency_apply_btn = consistency_apply_btn
         self.audit_consistency_use_common_btn = consistency_use_common_btn
+        self.audit_term_query_edit = term_query_edit
+        self.audit_term_candidates_edit = term_candidates_edit
+        self.audit_term_dialogue_only_check = term_dialogue_only_check
+        self.audit_term_variants_list = term_variants_list
+        self.audit_term_hits_list = term_hits_list
+        self.audit_term_status_label = term_status_label
+        self.audit_term_goto_btn = term_goto_btn
 
         for rule_id, label, find_text, replace_text in SANITIZE_CHAR_RULES:
             item = QListWidgetItem()
@@ -513,11 +582,37 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_apply_btn.clicked.connect(
             self._apply_audit_consistency_target_to_group
         )
+        term_query_edit.textChanged.connect(
+            lambda _text: self._refresh_audit_term_panel()
+        )
+        term_query_edit.returnPressed.connect(self._refresh_audit_term_panel)
+        term_candidates_edit.textChanged.connect(
+            lambda _text: self._refresh_audit_term_panel()
+        )
+        term_candidates_edit.returnPressed.connect(self._refresh_audit_term_panel)
+        term_dialogue_only_check.toggled.connect(
+            lambda _checked: self._refresh_audit_term_panel()
+        )
+        term_refresh_btn.clicked.connect(self._refresh_audit_term_panel)
+        term_variants_list.currentItemChanged.connect(
+            lambda _current, _previous: self._refresh_audit_term_hits()
+        )
+        term_hits_list.currentItemChanged.connect(
+            lambda current, _previous: term_goto_btn.setEnabled(current is not None)
+        )
+        term_hits_list.itemDoubleClicked.connect(
+            lambda _item: self._go_to_selected_audit_term_hit()
+        )
+        term_hits_list.itemActivated.connect(
+            lambda _item: self._go_to_selected_audit_term_hit()
+        )
+        term_goto_btn.clicked.connect(self._go_to_selected_audit_term_hit)
         tabs.currentChanged.connect(self._on_audit_tab_changed)
 
         self._refresh_audit_sanitize_panel()
         self._refresh_audit_control_mismatch_panel()
         self._refresh_audit_consistency_panel()
+        self._refresh_audit_term_panel()
         self._refresh_audit_search_replace_preview()
 
     def _on_audit_tab_changed(self, _index: int) -> None:
@@ -527,3 +622,4 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             self.audit_control_mismatch_progress_overlay)
         self._refresh_audit_sanitize_panel()
         self._refresh_audit_consistency_panel()
+        self._refresh_audit_term_panel()

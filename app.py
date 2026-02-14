@@ -273,6 +273,13 @@ class DialogueVisualEditor(
         self.audit_consistency_goto_btn: Optional[QPushButton] = None
         self.audit_consistency_apply_btn: Optional[QPushButton] = None
         self.audit_consistency_use_common_btn: Optional[QPushButton] = None
+        self.audit_term_query_edit: Optional[QLineEdit] = None
+        self.audit_term_candidates_edit: Optional[QLineEdit] = None
+        self.audit_term_dialogue_only_check: Optional[QCheckBox] = None
+        self.audit_term_variants_list: Optional[QListWidget] = None
+        self.audit_term_hits_list: Optional[QListWidget] = None
+        self.audit_term_status_label: Optional[QLabel] = None
+        self.audit_term_goto_btn: Optional[QPushButton] = None
         self.mass_translate_dialog: Optional[MassTranslateDialog] = None
         self.audit_cache_generation = 0
         self.audit_result_batch_size = 16
