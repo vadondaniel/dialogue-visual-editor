@@ -51,6 +51,171 @@ _SYSTEM_INDEXED_ARRAY_FIELDS: tuple[str, ...] = (
 )
 _SYSTEM_TERMS_ARRAY_FIELDS: tuple[str, ...] = ("basic", "commands", "params")
 
+_PLUGINS_JS_MARKER_KEY = "__dve_plugins_js_marker__"
+_PLUGINS_JS_MARKER_VALUE = "plugins_js"
+_PLUGINS_JS_PREFIX_KEY = "__dve_plugins_js_prefix__"
+_PLUGINS_JS_SUFFIX_KEY = "__dve_plugins_js_suffix__"
+_PLUGINS_JS_ARRAY_KEY = "__dve_plugins_js_array__"
+_PLUGINS_JS_DEFAULT_PREFIX = "var $plugins =\n"
+_PLUGINS_JS_DEFAULT_SUFFIX = ";\n"
+
+
+def is_plugins_js_path(path: Path) -> bool:
+    return path.name.strip().lower() == "plugins.js"
+
+
+def _find_matching_bracket_end(source: str, start_index: int) -> int | None:
+    if start_index < 0 or start_index >= len(source) or source[start_index] != "[":
+        return None
+    depth = 0
+    in_string = False
+    string_quote = ""
+    escaping = False
+    for idx in range(start_index, len(source)):
+        char = source[idx]
+        if in_string:
+            if escaping:
+                escaping = False
+                continue
+            if char == "\\":
+                escaping = True
+                continue
+            if char == string_quote:
+                in_string = False
+            continue
+        if char == '"' or char == "'":
+            in_string = True
+            string_quote = char
+            continue
+        if char == "[":
+            depth += 1
+            continue
+        if char == "]":
+            depth -= 1
+            if depth == 0:
+                return idx
+    return None
+
+
+def _parse_plugins_js_source(source: str) -> dict[str, Any]:
+    marker_index = source.find("$plugins")
+    if marker_index < 0:
+        raise ValueError("plugins.js does not contain a $plugins assignment.")
+    array_start = source.find("[", marker_index)
+    if array_start < 0:
+        raise ValueError("plugins.js does not contain a plugin array.")
+    array_end = _find_matching_bracket_end(source, array_start)
+    if array_end is None:
+        raise ValueError("plugins.js contains an unmatched plugin array bracket.")
+
+    array_payload = source[array_start: array_end + 1]
+    plugin_array = json.loads(array_payload)
+    if not isinstance(plugin_array, list):
+        raise ValueError("plugins.js plugin payload is not a JSON array.")
+
+    return {
+        _PLUGINS_JS_MARKER_KEY: _PLUGINS_JS_MARKER_VALUE,
+        _PLUGINS_JS_PREFIX_KEY: source[:array_start],
+        _PLUGINS_JS_SUFFIX_KEY: source[array_end + 1:],
+        _PLUGINS_JS_ARRAY_KEY: plugin_array,
+    }
+
+
+def load_plugins_js_file(path: Path) -> dict[str, Any]:
+    source = path.read_text(encoding="utf-8")
+    return _parse_plugins_js_source(source)
+
+
+def is_plugins_js_data(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    marker = data.get(_PLUGINS_JS_MARKER_KEY)
+    if marker != _PLUGINS_JS_MARKER_VALUE:
+        return False
+    return isinstance(data.get(_PLUGINS_JS_ARRAY_KEY), list)
+
+
+def plugins_js_source_from_data(data: Any) -> str:
+    if not is_plugins_js_data(data):
+        raise ValueError("Payload is not recognized plugins.js structured data.")
+    wrapper = data
+    prefix_raw = wrapper.get(_PLUGINS_JS_PREFIX_KEY)
+    suffix_raw = wrapper.get(_PLUGINS_JS_SUFFIX_KEY)
+    array_raw = wrapper.get(_PLUGINS_JS_ARRAY_KEY)
+    prefix = prefix_raw if isinstance(
+        prefix_raw, str) else _PLUGINS_JS_DEFAULT_PREFIX
+    suffix = suffix_raw if isinstance(
+        suffix_raw, str) else _PLUGINS_JS_DEFAULT_SUFFIX
+    plugin_array = array_raw if isinstance(array_raw, list) else []
+    array_payload = json.dumps(plugin_array, ensure_ascii=False, indent=2)
+    return f"{prefix}{array_payload}{suffix}"
+
+
+def _build_plugins_text_segments(path: Path, data: dict[str, Any]) -> list[DialogueSegment]:
+    if not is_plugins_js_data(data):
+        return []
+    plugin_rows = data.get(_PLUGINS_JS_ARRAY_KEY)
+    if not isinstance(plugin_rows, list):
+        return []
+
+    segments: list[DialogueSegment] = []
+    for idx, row in enumerate(plugin_rows):
+        if not isinstance(row, dict):
+            continue
+        row_number = idx + 1
+        plugin_name_raw = row.get("name")
+        plugin_name = plugin_name_raw if isinstance(plugin_name_raw, str) and plugin_name_raw.strip(
+        ) else f"Plugin{row_number}"
+        description_raw = row.get("description")
+        if isinstance(description_raw, str) and description_raw.strip():
+            description_lines = split_lines_preserve_empty(description_raw)
+            uid = f"{path.name}:J:{row_number}:description"
+            code101 = {"code": 101, "indent": 0,
+                       "parameters": ["", 0, 0, 2, plugin_name]}
+            segment = DialogueSegment(
+                uid=uid,
+                context=f"{path.name} > plugin[{row_number}].description",
+                code101=code101,
+                lines=list(description_lines),
+                original_lines=list(description_lines),
+                source_lines=list(description_lines),
+            )
+            setattr(
+                segment,
+                "plugin_text_path",
+                (_PLUGINS_JS_ARRAY_KEY, idx, "description"),
+            )
+            segments.append(segment)
+
+        parameters_raw = row.get("parameters")
+        if not isinstance(parameters_raw, dict):
+            continue
+        for param_index, (param_key, param_value) in enumerate(parameters_raw.items(), start=1):
+            if not isinstance(param_key, str) or not isinstance(param_value, str):
+                continue
+            if not param_value.strip():
+                continue
+            lines = split_lines_preserve_empty(param_value)
+            safe_key = _safe_system_field_slug(param_key)
+            uid = f"{path.name}:J:{row_number}:param_{param_index}_{safe_key}"
+            code101 = {"code": 101, "indent": 0,
+                       "parameters": ["", 0, 0, 2, plugin_name]}
+            segment = DialogueSegment(
+                uid=uid,
+                context=f"{path.name} > plugin[{row_number}].parameters.{param_key}",
+                code101=code101,
+                lines=list(lines),
+                original_lines=list(lines),
+                source_lines=list(lines),
+            )
+            setattr(
+                segment,
+                "plugin_text_path",
+                (_PLUGINS_JS_ARRAY_KEY, idx, "parameters", param_key),
+            )
+            segments.append(segment)
+    return segments
+
 
 def _choice_lines_from_code102(entry: dict[str, Any]) -> list[str]:
     params = entry.get("parameters")
@@ -185,6 +350,20 @@ def _build_system_text_segments(path: Path, data: dict[str, Any]) -> list[Dialog
 
 
 def parse_dialogue_data(path: Path, data: Any) -> FileSession:
+    if is_plugins_js_data(data):
+        plugin_segments = _build_plugins_text_segments(path, data)
+        plugin_session = FileSession(
+            path=path,
+            data=data,
+            bundles=[],
+            segments=plugin_segments,
+        )
+        setattr(plugin_session, "is_name_index_session", True)
+        setattr(plugin_session, "name_index_kind", "plugin")
+        setattr(plugin_session, "name_index_uid_prefix", "J")
+        setattr(plugin_session, "name_index_label", "Plugin")
+        return plugin_session
+
     bundles: list[CommandBundle] = []
     segments: list[DialogueSegment] = []
     list_counter = 0
@@ -459,6 +638,9 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
 
 
 def parse_dialogue_file(path: Path) -> FileSession:
+    if is_plugins_js_path(path):
+        data = load_plugins_js_file(path)
+        return parse_dialogue_data(path, data)
     with path.open("r", encoding="utf-8") as src:
         data = json.load(src)
     return parse_dialogue_data(path, data)

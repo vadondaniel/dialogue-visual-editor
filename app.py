@@ -2276,6 +2276,32 @@ class DialogueVisualEditor(
         if target_item is not None:
             self.file_list.setCurrentItem(target_item)
 
+    def _plugins_js_candidates(self, data_dir: Path) -> list[Path]:
+        parent_dir = data_dir.parent
+        return [
+            parent_dir / "js" / "plugins.js",
+            data_dir / "js" / "plugins.js",
+        ]
+
+    def _collect_supported_file_paths(self, data_dir: Path) -> list[Path]:
+        supported_files: list[Path] = [
+            path
+            for path in data_dir.glob("*.json")
+            if path.is_file() and not path.name.endswith(".bak")
+        ]
+        seen: set[Path] = {path.resolve() for path in supported_files}
+        for candidate in self._plugins_js_candidates(data_dir):
+            if not candidate.is_file():
+                continue
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            supported_files.append(resolved)
+            seen.add(resolved)
+        supported_files.sort(
+            key=lambda path: natural_sort_key(self._relative_path(path)))
+        return supported_files
+
     def _load_data_folder(
         self,
         folder: Path,
@@ -2344,16 +2370,11 @@ class DialogueVisualEditor(
         self._update_reset_json_button(None)
         self._refresh_translator_detail_panel()
 
-        all_json = [
-            path for path in self.data_dir.glob("*.json")
-            if path.is_file() and not path.name.endswith(".bak")
-        ]
-        all_json.sort(key=lambda p: natural_sort_key(p.name))
-        self.file_paths = all_json
+        self.file_paths = self._collect_supported_file_paths(self.data_dir)
 
         if not self.file_paths:
             self.file_header_label.setText(
-                "No JSON files found in selected folder")
+                "No supported files found in selected folder")
             self._update_reset_json_button(None)
             self.save_btn.setEnabled(False)
             self.save_all_btn.setEnabled(False)
@@ -2363,7 +2384,7 @@ class DialogueVisualEditor(
             self.selected_segment_uid = None
             self.current_reference_map = {}
             self._refresh_translator_detail_panel()
-            self.statusBar().showMessage("No JSON files found.")
+            self.statusBar().showMessage("No supported files found.")
             return
 
         load_errors: list[str] = []
@@ -2445,12 +2466,12 @@ class DialogueVisualEditor(
             self._set_apply_snapshot_actions_enabled(False)
             self.next_problem_btn.setEnabled(False)
             self.file_header_label.setText(
-                "No readable JSON files found in selected folder.")
+                "No readable supported files found in selected folder.")
             self._update_reset_json_button(None)
             self.selected_segment_uid = None
             self.current_reference_map = {}
             self._refresh_translator_detail_panel()
-            self.statusBar().showMessage("No readable JSON files found.")
+            self.statusBar().showMessage("No readable supported files found.")
             return
 
         has_explicit_speakers = any(
@@ -2528,10 +2549,14 @@ class DialogueVisualEditor(
     def _relative_path(self, path: Path) -> str:
         if self.data_dir is None:
             return path.name
+        resolved = path.resolve()
         try:
-            return str(path.relative_to(self.data_dir))
+            return str(resolved.relative_to(self.data_dir))
         except ValueError:
-            return str(path)
+            try:
+                return str(resolved.relative_to(self.data_dir.parent))
+            except ValueError:
+                return str(resolved)
 
     def _focus_existing_block_widget(self, uid: str) -> bool:
         widget = self.block_widgets.get(uid)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 import shutil
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from ..core.models import NO_SPEAKER_KEY, CommandToken, DialogueSegment, FileSession
+from ..core.parser import is_plugins_js_path, plugins_js_source_from_data
 from ..core.script_message_utils import build_game_message_call
 from ..core.text_utils import chunk_lines, visible_length
 
@@ -406,6 +408,16 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     self._set_json_value_by_path(
                         session.data, path_tokens_raw, new_value)
                 return
+            if name_index_kind == "plugin":
+                for segment in session.segments:
+                    path_tokens_raw = getattr(segment, "plugin_text_path", ())
+                    if not isinstance(path_tokens_raw, tuple):
+                        continue
+                    new_value = "\n".join(
+                        segment.lines) if segment.lines else ""
+                    self._set_json_value_by_path(
+                        session.data, path_tokens_raw, new_value)
+                return
 
         if is_name_index_session and isinstance(session.data, list):
             uid_prefix_raw = getattr(session, "name_index_uid_prefix", "A")
@@ -722,7 +734,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             cast(QWidget, self),
             "Apply snapshots to game files",
             (
-                f"Apply '{version_label}' snapshots to JSON game files in:\n"
+                f"Apply '{version_label}' snapshots to game files for:\n"
                 f"{self.data_dir}\n\n"
                 "This will overwrite current file contents."
             ),
@@ -747,8 +759,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     backup_path = path.with_suffix(path.suffix + ".bak")
                     if not backup_path.exists():
                         shutil.copy2(path, backup_path)
+                output_text = payload
+                if is_plugins_js_path(path):
+                    decoded_payload = json.loads(payload)
+                    output_text = plugins_js_source_from_data(decoded_payload)
                 with path.open("w", encoding="utf-8") as dst:
-                    dst.write(payload)
+                    dst.write(output_text)
                 applied += 1
             except Exception as exc:
                 failed.append(f"{path.name}: {exc}")

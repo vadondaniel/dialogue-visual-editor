@@ -225,6 +225,8 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             return "Enemy"
         if kind == "system":
             return "System"
+        if kind == "plugin":
+            return "Plugin"
         return "Entry"
 
     def _name_index_uid_prefix(self, session: FileSession) -> str:
@@ -258,6 +260,8 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             return "E"
         if kind == "system":
             return "Y"
+        if kind == "plugin":
+            return "J"
         return "A"
 
     def _actor_id_from_uid(self, uid: str) -> Optional[int]:
