@@ -346,6 +346,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return False
 
         translator_mode = self._is_translator_mode()
+        source_dirty_before_save = self._session_has_source_changes(session)
         try:
             if not self._save_translation_state([session.path]):
                 return False
@@ -367,6 +368,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     pass
 
             if translator_mode:
+                if source_dirty_before_save:
+                    self._mark_session_source_saved(session)
+                    self._clear_structural_history_for_path(session.path)
                 self._mark_session_translation_saved(session)
             else:
                 self._mark_session_source_saved(session)
@@ -377,7 +381,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             if refresh_current_view and self.current_path == session.path:
                 self._render_session(session, preserve_scroll=True)
 
-            if translator_mode:
+            if translator_mode and not source_dirty_before_save:
                 self.statusBar().showMessage(
                     f"Saved TL snapshot to DB: {session.path.name}")
             else:
@@ -407,8 +411,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         tl_dirty = self._session_has_translation_changes(session)
 
         if self._is_translator_mode():
-            if not tl_dirty:
-                self.statusBar().showMessage("No unsaved TL changes in current file.")
+            if not source_dirty and not tl_dirty:
+                self.statusBar().showMessage("No unsaved changes in current file.")
                 return True
             return self._save_session(session, refresh_current_view=True)
 
@@ -472,10 +476,11 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             dirty_paths = [
                 path
                 for path, session in self.sessions.items()
-                if self._session_has_translation_changes(session)
+                if self._session_has_source_changes(session)
+                or self._session_has_translation_changes(session)
             ]
             if not dirty_paths:
-                self.statusBar().showMessage("No unsaved TL files.")
+                self.statusBar().showMessage("No unsaved files.")
                 return True
         else:
             dirty_paths = [

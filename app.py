@@ -901,25 +901,42 @@ class DialogueVisualEditor(
             replacements += count
         return normalized_lines, replacements
 
-    def _count_possible_control_code_normalizations(self) -> tuple[int, int, int]:
+    def _count_possible_control_code_normalizations(
+        self,
+        *,
+        include_source_text: bool,
+        include_translation_text: bool,
+        include_translation_speaker: bool,
+    ) -> tuple[int, int, int]:
         source_text = 0
         translation_text = 0
         translation_speaker = 0
         for session in self.sessions.values():
             for segment in session.segments:
-                _, source_count = self._normalize_control_codes_in_lines(segment.lines)
-                source_text += source_count
-                _, tl_count = self._normalize_control_codes_in_lines(
-                    segment.translation_lines
-                )
-                translation_text += tl_count
-                _, speaker_count = normalize_control_code_word_case(
-                    segment.translation_speaker
-                )
-                translation_speaker += speaker_count
+                if include_source_text:
+                    _, source_count = self._normalize_control_codes_in_lines(
+                        segment.lines
+                    )
+                    source_text += source_count
+                if include_translation_text:
+                    _, tl_count = self._normalize_control_codes_in_lines(
+                        segment.translation_lines
+                    )
+                    translation_text += tl_count
+                if include_translation_speaker:
+                    _, speaker_count = normalize_control_code_word_case(
+                        segment.translation_speaker
+                    )
+                    translation_speaker += speaker_count
         return source_text, translation_text, translation_speaker
 
-    def _apply_control_code_normalization(self) -> tuple[int, int, int, int, int]:
+    def _apply_control_code_normalization(
+        self,
+        *,
+        include_source_text: bool,
+        include_translation_text: bool,
+        include_translation_speaker: bool,
+    ) -> tuple[int, int, int, int, int]:
         source_text = 0
         translation_text = 0
         translation_speaker = 0
@@ -931,37 +948,40 @@ class DialogueVisualEditor(
             for segment in session.segments:
                 segment_changed = False
 
-                normalized_source_lines, source_count = self._normalize_control_codes_in_lines(
-                    segment.lines
-                )
-                if source_count > 0 and normalized_source_lines != segment.lines:
-                    segment.lines = list(normalized_source_lines)
-                    segment.source_lines = list(normalized_source_lines)
-                    source_text += source_count
-                    segment_changed = True
+                if include_source_text:
+                    normalized_source_lines, source_count = self._normalize_control_codes_in_lines(
+                        segment.lines
+                    )
+                    if source_count > 0 and normalized_source_lines != segment.lines:
+                        segment.lines = list(normalized_source_lines)
+                        segment.source_lines = list(normalized_source_lines)
+                        source_text += source_count
+                        segment_changed = True
 
-                normalized_tl_lines, tl_count = self._normalize_control_codes_in_lines(
-                    segment.translation_lines
-                )
-                if tl_count > 0 and normalized_tl_lines != segment.translation_lines:
-                    segment.translation_lines = list(normalized_tl_lines)
-                    translation_text += tl_count
-                    segment_changed = True
+                if include_translation_text:
+                    normalized_tl_lines, tl_count = self._normalize_control_codes_in_lines(
+                        segment.translation_lines
+                    )
+                    if tl_count > 0 and normalized_tl_lines != segment.translation_lines:
+                        segment.translation_lines = list(normalized_tl_lines)
+                        translation_text += tl_count
+                        segment_changed = True
 
-                normalized_tl_speaker, speaker_count = normalize_control_code_word_case(
-                    segment.translation_speaker
-                )
-                if (
-                    speaker_count > 0
-                    and normalized_tl_speaker != segment.translation_speaker
-                ):
-                    segment.translation_speaker = normalized_tl_speaker
-                    cleaned_speaker = normalized_tl_speaker.strip()
-                    if cleaned_speaker:
-                        speaker_key = self._speaker_key_for_segment(segment)
-                        self.speaker_translation_map[speaker_key] = cleaned_speaker
-                    translation_speaker += speaker_count
-                    segment_changed = True
+                if include_translation_speaker:
+                    normalized_tl_speaker, speaker_count = normalize_control_code_word_case(
+                        segment.translation_speaker
+                    )
+                    if (
+                        speaker_count > 0
+                        and normalized_tl_speaker != segment.translation_speaker
+                    ):
+                        segment.translation_speaker = normalized_tl_speaker
+                        cleaned_speaker = normalized_tl_speaker.strip()
+                        if cleaned_speaker:
+                            speaker_key = self._speaker_key_for_segment(segment)
+                            self.speaker_translation_map[speaker_key] = cleaned_speaker
+                        translation_speaker += speaker_count
+                        segment_changed = True
 
                 if segment_changed:
                     changed_blocks += 1
@@ -988,8 +1008,15 @@ class DialogueVisualEditor(
             )
             return
 
+        include_source_text = True
+        include_translation_text = True
+        include_translation_speaker = True
         source_count, tl_count, speaker_count = (
-            self._count_possible_control_code_normalizations()
+            self._count_possible_control_code_normalizations(
+                include_source_text=include_source_text,
+                include_translation_text=include_translation_text,
+                include_translation_speaker=include_translation_speaker,
+            )
         )
         total_count = source_count + tl_count + speaker_count
         if total_count <= 0:
@@ -1010,6 +1037,7 @@ class DialogueVisualEditor(
                 "Normalize control-code casing across loaded files?\n\n"
                 "This makes control-code words uppercase for consistency.\n"
                 "Example: \\c[0] -> \\C[0]\n\n"
+                "Scope: Source text + translation text + translation speaker.\n\n"
                 f"Possible normalizations: {total_count}\n"
                 f"Source text: {source_count}\n"
                 f"Translation text: {tl_count}\n"
@@ -1028,7 +1056,11 @@ class DialogueVisualEditor(
             applied_tl,
             applied_speaker,
             changed_blocks,
-        ) = self._apply_control_code_normalization()
+        ) = self._apply_control_code_normalization(
+            include_source_text=include_source_text,
+            include_translation_text=include_translation_text,
+            include_translation_speaker=include_translation_speaker,
+        )
         if applied_total <= 0:
             self.statusBar().showMessage("Normalize Codes: no changes applied.")
             return
