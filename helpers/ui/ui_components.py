@@ -840,7 +840,7 @@ class DialogueBlockWidget(QFrame):
     delete_requested = Signal(str)
     reset_requested = Signal(str)
     split_overflow_requested = Signal(str)
-    line1_inference_override_changed = Signal(str, bool, bool)
+    line1_inference_override_changed = Signal(str, bool, bool, bool, bool)
 
     def __init__(
         self,
@@ -1251,7 +1251,9 @@ class DialogueBlockWidget(QFrame):
         return bool(getattr(self.segment, "disable_line1_speaker_inference", False))
 
     def _line1_inference_is_forced(self) -> bool:
-        return bool(getattr(self.segment, "force_line1_speaker_inference", False))
+        return bool(getattr(self.segment, "force_line1_speaker_inference", False)) and (
+            not self._line1_inference_is_disabled()
+        )
 
     def _segment_storage_lines(self) -> list[str]:
         lines = self.segment.translation_lines if self.translator_mode else self.segment.lines
@@ -1328,11 +1330,13 @@ class DialogueBlockWidget(QFrame):
             self.line1_not_speaker_button.blockSignals(False)
 
     def _on_line1_not_speaker_clicked(self, checked: bool) -> None:
+        prev_disabled = self._line1_inference_is_disabled()
+        prev_forced = self._line1_inference_is_forced()
         disabled = bool(checked)
         forced = not disabled
         if (
-            self._line1_inference_is_disabled() == disabled
-            and self._line1_inference_is_forced() == forced
+            prev_disabled == disabled
+            and prev_forced == forced
         ):
             return
         self.segment.disable_line1_speaker_inference = disabled
@@ -1340,7 +1344,12 @@ class DialogueBlockWidget(QFrame):
         self._load_editor_lines_from_segment()
         self._sync_control_code_visibility(force=True)
         self.line1_inference_override_changed.emit(
-            self.segment.uid, disabled, forced)
+            self.segment.uid,
+            disabled,
+            forced,
+            prev_disabled,
+            prev_forced,
+        )
         self.refresh_metadata()
 
     def _is_changed(self) -> bool:

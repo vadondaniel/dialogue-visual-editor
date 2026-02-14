@@ -16,6 +16,7 @@ from ..core.models import (
     FileSession,
     InsertedBlockAction,
     MergeBlocksAction,
+    NO_SPEAKER_KEY,
     ResetBlockAction,
     SplitOverflowAction,
     StructuralAction,
@@ -332,30 +333,160 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             segment.source_lines = list(segment.lines)
         self._refresh_dirty_state(session)
 
-    def _on_line1_inference_override_changed(self, uid: str, disabled: bool, forced: bool) -> None:
+    def _line1_inference_match_key(self, segment: DialogueSegment) -> str:
+        if not segment.is_structural_dialogue:
+            return ""
+        if segment.speaker_name != NO_SPEAKER_KEY:
+            return ""
+        source_lines = self._segment_source_lines_for_display(segment)
+        if len(source_lines) <= 1:
+            return ""
+        first_line = source_lines[0].strip()
+        return first_line
+
+    def _matching_line1_inference_segments(
+        self,
+        match_key: str,
+    ) -> list[tuple[Path, FileSession, DialogueSegment]]:
+        if not match_key:
+            return []
+        matches: list[tuple[Path, FileSession, DialogueSegment]] = []
+        for path, session in self.sessions.items():
+            if self._is_name_index_session(session):
+                continue
+            for segment in session.segments:
+                if self._line1_inference_match_key(segment) == match_key:
+                    matches.append((path, session, segment))
+        return matches
+
+    def _set_line1_inference_mode_for_segment(
+        self,
+        segment: DialogueSegment,
+        *,
+        disabled: bool,
+        forced: bool,
+    ) -> bool:
+        next_disabled = bool(disabled)
+        next_forced = bool(forced) and (not next_disabled)
+        changed = (
+            bool(segment.disable_line1_speaker_inference) != next_disabled
+            or bool(segment.force_line1_speaker_inference) != next_forced
+        )
+        segment.disable_line1_speaker_inference = next_disabled
+        segment.force_line1_speaker_inference = next_forced
+        return changed
+
+    def _prompt_line1_inference_scope(
+        self,
+        *,
+        disabled: bool,
+        forced: bool,
+        match_count: int,
+        line1_preview: str,
+    ) -> str:
+        if match_count <= 1:
+            return "single"
+        action_label = (
+            "exclude line 1 as speaker"
+            if disabled
+            else "include line 1 as speaker"
+        )
+        preview = line1_preview.strip()
+        if len(preview) > 80:
+            preview = f"{preview[:77]}..."
+        box = QMessageBox(cast(QWidget, self))
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Line1 Speaker Override")
+        box.setText(f"Apply '{action_label}' to matching occurrences?")
+        box.setInformativeText(
+            f"Found {match_count} blocks with first line:\n{preview}\n\n"
+            "Apply this to this block only, or all matches?"
+        )
+        this_button = box.addButton("This Block", QMessageBox.ButtonRole.AcceptRole)
+        all_button = box.addButton("All Matches", QMessageBox.ButtonRole.YesRole)
+        cancel_button = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cast(QPushButton, this_button))
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked == cancel_button:
+            return "cancel"
+        if clicked == all_button:
+            return "all"
+        return "single"
+
+    def _on_line1_inference_override_changed(
+        self,
+        uid: str,
+        disabled: bool,
+        forced: bool,
+        prev_disabled: bool,
+        prev_forced: bool,
+    ) -> None:
         if self.current_path is None:
             return
-        session = self.sessions.get(self.current_path)
-        if session is None:
+        current_session = self.sessions.get(self.current_path)
+        if current_session is None:
             return
         segment = self.current_segment_lookup.get(uid)
         if segment is None:
             return
         next_disabled = bool(disabled)
         next_forced = bool(forced) and (not next_disabled)
-        segment.disable_line1_speaker_inference = next_disabled
-        segment.force_line1_speaker_inference = next_forced
-        self._refresh_dirty_state(session)
-        self._refresh_translator_detail_panel()
-        if next_disabled:
-            state_label = "set to not-speaker"
-        elif next_forced:
-            state_label = "forced as speaker"
-        else:
-            state_label = "auto"
-        self.statusBar().showMessage(
-            f"Line-1 speaker inference {state_label} for block {uid}."
+        line1_key = self._line1_inference_match_key(segment)
+        matches = self._matching_line1_inference_segments(line1_key)
+        scope = self._prompt_line1_inference_scope(
+            disabled=next_disabled,
+            forced=next_forced,
+            match_count=len(matches),
+            line1_preview=line1_key,
         )
+
+        touched_paths: set[Path] = set()
+        if scope == "cancel":
+            if self._set_line1_inference_mode_for_segment(
+                segment,
+                disabled=bool(prev_disabled),
+                forced=bool(prev_forced),
+            ):
+                touched_paths.add(current_session.path)
+            self.statusBar().showMessage("Line-1 speaker override canceled.")
+        elif scope == "all":
+            changed_count = 0
+            for path, _session, candidate in matches:
+                if self._set_line1_inference_mode_for_segment(
+                    candidate,
+                    disabled=next_disabled,
+                    forced=next_forced,
+                ):
+                    touched_paths.add(path)
+                    changed_count += 1
+            action_text = "not-speaker" if next_disabled else "speaker"
+            self.statusBar().showMessage(
+                f"Set line 1 as {action_text} for {changed_count} matching blocks."
+            )
+        else:
+            if self._set_line1_inference_mode_for_segment(
+                segment,
+                disabled=next_disabled,
+                forced=next_forced,
+            ):
+                touched_paths.add(current_session.path)
+            state_label = "not-speaker" if next_disabled else "speaker"
+            self.statusBar().showMessage(
+                f"Set line 1 as {state_label} for block {uid}."
+            )
+
+        if not touched_paths:
+            touched_paths.add(current_session.path)
+        for path in touched_paths:
+            session = self.sessions.get(path)
+            if session is None:
+                continue
+            self._refresh_dirty_state(session)
+        if self.current_path in touched_paths:
+            self._render_session(current_session, preserve_scroll=True)
+        else:
+            self._refresh_translator_detail_panel()
 
     def _new_segment_uid(self, path: Path) -> str:
         self.segment_uid_counter += 1
