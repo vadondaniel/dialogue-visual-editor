@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import html
 import json
 import re
 import shutil
@@ -15,6 +16,10 @@ from ..core.script_message_utils import build_game_message_call
 from ..core.text_utils import chunk_lines, visible_length
 
 ApplyVersionKind = Literal["original", "working", "translated"]
+_HTML_TITLE_TAG_RE = re.compile(
+    r"(<title\b[^>]*>)(.*?)(</title>)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 class _EditorHostTypingFallback:
@@ -698,6 +703,101 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return "working"
         return "translated"
 
+    def _system_game_title_from_snapshot(self, version: ApplyVersionKind) -> str:
+        if self.version_db is None:
+            return ""
+        system_path: Optional[Path] = None
+        for path in self.file_paths:
+            if path.name.strip().lower() == "system.json":
+                system_path = path
+                break
+        if system_path is None:
+            return ""
+        rel_path = self._relative_path(system_path)
+        payload = self.version_db.get_snapshot_payload(rel_path, version)
+        if not payload:
+            return ""
+        try:
+            decoded = json.loads(payload)
+        except Exception:
+            return ""
+        if not isinstance(decoded, dict):
+            return ""
+        title_raw = decoded.get("gameTitle")
+        return title_raw if isinstance(title_raw, str) else ""
+
+    def _index_html_candidates(self) -> list[Path]:
+        if self.data_dir is None:
+            return []
+        data_dir = self.data_dir
+        candidates = [
+            data_dir.parent / "index.html",
+            data_dir / "index.html",
+            data_dir.parent.parent / "index.html",
+        ]
+        unique_candidates: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except Exception:
+                resolved = candidate
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            unique_candidates.append(resolved)
+        return unique_candidates
+
+    def _replace_index_html_title(self, html_text: str, title_text: str) -> tuple[str, bool]:
+        escaped_title = html.escape(title_text, quote=False)
+        if _HTML_TITLE_TAG_RE.search(html_text):
+            updated = _HTML_TITLE_TAG_RE.sub(
+                lambda match: f"{match.group(1)}{escaped_title}{match.group(3)}",
+                html_text,
+                count=1,
+            )
+            return updated, True
+        head_close = re.search(r"</head\s*>", html_text, re.IGNORECASE)
+        if head_close is None:
+            return html_text, False
+        newline = "\r\n" if "\r\n" in html_text else "\n"
+        insert_text = f"<title>{escaped_title}</title>{newline}"
+        insert_at = head_close.start()
+        updated = html_text[:insert_at] + insert_text + html_text[insert_at:]
+        return updated, True
+
+    def _apply_game_title_to_index_html(self, game_title: str) -> tuple[bool, str]:
+        stripped_title = game_title.strip()
+        if not stripped_title:
+            return False, ""
+        index_path = next(
+            (candidate for candidate in self._index_html_candidates() if candidate.is_file()),
+            None,
+        )
+        if index_path is None:
+            return False, "index.html not found."
+
+        try:
+            original_text = index_path.read_text(encoding="utf-8")
+        except Exception:
+            return False, f"Could not read {index_path.name} as UTF-8."
+
+        updated_text, replaced = self._replace_index_html_title(
+            original_text,
+            stripped_title,
+        )
+        if not replaced:
+            return False, f"Could not locate <title> or </head> in {index_path.name}."
+        if updated_text == original_text:
+            return False, ""
+
+        if self.backup_check.isChecked():
+            backup_path = index_path.with_suffix(index_path.suffix + ".bak")
+            if not backup_path.exists():
+                shutil.copy2(index_path, backup_path)
+        index_path.write_text(updated_text, encoding="utf-8")
+        return True, str(index_path)
+
     def _apply_selected_snapshot_to_game_files(self) -> None:
         if self.data_dir is None:
             QMessageBox.warning(
@@ -747,6 +847,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         applied = 0
         missing: list[str] = []
         failed: list[str] = []
+        index_title_applied = False
+        index_title_warning = ""
         target_paths = [path for path in self.file_paths if path in self.sessions]
         for path in target_paths:
             rel_path = self._relative_path(path)
@@ -768,6 +870,15 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 applied += 1
             except Exception as exc:
                 failed.append(f"{path.name}: {exc}")
+
+        if applied > 0:
+            try:
+                game_title = self._system_game_title_from_snapshot(version)
+                index_title_applied, index_title_warning = self._apply_game_title_to_index_html(
+                    game_title
+                )
+            except Exception as exc:
+                failed.append(f"index.html title sync: {exc}")
 
         if failed:
             QMessageBox.warning(
@@ -794,13 +905,17 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         self._load_data_folder(current_dir)
         if missing or failed:
             file_label = "file" if applied == 1 else "files"
+            title_suffix = " Synced index.html title." if index_title_applied else ""
             self.statusBar().showMessage(
-                f"Applied {version_label} snapshots to {applied} {file_label} with warnings."
+                f"Applied {version_label} snapshots to {applied} {file_label} with warnings.{title_suffix}"
             )
         else:
             file_label = "file" if applied == 1 else "files"
+            status_suffix = " Synced index.html title." if index_title_applied else ""
+            if index_title_warning:
+                status_suffix += f" ({index_title_warning})"
             self.statusBar().showMessage(
-                f"Applied {version_label} snapshots to {applied} {file_label}."
+                f"Applied {version_label} snapshots to {applied} {file_label}.{status_suffix}"
             )
 
     def _export_translated_data_for_session(self, session: FileSession) -> Any:
