@@ -56,6 +56,7 @@ try:
         NO_SPEAKER_KEY,
         StructuralAction,
         configure_message_text_metrics,
+        configure_variable_text_metrics,
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
@@ -77,6 +78,7 @@ try:
         ItemNameDescriptionWidget,
         MassTranslateDialog,
         SpeakerManagerDialog,
+        VariableLengthManagerDialog,
     )
 except ImportError:
     from helpers import (
@@ -87,6 +89,7 @@ except ImportError:
         NO_SPEAKER_KEY,
         StructuralAction,
         configure_message_text_metrics,
+        configure_variable_text_metrics,
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
@@ -108,6 +111,7 @@ except ImportError:
         ItemNameDescriptionWidget,
         MassTranslateDialog,
         SpeakerManagerDialog,
+        VariableLengthManagerDialog,
     )
 
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
@@ -146,6 +150,9 @@ _JS_RETURN_INT_RE = re.compile(r"return\s+(-?\d+)\s*;")
 _JS_SYSTEM_ADVANCED_FONT_RE = re.compile(
     r"\$dataSystem\s*\.\s*advanced\s*\.\s*fontSize"
 )
+_VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
+_DEFAULT_VARIABLE_LENGTH_ESTIMATE = 4
+_MAX_VARIABLE_LENGTH_ESTIMATE = 64
 
 
 class DialogueVisualEditor(
@@ -197,6 +204,8 @@ class DialogueVisualEditor(
         self.detected_rpg_engine = "unknown"
         self.detected_message_font_size = _MV_DEFAULT_MESSAGE_FONT_SIZE
         self.detected_message_font_source = "default"
+        self.default_variable_length_estimate = _DEFAULT_VARIABLE_LENGTH_ESTIMATE
+        self.variable_length_overrides: dict[int, int] = {}
         self.ui_state_path = Path(
             __file__).resolve().with_name(UI_STATE_FILENAME)
         self.project_ui_settings_by_folder: dict[str, dict[str, Any]] = {}
@@ -358,6 +367,7 @@ class DialogueVisualEditor(
         self._next_problem_shortcut = QShortcut(QKeySequence("F5"), self)
         self._next_problem_shortcut.activated.connect(self._jump_to_next_problem)
 
+        self._sync_variable_length_measurement_settings()
         self._build_ui()
         app_instance = QApplication.instance()
         if app_instance is not None:
@@ -726,6 +736,13 @@ class DialogueVisualEditor(
         speakers_action.setShortcut(QKeySequence("F1"))
         speakers_action.triggered.connect(self._open_speaker_manager)
         tools_menu.addAction(speakers_action)
+
+        variable_lengths_action = QAction("Variable Lengths...", self)
+        variable_lengths_action.setShortcut(QKeySequence("F6"))
+        variable_lengths_action.triggered.connect(
+            self._open_variable_length_manager
+        )
+        tools_menu.addAction(variable_lengths_action)
 
         mass_translate_action = QAction("Mass Translate...", self)
         mass_translate_action.setShortcut(QKeySequence("F2"))
@@ -1804,6 +1821,119 @@ class DialogueVisualEditor(
         dialog.exec()
         self._refresh_translator_detail_panel()
 
+    def _clamp_variable_length_estimate(self, value: int) -> int:
+        return max(1, min(_MAX_VARIABLE_LENGTH_ESTIMATE, int(value)))
+
+    def _variable_length_estimate_for_id(self, variable_id: int) -> int:
+        safe_id = max(0, int(variable_id))
+        override = self.variable_length_overrides.get(safe_id)
+        if isinstance(override, int) and override > 0:
+            return self._clamp_variable_length_estimate(override)
+        return self._clamp_variable_length_estimate(self.default_variable_length_estimate)
+
+    def _variable_length_override_exists(self, variable_id: int) -> bool:
+        return max(0, int(variable_id)) in self.variable_length_overrides
+
+    def _default_variable_length_for_manager(self) -> int:
+        return self._clamp_variable_length_estimate(self.default_variable_length_estimate)
+
+    def _sync_variable_length_measurement_settings(self) -> None:
+        configure_variable_text_metrics(
+            self._clamp_variable_length_estimate(
+                self.default_variable_length_estimate
+            ),
+            self._variable_length_estimate_for_id,
+        )
+
+    def _extract_variable_ids_from_text(self, text: str) -> set[int]:
+        ids: set[int] = set()
+        for match in _VARIABLE_TOKEN_RE.finditer(text or ""):
+            try:
+                value = int(match.group(1))
+            except Exception:
+                continue
+            if value >= 0:
+                ids.add(value)
+        return ids
+
+    def _collect_variable_ids_for_manager(self) -> list[int]:
+        ids: set[int] = {
+            key for key in self.variable_length_overrides.keys() if key >= 0
+        }
+        system_values = self._system_variables_from_session(translated=False)
+        ids.update(variable_id for variable_id in system_values.keys() if variable_id >= 0)
+        original_values = self._system_variables_from_original_snapshot()
+        ids.update(variable_id for variable_id in original_values.keys() if variable_id >= 0)
+
+        for session in self.sessions.values():
+            for segment in session.segments:
+                candidate_line_groups = (
+                    segment.lines,
+                    segment.source_lines,
+                    segment.original_lines,
+                    segment.translation_lines,
+                    segment.original_translation_lines,
+                )
+                for lines in candidate_line_groups:
+                    if not isinstance(lines, list):
+                        continue
+                    for line in lines:
+                        if not isinstance(line, str):
+                            continue
+                        ids.update(self._extract_variable_ids_from_text(line))
+        return sorted(ids)
+
+    def _apply_variable_length_setting_changes(self, status_message: str) -> None:
+        self._sync_variable_length_measurement_settings()
+        if self.data_dir is not None:
+            self._store_current_project_ui_settings()
+            self._save_ui_state()
+        self._refresh_all_file_item_text()
+        if self.current_path is not None:
+            self._rerender_current_file()
+        self.statusBar().showMessage(status_message)
+
+    def _set_default_variable_length_estimate(self, value: int) -> int:
+        clamped = self._clamp_variable_length_estimate(value)
+        if clamped == self.default_variable_length_estimate:
+            return clamped
+        self.default_variable_length_estimate = clamped
+        self._apply_variable_length_setting_changes(
+            f"Default \\V[n] visible length set to {clamped}."
+        )
+        return clamped
+
+    def _set_variable_length_override(self, variable_id: int, length: int) -> int:
+        safe_id = max(0, int(variable_id))
+        clamped = self._clamp_variable_length_estimate(length)
+        self.variable_length_overrides[safe_id] = clamped
+        self._apply_variable_length_setting_changes(
+            f"Set \\V[{safe_id}] visible length to {clamped}."
+        )
+        return clamped
+
+    def _clear_variable_length_override(self, variable_id: int) -> bool:
+        safe_id = max(0, int(variable_id))
+        if safe_id not in self.variable_length_overrides:
+            return False
+        del self.variable_length_overrides[safe_id]
+        self._apply_variable_length_setting_changes(
+            f"Cleared \\V[{safe_id}] override."
+        )
+        return True
+
+    def _open_variable_length_manager(self) -> None:
+        if not self.sessions:
+            QMessageBox.information(
+                self,
+                "No data loaded",
+                "Load a data folder before opening Variable Lengths.",
+            )
+            return
+        dialog = VariableLengthManagerDialog(self)
+        dialog.exec()
+        self._refresh_translator_detail_panel()
+
     def _open_mass_translate_dialog(self) -> None:
         if not self.sessions:
             QMessageBox.information(
@@ -2092,6 +2222,11 @@ class DialogueVisualEditor(
             "hide_control_codes": bool(self.hide_control_codes_check.isChecked()),
             "create_backup": bool(self.backup_check.isChecked()),
             "show_empty_files": bool(self.show_empty_files_check.isChecked()),
+            "default_variable_length": int(self.default_variable_length_estimate),
+            "variable_length_overrides": {
+                str(key): int(value)
+                for key, value in sorted(self.variable_length_overrides.items())
+            },
         }
 
     def _store_project_ui_settings(self, folder: Path) -> None:
@@ -2153,6 +2288,31 @@ class DialogueVisualEditor(
             show_empty_files = settings.get("show_empty_files")
             if isinstance(show_empty_files, bool):
                 self.show_empty_files_check.setChecked(show_empty_files)
+
+            default_variable_length = settings.get("default_variable_length")
+            if isinstance(default_variable_length, int):
+                self.default_variable_length_estimate = (
+                    self._clamp_variable_length_estimate(default_variable_length)
+                )
+            raw_variable_overrides = settings.get("variable_length_overrides")
+            parsed_overrides: dict[int, int] = {}
+            if isinstance(raw_variable_overrides, dict):
+                for raw_key, raw_value in raw_variable_overrides.items():
+                    if not isinstance(raw_value, int):
+                        continue
+                    parsed_key: Optional[int] = None
+                    if isinstance(raw_key, int):
+                        parsed_key = raw_key
+                    elif isinstance(raw_key, str):
+                        stripped_key = raw_key.strip()
+                        if stripped_key and re.fullmatch(r"\d+", stripped_key):
+                            parsed_key = int(stripped_key)
+                    if parsed_key is None:
+                        continue
+                    parsed_overrides[parsed_key] = self._clamp_variable_length_estimate(
+                        raw_value
+                    )
+            self.variable_length_overrides = parsed_overrides
         finally:
             self.editor_mode_combo.blockSignals(False)
             self.apply_version_combo.blockSignals(False)
@@ -2166,6 +2326,7 @@ class DialogueVisualEditor(
             self.show_empty_files_check.blockSignals(False)
             self._applying_project_ui_state = False
 
+        self._sync_variable_length_measurement_settings()
         self._update_mode_controls()
         self._sync_settings_menu_from_controls()
         self._sync_settings_toggle_actions_from_controls()
@@ -2516,6 +2677,9 @@ class DialogueVisualEditor(
         self.data_dir = folder.resolve()
         self.last_folder_path = str(self.data_dir)
         self.detected_rpg_engine = self._detect_rpg_maker_engine(self.data_dir)
+        self.default_variable_length_estimate = _DEFAULT_VARIABLE_LENGTH_ESTIMATE
+        self.variable_length_overrides = {}
+        self._sync_variable_length_measurement_settings()
         self._configure_project_message_text_metrics(self.data_dir)
         self._update_window_title()
         project_key = self._project_state_key(self.data_dir)

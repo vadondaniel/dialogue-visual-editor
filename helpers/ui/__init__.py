@@ -6,6 +6,7 @@ from .ui_components import (
     DialogueBlockWidget,
     ItemNameDescriptionWidget,
     SpeakerManagerDialog,
+    VariableLengthManagerDialog,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "ItemNameDescriptionWidget",
     "MassTranslateDialog",
     "SpeakerManagerDialog",
+    "VariableLengthManagerDialog",
 ]

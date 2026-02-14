@@ -72,6 +72,17 @@ class SpeakerManagerHost(Protocol):
     def _clear_custom_speaker_color(self, speaker_key: str) -> None: ...
 
 
+class VariableLengthManagerHost(Protocol):
+    def _collect_variable_ids_for_manager(self) -> list[int]: ...
+    def _variable_label_for_rpgm_index(self, variable_id: int) -> str: ...
+    def _default_variable_length_for_manager(self) -> int: ...
+    def _variable_length_estimate_for_id(self, variable_id: int) -> int: ...
+    def _variable_length_override_exists(self, variable_id: int) -> bool: ...
+    def _set_default_variable_length_estimate(self, value: int) -> int: ...
+    def _set_variable_length_override(self, variable_id: int, length: int) -> int: ...
+    def _clear_variable_length_override(self, variable_id: int) -> bool: ...
+
+
 def is_dark_palette() -> bool:
     core_app = QApplication.instance()
     if core_app is None:
@@ -401,6 +412,159 @@ class SpeakerManagerDialog(QDialog):
             return
         self.editor._set_speaker_translation_everywhere(current, "")
         self._refresh_list(select_key=current)
+
+
+class VariableLengthManagerDialog(QDialog):
+    def __init__(self, editor: QWidget):
+        super().__init__(editor)
+        self.editor: VariableLengthManagerHost = cast(
+            VariableLengthManagerHost, editor
+        )
+        self.setWindowTitle("Variable Lengths")
+        self.resize(520, 430)
+
+        root = QVBoxLayout(self)
+        info = QLabel(
+            "Set expected visible length for \\V[n] tokens used by wrap/overflow checks.\n"
+            "Per-variable overrides apply first, otherwise the default length is used."
+        )
+        info.setWordWrap(True)
+        root.addWidget(info)
+
+        self.default_label = QLabel("")
+        self.default_label.setObjectName("MetaDim")
+        root.addWidget(self.default_label)
+
+        self.list_widget = QListWidget()
+        self.list_widget.currentItemChanged.connect(
+            lambda _current, _previous: self._sync_action_buttons()
+        )
+        root.addWidget(self.list_widget, 1)
+
+        actions = QHBoxLayout()
+        self.set_length_btn = QPushButton("Set Length...")
+        self.reset_btn = QPushButton("Reset Override")
+        self.default_btn = QPushButton("Set Default...")
+        self.set_length_btn.clicked.connect(self._on_set_length_clicked)
+        self.reset_btn.clicked.connect(self._on_reset_clicked)
+        self.default_btn.clicked.connect(self._on_set_default_clicked)
+        actions.addWidget(self.set_length_btn)
+        actions.addWidget(self.reset_btn)
+        actions.addWidget(self.default_btn)
+        actions.addStretch(1)
+        root.addLayout(actions)
+
+        close_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close_box.rejected.connect(self.reject)
+        close_box.accepted.connect(self.accept)
+        root.addWidget(close_box)
+
+        self._refresh_list()
+
+    def _selected_variable_id(self) -> Optional[int]:
+        item = self.list_widget.currentItem()
+        if item is None:
+            return None
+        raw = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(raw, int):
+            return raw
+        return None
+
+    def _refresh_default_label(self) -> None:
+        default_length = self.editor._default_variable_length_for_manager()
+        self.default_label.setText(
+            f"Default visible length: {default_length} chars"
+        )
+
+    def _refresh_list(self, select_variable_id: Optional[int] = None) -> None:
+        variable_ids = self.editor._collect_variable_ids_for_manager()
+        self.list_widget.clear()
+        default_length = self.editor._default_variable_length_for_manager()
+        for variable_id in variable_ids:
+            estimate = self.editor._variable_length_estimate_for_id(variable_id)
+            has_override = self.editor._variable_length_override_exists(variable_id)
+            override_tag = "[override]" if has_override else "[default]"
+            label = self.editor._variable_label_for_rpgm_index(variable_id).strip()
+            item_text = (
+                f"V[{variable_id}] {override_tag} len={estimate} - {label}"
+                if label
+                else f"V[{variable_id}] {override_tag} len={estimate}"
+            )
+            if not has_override and estimate != default_length:
+                item_text += f" (default {default_length})"
+            item = QListWidgetItem(item_text)
+            item.setData(Qt.ItemDataRole.UserRole, variable_id)
+            self.list_widget.addItem(item)
+
+        if self.list_widget.count() > 0:
+            selected_row = 0
+            if select_variable_id is not None:
+                for row in range(self.list_widget.count()):
+                    current_id = self.list_widget.item(row).data(
+                        Qt.ItemDataRole.UserRole
+                    )
+                    if current_id == select_variable_id:
+                        selected_row = row
+                        break
+            self.list_widget.setCurrentRow(selected_row)
+
+        self._refresh_default_label()
+        self._sync_action_buttons()
+
+    def _sync_action_buttons(self) -> None:
+        selected_id = self._selected_variable_id()
+        has_selection = selected_id is not None
+        has_override = (
+            has_selection
+            and selected_id is not None
+            and self.editor._variable_length_override_exists(selected_id)
+        )
+        self.set_length_btn.setEnabled(has_selection)
+        self.reset_btn.setEnabled(bool(has_override))
+        self.default_btn.setEnabled(True)
+
+    def _on_set_length_clicked(self) -> None:
+        variable_id = self._selected_variable_id()
+        if variable_id is None:
+            return
+        current_length = self.editor._variable_length_estimate_for_id(variable_id)
+        new_length, ok = QInputDialog.getInt(
+            self,
+            f"Set V[{variable_id}] Length",
+            "Expected visible length (chars):",
+            current_length,
+            1,
+            64,
+            1,
+        )
+        if not ok:
+            return
+        self.editor._set_variable_length_override(variable_id, int(new_length))
+        self._refresh_list(select_variable_id=variable_id)
+
+    def _on_reset_clicked(self) -> None:
+        variable_id = self._selected_variable_id()
+        if variable_id is None:
+            return
+        if self.editor._clear_variable_length_override(variable_id):
+            self._refresh_list(select_variable_id=variable_id)
+
+    def _on_set_default_clicked(self) -> None:
+        current_default = self.editor._default_variable_length_for_manager()
+        new_default, ok = QInputDialog.getInt(
+            self,
+            "Set Default Variable Length",
+            "Default expected visible length for \\V[n] (chars):",
+            current_default,
+            1,
+            64,
+            1,
+        )
+        if not ok:
+            return
+        self.editor._set_default_variable_length_estimate(int(new_default))
+        selected_id = self._selected_variable_id()
+        self._refresh_list(select_variable_id=selected_id)
 
 
 class ItemNameDescriptionWidget(QFrame):

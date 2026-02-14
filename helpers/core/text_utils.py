@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 NATURAL_KEY_RE = re.compile(r"(\d+)")
 CONTROL_TOKEN_RE = re.compile(
@@ -49,6 +49,7 @@ NAME_CONNECTOR_WORDS = {
     "der",
 }
 _FONT_SIZE_SET_TOKEN_RE = re.compile(r"^\\[Ff][Ss]\[(\d+)\]$")
+_VARIABLE_TOKEN_RE = re.compile(r"^\\[Vv]\[(\d+)\]$")
 _DEFAULT_FONT_SIZE = 28
 _MIN_FONT_SIZE = 1
 _MAX_FONT_SIZE = 512
@@ -58,6 +59,9 @@ _FONT_SMALLER_THRESHOLD = 24
 _BASE_LINE_HEIGHT = 36.0
 _LINE_HEIGHT_PADDING = 8.0
 _FLOAT_EPSILON = 1e-6
+_DEFAULT_VARIABLE_VISIBLE_LENGTH = 4
+_MAX_VARIABLE_VISIBLE_LENGTH = 64
+_VARIABLE_VISIBLE_LENGTH_RESOLVER: Optional[Callable[[int], int]] = None
 
 
 def clamp_message_font_size(value: int) -> int:
@@ -101,6 +105,51 @@ def configure_message_text_metrics(base_font_size: int) -> int:
     _DEFAULT_FONT_SIZE = safe_base
     _BASE_LINE_HEIGHT = float(_DEFAULT_FONT_SIZE + _LINE_HEIGHT_PADDING)
     return safe_base
+
+
+def _clamp_variable_visible_length(value: int) -> int:
+    return max(1, min(_MAX_VARIABLE_VISIBLE_LENGTH, int(value)))
+
+
+def configure_variable_text_metrics(
+    default_visible_length: int = _DEFAULT_VARIABLE_VISIBLE_LENGTH,
+    resolver: Optional[Callable[[int], int]] = None,
+) -> int:
+    global _DEFAULT_VARIABLE_VISIBLE_LENGTH, _VARIABLE_VISIBLE_LENGTH_RESOLVER
+    safe_default = _clamp_variable_visible_length(default_visible_length)
+    _DEFAULT_VARIABLE_VISIBLE_LENGTH = safe_default
+    _VARIABLE_VISIBLE_LENGTH_RESOLVER = resolver
+    return safe_default
+
+
+def _variable_visible_length_for_id(variable_id: int) -> int:
+    resolver = _VARIABLE_VISIBLE_LENGTH_RESOLVER
+    if resolver is None:
+        return _DEFAULT_VARIABLE_VISIBLE_LENGTH
+    try:
+        resolved = resolver(variable_id)
+    except Exception:
+        return _DEFAULT_VARIABLE_VISIBLE_LENGTH
+    if isinstance(resolved, bool):
+        return _DEFAULT_VARIABLE_VISIBLE_LENGTH
+    if not isinstance(resolved, int):
+        try:
+            resolved = int(resolved)
+        except Exception:
+            return _DEFAULT_VARIABLE_VISIBLE_LENGTH
+    return _clamp_variable_visible_length(resolved)
+
+
+def _variable_visible_units_for_token(token: str, current_font_size: int) -> float:
+    match = _VARIABLE_TOKEN_RE.match(token)
+    if match is None:
+        return 0.0
+    try:
+        variable_id = int(match.group(1))
+    except Exception:
+        return 0.0
+    estimated_chars = _variable_visible_length_for_id(variable_id)
+    return float(estimated_chars) * _font_scale_for_size(current_font_size)
 
 
 def _clamp_font_size(value: int) -> int:
@@ -187,7 +236,9 @@ def parse_units_for_measure(text: str) -> list[dict[str, Any]]:
                     }
                 )
         token = match.group(0)
-        units.append({"text": token, "visible": 0.0, "is_newline": False})
+        token_visible = _variable_visible_units_for_token(
+            token, current_font_size)
+        units.append({"text": token, "visible": token_visible, "is_newline": False})
         current_font_size = _next_font_size_for_token(token, current_font_size)
         cursor = match.end()
     if cursor < len(text):
