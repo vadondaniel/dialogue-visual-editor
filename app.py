@@ -269,6 +269,7 @@ class DialogueVisualEditor(
         self.audit_consistency_goto_btn: Optional[QPushButton] = None
         self.audit_consistency_apply_btn: Optional[QPushButton] = None
         self.audit_consistency_use_common_btn: Optional[QPushButton] = None
+        self.mass_translate_dialog: Optional[MassTranslateDialog] = None
         self.audit_cache_generation = 0
         self.audit_result_batch_size = 16
         self.audit_render_batch_interval_ms = 8
@@ -2001,8 +2002,27 @@ class DialogueVisualEditor(
                 "Load a data folder before opening Mass Translate.",
             )
             return
+        existing_dialog = self.mass_translate_dialog
+        if existing_dialog is not None:
+            if existing_dialog.isVisible():
+                refresh_scope = getattr(existing_dialog, "_on_scope_or_filters_changed", None)
+                if callable(refresh_scope):
+                    refresh_scope()
+                existing_dialog.raise_()
+                existing_dialog.activateWindow()
+                return
+            self.mass_translate_dialog = None
+
         dialog = MassTranslateDialog(self)
-        dialog.exec()
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(self._on_mass_translate_dialog_destroyed)
+        self.mass_translate_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_mass_translate_dialog_destroyed(self, _obj: QObject) -> None:
+        self.mass_translate_dialog = None
         self._refresh_translator_detail_panel()
 
     def _on_global_undo_shortcut(self) -> None:

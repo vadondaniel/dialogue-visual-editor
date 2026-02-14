@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Optional, Protocol, cast
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -63,6 +63,10 @@ class MassTranslateDialog(QDialog):
         self.editor: MassTranslateHost = cast(MassTranslateHost, editor)
         self.setWindowTitle("Mass Translate (LLM)")
         self.resize(1320, 860)
+        self.setModal(False)
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, True)
 
         self.chunk_payloads: list[dict[str, Any]] = []
         self.chunk_expected_ids: list[set[str]] = []
@@ -687,6 +691,11 @@ class MassTranslateDialog(QDialog):
         all_rate = (all_done * 100.0 / all_total) if all_total > 0 else 0.0
         self.scope_combo.addItem(
             f"All Files ({all_done}/{all_total}, {all_rate:.1f}%)", "all")
+        self.scope_combo.setItemData(
+            0,
+            self._scope_progress_color(all_done, all_total),
+            Qt.ItemDataRole.ForegroundRole,
+        )
 
         items = list(self.editor.sessions.items())
         items.sort(key=lambda item: natural_sort_key(
@@ -697,9 +706,15 @@ class MassTranslateDialog(QDialog):
             if total <= 0:
                 continue
             rate = (done * 100.0 / total) if total > 0 else 0.0
+            next_index = self.scope_combo.count()
             self.scope_combo.addItem(
                 f"{self.editor._relative_path(path)} ({done}/{total}, {rate:.1f}%)",
                 key,
+            )
+            self.scope_combo.setItemData(
+                next_index,
+                self._scope_progress_color(done, total),
+                Qt.ItemDataRole.ForegroundRole,
             )
         index_to_select = 0
         for idx in range(self.scope_combo.count()):
@@ -985,6 +1000,28 @@ class MassTranslateDialog(QDialog):
             chunks.append(current)
         return chunks
 
+    @staticmethod
+    def _chunk_status_color(status: str) -> QColor:
+        normalized = status.strip().lower()
+        if normalized == "applied":
+            return QColor("#15803d")
+        if normalized == "warning":
+            return QColor("#b45309")
+        if normalized == "ready":
+            return QColor("#1d4ed8")
+        return QColor("#475569")
+
+    @staticmethod
+    def _scope_progress_color(done: int, total: int) -> QColor:
+        if total <= 0:
+            return QColor("#64748b")
+        ratio = done / total
+        if ratio >= 1.0:
+            return QColor("#15803d")
+        if ratio > 0.0:
+            return QColor("#b45309")
+        return QColor("#b91c1c")
+
     def _set_paste_text(self, text: str) -> None:
         self._updating_paste_box = True
         self.paste_box.setPlainText(text)
@@ -995,13 +1032,19 @@ class MassTranslateDialog(QDialog):
         self.chunk_combo.clear()
         total = len(self.chunk_payloads)
         for idx, payload in enumerate(self.chunk_payloads):
-            status = self.chunk_status.get(idx, "ready").upper()
+            status_raw = self.chunk_status.get(idx, "ready")
+            status = status_raw.upper()
             entries_raw = payload.get("entries")
             entry_count = len(entries_raw) if isinstance(
                 entries_raw, list) else 0
             char_count = len(json.dumps(payload, ensure_ascii=False, indent=2))
             self.chunk_combo.addItem(
                 f"Chunk {idx + 1}/{total} ({entry_count} entries, {char_count} chars) [{status}]"
+            )
+            self.chunk_combo.setItemData(
+                idx,
+                self._chunk_status_color(status_raw),
+                Qt.ItemDataRole.ForegroundRole,
             )
         self.chunk_combo.blockSignals(False)
 
