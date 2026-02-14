@@ -195,6 +195,9 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         tl_lines = self._normalize_translation_lines(entry.get("translation_lines"))
         speaker_en_raw = entry.get("speaker_en")
         speaker_en = speaker_en_raw.strip() if isinstance(speaker_en_raw, str) else ""
+        disable_line1_inference_raw = entry.get("line1_speaker_inference_disabled")
+        disable_line1_inference = bool(
+            disable_line1_inference_raw) if isinstance(disable_line1_inference_raw, bool) else False
         uid_raw = entry.get("segment_uid")
         segment_uid = (
             uid_raw.strip()
@@ -215,6 +218,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             original_translation_lines=list(tl_lines),
             translation_speaker=speaker_en,
             original_translation_speaker=speaker_en,
+            disable_line1_speaker_inference=disable_line1_inference,
+            original_disable_line1_speaker_inference=disable_line1_inference,
             inserted=False,
             translation_only=True,
         )
@@ -358,6 +363,10 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 entry.get("translation_lines"))
             speaker_en_raw = entry.get("speaker_en")
             speaker_en = speaker_en_raw.strip() if isinstance(speaker_en_raw, str) else ""
+            disable_line1_inference_raw = entry.get(
+                "line1_speaker_inference_disabled")
+            disable_line1_inference = bool(
+                disable_line1_inference_raw) if isinstance(disable_line1_inference_raw, bool) else False
             speaker_key = self._speaker_key_for_state(segment)
             if not speaker_en:
                 speaker_en = self.speaker_translation_map.get(speaker_key, "")
@@ -367,6 +376,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             segment.original_translation_lines = list(tl_lines)
             segment.translation_speaker = speaker_en
             segment.original_translation_speaker = speaker_en
+            segment.disable_line1_speaker_inference = disable_line1_inference
+            segment.original_disable_line1_speaker_inference = disable_line1_inference
 
             if speaker_en:
                 self.speaker_translation_map[speaker_key] = speaker_en
@@ -462,6 +473,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 "speaker_en": speaker_en,
                 "translation_lines": translation_lines,
                 "translation_only": bool(segment.translation_only),
+                "line1_speaker_inference_disabled": bool(
+                    segment.disable_line1_speaker_inference),
             }
             if segment.translation_only:
                 entry["segment_uid"] = segment.uid
@@ -540,6 +553,11 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 return True
             if segment.translation_speaker.strip() != segment.original_translation_speaker.strip():
                 return True
+            if (
+                bool(segment.disable_line1_speaker_inference)
+                != bool(segment.original_disable_line1_speaker_inference)
+            ):
+                return True
         return False
 
     def _mark_session_translation_saved(self, session: FileSession) -> None:
@@ -550,6 +568,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 segment.translation_lines)
             segment.translation_speaker = segment.translation_speaker.strip()
             segment.original_translation_speaker = segment.translation_speaker
+            segment.original_disable_line1_speaker_inference = bool(
+                segment.disable_line1_speaker_inference)
             if segment.translation_only:
                 segment.inserted = False
         setattr(session, "_original_tl_order", [segment.tl_uid for segment in session.segments])

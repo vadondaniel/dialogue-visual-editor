@@ -600,6 +600,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 segment.translation_lines = list(
                     segment.original_translation_lines)
                 segment.translation_speaker = segment.original_translation_speaker
+                segment.disable_line1_speaker_inference = bool(
+                    segment.original_disable_line1_speaker_inference
+                )
             self._refresh_dirty_state(session)
             self._render_session(session)
             self.statusBar().showMessage(

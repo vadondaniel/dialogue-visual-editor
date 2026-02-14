@@ -291,6 +291,10 @@ class RenderMixin(_RenderHostTypingFallback):
         widget.reset_requested.connect(self._on_reset_requested)
         widget.split_overflow_requested.connect(
             self._on_split_overflow_requested)
+        if isinstance(widget, DialogueBlockWidget):
+            widget.line1_inference_override_changed.connect(
+                self._on_line1_inference_override_changed
+            )
 
     def _create_block_widget(
         self,

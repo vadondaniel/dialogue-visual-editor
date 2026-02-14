@@ -840,6 +840,7 @@ class DialogueBlockWidget(QFrame):
     delete_requested = Signal(str)
     reset_requested = Signal(str)
     split_overflow_requested = Signal(str)
+    line1_inference_override_changed = Signal(str, bool)
 
     def __init__(
         self,
@@ -1076,6 +1077,19 @@ class DialogueBlockWidget(QFrame):
         self.status_label = QLabel("")
         self.status_label.setObjectName("MetaDim")
         footer_row.addWidget(self.status_label, 1)
+        self.line1_not_speaker_button = QPushButton("Line1 Not Speaker")
+        self.line1_not_speaker_button.setCheckable(True)
+        self.line1_not_speaker_button.setToolTip(
+            "Treat this block's first line as regular text, not inferred speaker."
+        )
+        self.line1_not_speaker_button.clicked.connect(
+            self._on_line1_not_speaker_clicked
+        )
+        footer_row.addWidget(
+            self.line1_not_speaker_button,
+            0,
+            Qt.AlignmentFlag.AlignRight,
+        )
         self.move_overflow_button = QPushButton("Move Overflow Down")
         self.move_overflow_button.setToolTip(
             "Create a new block below and move overflow lines into it.")
@@ -1233,7 +1247,43 @@ class DialogueBlockWidget(QFrame):
     def _is_choice_block(self) -> bool:
         return self.segment.segment_kind == "choice"
 
+    def _line1_inference_is_disabled(self) -> bool:
+        return bool(getattr(self.segment, "disable_line1_speaker_inference", False))
+
+    def _line1_inference_override_available(self) -> bool:
+        return (
+            (not self.actor_mode)
+            and self._is_standard_dialogue_block()
+            and self.infer_name_from_first_line
+            and self.segment.speaker_name == NO_SPEAKER_KEY
+        )
+
+    def _refresh_line1_inference_override_button(self) -> None:
+        available = self._line1_inference_override_available()
+        self.line1_not_speaker_button.setVisible(available)
+        self.line1_not_speaker_button.setEnabled(available)
+        checked = self._line1_inference_is_disabled()
+        if self.line1_not_speaker_button.isChecked() == checked:
+            return
+        self.line1_not_speaker_button.blockSignals(True)
+        try:
+            self.line1_not_speaker_button.setChecked(checked)
+        finally:
+            self.line1_not_speaker_button.blockSignals(False)
+
+    def _on_line1_not_speaker_clicked(self, checked: bool) -> None:
+        disabled = bool(checked)
+        if self._line1_inference_is_disabled() == disabled:
+            return
+        self.segment.disable_line1_speaker_inference = disabled
+        self.line1_inference_override_changed.emit(self.segment.uid, disabled)
+        self.refresh_metadata()
+
     def _is_changed(self) -> bool:
+        line1_override_changed = (
+            bool(self.segment.disable_line1_speaker_inference)
+            != bool(self.segment.original_disable_line1_speaker_inference)
+        )
         if self.translator_mode:
             speaker_changed = self.segment.translation_speaker.strip(
             ) != self.segment.original_translation_speaker.strip()
@@ -1247,8 +1297,12 @@ class DialogueBlockWidget(QFrame):
                 if self.segment.original_translation_lines
                 else [""]
             )
-            return current_tl != original_tl or speaker_changed
-        return self.segment.inserted or self.segment.lines != self.segment.original_lines
+            return current_tl != original_tl or speaker_changed or line1_override_changed
+        return (
+            self.segment.inserted
+            or self.segment.lines != self.segment.original_lines
+            or line1_override_changed
+        )
 
     def _apply_editor_width(self) -> None:
         if self.actor_mode:
@@ -1509,6 +1563,8 @@ class DialogueBlockWidget(QFrame):
                 if resolved.strip():
                     return resolved
             return explicit
+        if self._line1_inference_is_disabled():
+            return NO_SPEAKER_KEY
         if not self.infer_name_from_first_line:
             return NO_SPEAKER_KEY
         if self.translator_mode:
@@ -1549,6 +1605,8 @@ class DialogueBlockWidget(QFrame):
                     return html.escape(resolved)
             return html.escape(explicit)
 
+        if self._line1_inference_is_disabled():
+            return html.escape(NO_SPEAKER_KEY)
         if not self.infer_name_from_first_line:
             return html.escape(NO_SPEAKER_KEY)
         if self.translator_mode:
@@ -1661,6 +1719,10 @@ class DialogueBlockWidget(QFrame):
 
     def _refresh_status(self) -> None:
         lines = self._current_lines()
+        line1_override_changed = (
+            bool(self.segment.disable_line1_speaker_inference)
+            != bool(self.segment.original_disable_line1_speaker_inference)
+        )
         if self.actor_mode:
             char_count = sum(len(line) for line in lines)
             line_label = "line" if len(lines) == 1 else "lines"
@@ -1681,11 +1743,18 @@ class DialogueBlockWidget(QFrame):
                 )
                 current_tl = lines if lines else [""]
                 self.reset_button.setEnabled(
-                    current_tl != original_tl or speaker_changed)
+                    current_tl != original_tl
+                    or speaker_changed
+                    or line1_override_changed
+                )
             else:
                 self.reset_button.setEnabled(
-                    lines != self.segment.original_lines or bool(self.segment.merged_segments))
+                    lines != self.segment.original_lines
+                    or bool(self.segment.merged_segments)
+                    or line1_override_changed
+                )
             self._refresh_action_button_state(lines, self._width_chars())
+            self._refresh_line1_inference_override_button()
             self._apply_overflow_highlighting()
             self._apply_editor_style(False)
             self._refresh_block_style()
@@ -1716,11 +1785,18 @@ class DialogueBlockWidget(QFrame):
                 )
                 current_tl = lines if lines else [""]
                 self.reset_button.setEnabled(
-                    current_tl != original_tl or speaker_changed)
+                    current_tl != original_tl
+                    or speaker_changed
+                    or line1_override_changed
+                )
             else:
                 self.reset_button.setEnabled(
-                    lines != self.segment.original_lines or bool(self.segment.merged_segments))
+                    lines != self.segment.original_lines
+                    or bool(self.segment.merged_segments)
+                    or line1_override_changed
+                )
             self._refresh_action_button_state(lines, self._width_chars())
+            self._refresh_line1_inference_override_button()
             self._apply_overflow_highlighting()
             self._apply_editor_style(False)
             self._refresh_block_style()
@@ -1774,11 +1850,18 @@ class DialogueBlockWidget(QFrame):
             )
             current_tl = lines if lines else [""]
             self.reset_button.setEnabled(
-                current_tl != original_tl or speaker_changed)
+                current_tl != original_tl
+                or speaker_changed
+                or line1_override_changed
+            )
         else:
             self.reset_button.setEnabled(
-                lines != self.segment.original_lines or bool(self.segment.merged_segments))
+                lines != self.segment.original_lines
+                or bool(self.segment.merged_segments)
+                or line1_override_changed
+            )
         self._refresh_action_button_state(lines, width_chars)
+        self._refresh_line1_inference_override_button()
         self._apply_overflow_highlighting()
         self._apply_editor_style(has_warning)
         self._refresh_block_style()

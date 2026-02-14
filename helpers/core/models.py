@@ -27,6 +27,8 @@ class DialogueSegment:
     original_translation_lines: list[str] = field(default_factory=list)
     translation_speaker: str = ""
     original_translation_speaker: str = ""
+    disable_line1_speaker_inference: bool = False
+    original_disable_line1_speaker_inference: bool = False
     inserted: bool = False
     translation_only: bool = False
     merged_segments: list["DialogueSegment"] = field(default_factory=list)
@@ -152,6 +154,8 @@ class ResetBlockAction:
     lines_after: list[str]
     merged_before: list[DialogueSegment]
     restored_segments: list[DialogueSegment]
+    line1_inference_disabled_before: bool = False
+    line1_inference_disabled_after: bool = False
 
 
 @dataclass

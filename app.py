@@ -185,6 +185,7 @@ class DialogueVisualEditor(
         self._windowskin_text_colors_loaded = False
         self.translation_state_path: Optional[Path] = None
         self.last_folder_path = ""
+        self.detected_rpg_engine = "unknown"
         self.ui_state_path = Path(
             __file__).resolve().with_name(UI_STATE_FILENAME)
         self.project_ui_settings_by_folder: dict[str, dict[str, Any]] = {}
@@ -1549,7 +1550,11 @@ class DialogueVisualEditor(
     def _inferred_speaker_from_segment_line1(self, segment: DialogueSegment) -> str:
         if not self.infer_speaker_check.isChecked():
             return ""
+        if not segment.is_structural_dialogue:
+            return ""
         if segment.speaker_name != NO_SPEAKER_KEY:
+            return ""
+        if bool(getattr(segment, "disable_line1_speaker_inference", False)):
             return ""
         lines = self._segment_source_lines_for_display(segment)
         if not lines:
@@ -1570,6 +1575,8 @@ class DialogueVisualEditor(
         return ""
 
     def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
+        if not segment.is_structural_dialogue:
+            return NO_SPEAKER_KEY
         explicit_raw = self._resolve_name_tokens_in_text(
             segment.speaker_name,
             prefer_translated=False,
@@ -1792,6 +1799,48 @@ class DialogueVisualEditor(
             return str(folder.resolve())
         except Exception:
             return str(folder)
+
+    def _detect_rpg_maker_engine(self, folder: Path) -> str:
+        candidate_js_dirs: list[Path] = []
+        seen: set[Path] = set()
+        for base in (folder, folder.parent, folder.parent.parent):
+            js_dir = base / "js"
+            try:
+                resolved = js_dir.resolve()
+            except Exception:
+                resolved = js_dir
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if js_dir.exists() and js_dir.is_dir():
+                candidate_js_dirs.append(js_dir)
+        if not candidate_js_dirs:
+            return "unknown"
+
+        has_mz_runtime = any(
+            (js_dir / name).is_file()
+            for js_dir in candidate_js_dirs
+            for name in ("rmmz_objects.js", "rmmz_core.js")
+        )
+        has_mv_runtime = any(
+            (js_dir / name).is_file()
+            for js_dir in candidate_js_dirs
+            for name in ("rpg_objects.js", "rpg_core.js")
+        )
+        if has_mz_runtime and not has_mv_runtime:
+            return "mz"
+        if has_mv_runtime and not has_mz_runtime:
+            return "mv"
+        if has_mz_runtime and has_mv_runtime:
+            return "mz"
+        return "unknown"
+
+    def _rpg_engine_label(self, engine: str) -> str:
+        if engine == "mv":
+            return "MV"
+        if engine == "mz":
+            return "MZ"
+        return "Unknown"
 
     def _collect_project_ui_settings(self) -> dict[str, Any]:
         mode_raw = self.editor_mode_combo.currentData()
@@ -2206,9 +2255,14 @@ class DialogueVisualEditor(
 
         self.data_dir = folder.resolve()
         self.last_folder_path = str(self.data_dir)
+        self.detected_rpg_engine = self._detect_rpg_maker_engine(self.data_dir)
         self._update_window_title()
         project_key = self._project_state_key(self.data_dir)
         project_settings = self.project_ui_settings_by_folder.get(project_key)
+        project_has_infer_setting = (
+            isinstance(project_settings, dict)
+            and isinstance(project_settings.get("infer_speaker"), bool)
+        )
         if isinstance(project_settings, dict):
             self._apply_project_ui_settings(project_settings)
         self._save_ui_state()
@@ -2362,10 +2416,28 @@ class DialogueVisualEditor(
             if not self._is_name_index_session(session)
             for segment in session.segments
         )
-        auto_enabled_infer = False
-        if not has_explicit_speakers and not self.infer_speaker_check.isChecked():
-            self.infer_speaker_check.setChecked(True)
-            auto_enabled_infer = True
+        infer_auto_changed = False
+        infer_auto_suffix = ""
+        if not project_has_infer_setting:
+            infer_default = self.infer_speaker_check.isChecked()
+            infer_reason = ""
+            if self.detected_rpg_engine == "mv":
+                infer_default = True
+                infer_reason = "MV project detected"
+            elif self.detected_rpg_engine == "mz":
+                infer_default = False
+                infer_reason = "MZ project detected"
+            else:
+                infer_default = not has_explicit_speakers
+                if infer_default:
+                    infer_reason = "no explicit speakers found"
+                else:
+                    infer_reason = "explicit speakers found"
+            if self.infer_speaker_check.isChecked() != infer_default:
+                self.infer_speaker_check.setChecked(infer_default)
+                infer_auto_changed = True
+            infer_state = "enabled" if infer_default else "disabled"
+            infer_auto_suffix = f" Auto infer speaker-from-line1 {infer_state} ({infer_reason})."
 
         self.save_btn.setEnabled(True)
         self.save_all_btn.setEnabled(True)
@@ -2375,18 +2447,19 @@ class DialogueVisualEditor(
         self._rebuild_file_list()
 
         visible_count = len(self._visible_file_paths())
-        infer_suffix = " Infer speaker-from-line1 enabled (no explicit speakers found)." if auto_enabled_infer else ""
+        engine_suffix = f" Engine: {self._rpg_engine_label(self.detected_rpg_engine)}."
+        infer_suffix = infer_auto_suffix if infer_auto_changed else ""
         if load_errors:
             skipped_label = "file" if len(load_errors) == 1 else "files"
             self.statusBar().showMessage(
                 f"Loaded {len(self.sessions)} files ({visible_count} shown), "
                 f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}. "
-                f"Skipped {len(load_errors)} unreadable {skipped_label}.{infer_suffix}"
+                f"Skipped {len(load_errors)} unreadable {skipped_label}.{engine_suffix}{infer_suffix}"
             )
         else:
             self.statusBar().showMessage(
                 f"Loaded {len(self.sessions)} files ({visible_count} shown), "
-                f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}.{infer_suffix}"
+                f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}.{engine_suffix}{infer_suffix}"
             )
 
     def _file_path_from_item(self, item: Optional[QListWidgetItem]) -> Optional[Path]:
