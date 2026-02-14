@@ -59,12 +59,12 @@ ControlMismatchSpan = tuple[int, int, ControlMismatchStatus]
 _CONTROL_MISMATCH_BG_DARK: dict[ControlMismatchStatus, str] = {
     "matched": "#14532d",
     "missing": "#7f1d1d",
-    "extra": "#1e3a8a",
+    "extra": "#78350f",
 }
 _CONTROL_MISMATCH_BG_LIGHT: dict[ControlMismatchStatus, str] = {
     "matched": "#dcfce7",
     "missing": "#fee2e2",
-    "extra": "#dbeafe",
+    "extra": "#fef3c7",
 }
 
 
@@ -1919,6 +1919,41 @@ class DialogueBlockWidget(QFrame):
             return [""]
         return resolved
 
+    def _translation_lines_for_control_mismatch(self) -> list[str]:
+        translation_lines = (
+            self.segment.translation_lines
+            if self.segment.translation_lines
+            else [""]
+        )
+        resolved = list(translation_lines) if translation_lines else [""]
+        if self._line1_inference_active():
+            if len(resolved) > 1:
+                return list(resolved[1:])
+            return [""]
+        return resolved
+
+    def _has_control_mismatch_problem(self) -> bool:
+        if not self.control_mismatch_highlighting_enabled:
+            return False
+        if self.actor_mode:
+            return False
+        source_text = "\n".join(self._source_lines_for_control_mismatch())
+        translation_text = "\n".join(
+            self._translation_lines_for_control_mismatch())
+        if not translation_text.strip():
+            return False
+        source_spans, translation_spans = control_mismatch_token_spans(
+            source_text,
+            translation_text,
+        )
+        return any(
+            status != "matched"
+            for _start, _end, status in source_spans
+        ) or any(
+            status != "matched"
+            for _start, _end, status in translation_spans
+        )
+
     def _control_mismatch_selections(self) -> list[QTextEdit.ExtraSelection]:
         if not self.translator_mode:
             return []
@@ -2160,6 +2195,7 @@ class DialogueBlockWidget(QFrame):
         lines = self._current_lines()
         storage_lines = self._storage_lines_from_editor_lines(lines)
         max_rows_budget = float(max(1, self.max_lines))
+        control_mismatch_problem = self._has_control_mismatch_problem()
         line1_override_changed = (
             bool(self.segment.disable_line1_speaker_inference)
             != bool(self.segment.original_disable_line1_speaker_inference)
@@ -2212,10 +2248,17 @@ class DialogueBlockWidget(QFrame):
             else:
                 entry_label = "line" if line_count == 1 else "lines"
             char_label = "char" if char_count == 1 else "chars"
-            self.status_label.setText(
-                f"{line_count} {entry_label}, {char_count} {char_label}")
-            self._has_warning = False
-            self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
+            text = f"{line_count} {entry_label}, {char_count} {char_label}"
+            if control_mismatch_problem:
+                text += ", control mismatch"
+            self.status_label.setText(text)
+            self._has_warning = control_mismatch_problem
+            if control_mismatch_problem:
+                self.status_label.setStyleSheet(
+                    f"color: {self._status_warn_color}; font-weight: 600;"
+                )
+            else:
+                self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
             self.move_overflow_button.setVisible(False)
             self.move_overflow_button.setEnabled(False)
             if self.translator_mode:
@@ -2241,7 +2284,7 @@ class DialogueBlockWidget(QFrame):
             self._refresh_action_button_state(lines, self._width_chars())
             self._refresh_line1_inference_override_button()
             self._apply_overflow_highlighting()
-            self._apply_editor_style(False)
+            self._apply_editor_style(control_mismatch_problem)
             self._refresh_block_style()
             self._refresh_source_hint_overlay()
             return
@@ -2279,9 +2322,11 @@ class DialogueBlockWidget(QFrame):
             if self.allow_structural_actions:
                 overflow_line_label = "line" if overflow_count == 1 else "lines"
                 text += f" -> move {overflow_count} {overflow_line_label} below"
+        if control_mismatch_problem:
+            text += ", control mismatch"
 
         self.status_label.setText(text)
-        has_warning = bool(over_width) or max_lines_over
+        has_warning = bool(over_width) or max_lines_over or control_mismatch_problem
         self._has_warning = has_warning
         if has_warning:
             self.status_label.setStyleSheet(
