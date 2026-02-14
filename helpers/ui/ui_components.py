@@ -97,8 +97,8 @@ def _set_hard_newline_markers(editor: QPlainTextEdit, enabled: bool) -> None:
 
 def _split_masked_text_and_spans(
     masked_text: str,
-    spans: list[tuple[int, int, str]],
-) -> tuple[list[str], list[list[tuple[int, int, str]]]]:
+    spans: list[tuple[int, int, str, float]],
+) -> tuple[list[str], list[list[tuple[int, int, str, float]]]]:
     lines = split_lines_preserve_empty(masked_text)
     if not lines:
         return [""], [[]]
@@ -112,8 +112,8 @@ def _split_masked_text_and_spans(
         if idx < line_count - 1:
             cursor += 1
 
-    spans_per_line: list[list[tuple[int, int, str]]] = [[] for _ in lines]
-    for span_start, span_end, color_hex in spans:
+    spans_per_line: list[list[tuple[int, int, str, float]]] = [[] for _ in lines]
+    for span_start, span_end, color_hex, font_scale in spans:
         if span_end <= span_start:
             continue
         for idx, line in enumerate(lines):
@@ -124,7 +124,7 @@ def _split_masked_text_and_spans(
             if end <= start:
                 continue
             spans_per_line[idx].append(
-                (start - line_start, end - line_start, color_hex)
+                (start - line_start, end - line_start, color_hex, font_scale)
             )
     return lines, spans_per_line
 
@@ -418,7 +418,7 @@ class ItemNameDescriptionWidget(QFrame):
         hide_control_codes_when_unfocused: bool,
         hidden_control_line_transform: Optional[Callable[[str], str]],
         hidden_control_colored_line_resolver: Optional[
-            Callable[[str], tuple[str, list[tuple[int, int, str]]]]
+            Callable[[str], tuple[str, list[tuple[int, int, str, float]]]]
         ],
         color_code_resolver: Optional[Callable[[int], str]],
         variable_label_resolver: Optional[Callable[[int], str]],
@@ -868,7 +868,7 @@ class DialogueBlockWidget(QFrame):
         hide_control_codes_when_unfocused: bool,
         hidden_control_line_transform: Optional[Callable[[str], str]],
         hidden_control_colored_line_resolver: Optional[
-            Callable[[str], tuple[str, list[tuple[int, int, str]]]]
+            Callable[[str], tuple[str, list[tuple[int, int, str, float]]]]
         ],
         speaker_display_resolver: Optional[Callable[[str], str]],
         speaker_display_html_resolver: Optional[Callable[[str], str]],
@@ -911,7 +911,7 @@ class DialogueBlockWidget(QFrame):
         self._name_index_field = self._name_index_field_from_uid()
         self._suppress_text_changed = False
         self._displaying_masked_text = False
-        self._masked_color_spans: list[list[tuple[int, int, str]]] = []
+        self._masked_color_spans: list[list[tuple[int, int, str, float]]] = []
         self._source_hint_lines: list[str] = []
         self._source_hint_overlay: Optional[QLabel] = None
         self._selected = False
@@ -1575,7 +1575,7 @@ class DialogueBlockWidget(QFrame):
             return split_lines or [""]
 
         masked: list[str] = []
-        spans_per_line: list[list[tuple[int, int, str]]] = []
+        spans_per_line: list[list[tuple[int, int, str, float]]] = []
         for line in source_lines:
             if self.hidden_control_line_transform is not None:
                 masked.append(self.hidden_control_line_transform(line))
@@ -1620,15 +1620,19 @@ class DialogueBlockWidget(QFrame):
         if not self._masked_color_spans:
             return []
         selections: list[QTextEdit.ExtraSelection] = []
+        base_point_size = self.editor.font().pointSizeF()
+        if base_point_size <= 0:
+            fallback_point_size = self.editor.font().pointSize()
+            base_point_size = float(fallback_point_size if fallback_point_size > 0 else 10)
         block = self.editor.document().firstBlock()
         line_idx = 0
         while block.isValid() and line_idx < len(self._masked_color_spans):
             spans = self._masked_color_spans[line_idx]
-            for start, end, color_hex in spans:
+            for start, end, color_hex, font_scale in spans:
                 if end <= start:
                     continue
                 color = QColor(color_hex)
-                if not color.isValid():
+                if (not color.isValid()) and abs(font_scale - 1.0) <= 0.01:
                     continue
                 cursor = QTextCursor(block)
                 cursor.setPosition(block.position() + start)
@@ -1636,7 +1640,10 @@ class DialogueBlockWidget(QFrame):
                                    QTextCursor.MoveMode.KeepAnchor)
                 selection = QTextEdit.ExtraSelection()
                 fmt = QTextCharFormat()
-                fmt.setForeground(color)
+                if color.isValid():
+                    fmt.setForeground(color)
+                if font_scale > 0:
+                    fmt.setFontPointSize(max(1.0, base_point_size * font_scale))
                 selection_any = cast(Any, selection)
                 selection_any.format = fmt
                 selection_any.cursor = cursor

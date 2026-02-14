@@ -16,6 +16,8 @@ NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
 NAME_TOKEN_RE = re.compile(r"\\[Nn]\[(\d+)\]")
 VAR_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
 COLOR_TOKEN_RE = re.compile(r"\\[Cc]\[(\d+)\]")
+SIZE_BRACE_TOKEN_RE = re.compile(r"\\([{}])")
+SIZE_SET_TOKEN_RE = re.compile(r"\\[Ff][Ss]\[(\d+)\]")
 HIDDEN_CONTROL_TOKEN_RE = re.compile(
     r"""
     \\[Cc]\[(\d+)\]             |
@@ -26,6 +28,24 @@ HIDDEN_CONTROL_TOKEN_RE = re.compile(
     """,
     re.VERBOSE,
 )
+HIDDEN_STYLE_TOKEN_RE = re.compile(
+    r"""
+    \\[Cc]\[(\d+)\]             |
+    \\([{}])                    |
+    \\[Ff][Ss]\[(\d+)\]         |
+    \\[A-Za-z]+\d*<[^>]*>       |
+    \\[A-Za-z]+\d*\[[^\]]*\]    |
+    \\[\.\!\|\^]                |
+    \\[ntr]
+    """,
+    re.VERBOSE,
+)
+DEFAULT_PREVIEW_FONT_SIZE = 28
+MIN_PREVIEW_FONT_SIZE = 24
+MAX_PREVIEW_FONT_SIZE = 96
+PREVIEW_FONT_SIZE_STEP = 12
+
+MaskedStyleSpan = tuple[int, int, str, float]
 
 
 def is_dark_palette() -> bool:
@@ -55,6 +75,31 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
         def _normalize_translation_lines(self, value: Any) -> list[str]: ...
         def _normalize_speaker_key(self, value: str) -> str: ...
         def _speaker_translation_for_key(self, speaker_key: str) -> str: ...
+
+    def _clamp_preview_font_size(self, value: int) -> int:
+        return max(MIN_PREVIEW_FONT_SIZE, min(MAX_PREVIEW_FONT_SIZE, value))
+
+    def _next_preview_font_size(self, token: str, current_font_size: int) -> int:
+        brace_match = SIZE_BRACE_TOKEN_RE.fullmatch(token)
+        if brace_match is not None:
+            brace = brace_match.group(1)
+            if brace == "{":
+                return self._clamp_preview_font_size(current_font_size + PREVIEW_FONT_SIZE_STEP)
+            return self._clamp_preview_font_size(current_font_size - PREVIEW_FONT_SIZE_STEP)
+        set_match = SIZE_SET_TOKEN_RE.fullmatch(token)
+        if set_match is not None:
+            try:
+                parsed = int(set_match.group(1))
+            except Exception:
+                return current_font_size
+            return self._clamp_preview_font_size(parsed)
+        return current_font_size
+
+    def _preview_font_scale(self, font_size: int) -> float:
+        if DEFAULT_PREVIEW_FONT_SIZE <= 0:
+            return 1.0
+        scale = float(font_size) / float(DEFAULT_PREVIEW_FONT_SIZE)
+        return max(0.5, scale)
 
     def _segment_source_lines_for_display(self, segment: DialogueSegment) -> list[str]:
         lines = segment.source_lines or segment.original_lines or segment.lines
@@ -488,33 +533,54 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
         parts: list[str] = []
         cursor = 0
         active_color = ""
+        active_font_size = DEFAULT_PREVIEW_FONT_SIZE
         default_color = self._muted_base_text_color() if muted else ""
 
-        def append_chunk(chunk: str, color_hex: str) -> None:
+        def append_chunk(chunk: str, color_hex: str, font_scale: float) -> None:
             if not chunk:
                 return
             escaped = html.escape(chunk).replace("\n", "<br/>")
             effective_color = color_hex or default_color
+            style_parts: list[str] = []
             if effective_color:
-                parts.append(
-                    f"<span style=\"color: {effective_color};\">{escaped}</span>")
-            else:
-                parts.append(escaped)
+                style_parts.append(f"color: {effective_color};")
+            if abs(font_scale - 1.0) > 0.01:
+                style_parts.append(f"font-size: {font_scale * 100.0:.1f}%;")
+            if style_parts:
+                style_attr = " ".join(style_parts)
+                parts.append(f"<span style=\"{style_attr}\">{escaped}</span>")
+                return
+            parts.append(escaped)
 
-        for match in COLOR_TOKEN_RE.finditer(resolved):
-            append_chunk(resolved[cursor:match.start()], active_color)
-            try:
-                color_code = int(match.group(1))
-            except Exception:
-                color_code = 0
-            active_color = (
-                self._muted_color_for_rpgm_code(color_code)
-                if muted
-                else self._color_for_rpgm_code(color_code)
+        for match in HIDDEN_STYLE_TOKEN_RE.finditer(resolved):
+            append_chunk(
+                resolved[cursor:match.start()],
+                active_color,
+                self._preview_font_scale(active_font_size),
             )
+            color_group = match.group(1)
+            if color_group is not None:
+                try:
+                    color_code = int(color_group)
+                except Exception:
+                    color_code = 0
+                active_color = (
+                    self._muted_color_for_rpgm_code(color_code)
+                    if muted
+                    else self._color_for_rpgm_code(color_code)
+                )
+                cursor = match.end()
+                continue
+            token = match.group(0)
+            active_font_size = self._next_preview_font_size(
+                token, active_font_size)
             cursor = match.end()
 
-        append_chunk(resolved[cursor:], active_color)
+        append_chunk(
+            resolved[cursor:],
+            active_color,
+            self._preview_font_scale(active_font_size),
+        )
         if parts:
             return "".join(parts)
         raw = html.escape(strip_control_tokens(resolved))
@@ -528,7 +594,7 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
     def _hidden_control_line_with_color_spans(
         self,
         line: str,
-    ) -> tuple[str, list[tuple[int, int, str]]]:
+    ) -> tuple[str, list[MaskedStyleSpan]]:
         resolved = self._resolve_name_tokens_in_text(
             line,
             prefer_translated=True,
@@ -537,18 +603,25 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
         resolved = VAR_TOKEN_RE.sub(lambda m: f"<V{m.group(1)}>", resolved)
 
         output_parts: list[str] = []
-        spans: list[tuple[int, int, str]] = []
+        spans: list[MaskedStyleSpan] = []
         cursor = 0
         out_pos = 0
         active_color = ""
+        active_font_size = DEFAULT_PREVIEW_FONT_SIZE
 
-        for match in HIDDEN_CONTROL_TOKEN_RE.finditer(resolved):
+        for match in HIDDEN_STYLE_TOKEN_RE.finditer(resolved):
             chunk = resolved[cursor:match.start()]
             if chunk:
                 output_parts.append(chunk)
                 next_pos = out_pos + len(chunk)
-                if active_color:
-                    spans.append((out_pos, next_pos, active_color))
+                spans.append(
+                    (
+                        out_pos,
+                        next_pos,
+                        active_color,
+                        self._preview_font_scale(active_font_size),
+                    )
+                )
                 out_pos = next_pos
 
             color_group = match.group(1)
@@ -558,14 +631,24 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
                 except Exception:
                     color_code = 0
                 active_color = self._color_for_rpgm_code(color_code)
+            else:
+                token = match.group(0)
+                active_font_size = self._next_preview_font_size(
+                    token, active_font_size)
             cursor = match.end()
 
         tail = resolved[cursor:]
         if tail:
             output_parts.append(tail)
             next_pos = out_pos + len(tail)
-            if active_color:
-                spans.append((out_pos, next_pos, active_color))
+            spans.append(
+                (
+                    out_pos,
+                    next_pos,
+                    active_color,
+                    self._preview_font_scale(active_font_size),
+                )
+            )
             out_pos = next_pos
 
         return "".join(output_parts), spans
