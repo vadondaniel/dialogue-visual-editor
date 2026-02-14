@@ -243,7 +243,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         return self.thin_width_spin.value() if segment.has_face else self.wide_width_spin.value()
 
     def _same_merge_signature(self, left: DialogueSegment, right: DialogueSegment) -> bool:
+        if (not left.is_structural_dialogue) or (not right.is_structural_dialogue):
+            return False
         return (
+            left.segment_kind == right.segment_kind
+            and
             left.context == right.context
             and left.code101.get("parameters") == right.code101.get("parameters")
         )
@@ -441,6 +445,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if source_idx < 0:
             return
         source_segment = session.segments[source_idx]
+        if not source_segment.is_structural_dialogue:
+            self.statusBar().showMessage(
+                "Insert is only available for standard dialogue blocks.")
+            return
         translator_mode = self._is_translator_mode()
         bundle_index = -1
         token_index = -1
@@ -462,6 +470,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             original_lines=[""],
             source_lines=[""],
             code401_template=copy.deepcopy(source_segment.code401_template),
+            segment_kind=source_segment.segment_kind,
+            line_entry_code=source_segment.line_entry_code,
+            script_entries_template=copy.deepcopy(source_segment.script_entries_template),
+            script_entry_roles=list(source_segment.script_entry_roles),
+            script_entry_quotes=list(source_segment.script_entry_quotes),
             tl_uid=self._new_translation_uid(),
             translation_lines=[""],
             original_translation_lines=[""],
@@ -514,6 +527,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         translator_mode = self._is_translator_mode()
         source_segment = self.current_segment_lookup.get(uid)
         if source_segment is None:
+            return
+        if not source_segment.is_structural_dialogue:
+            self.statusBar().showMessage(
+                "Overflow split is only available for standard dialogue blocks.")
             return
 
         max_lines = self.max_lines_spin.value()
@@ -568,6 +585,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             original_lines=list(moved_source_lines),
             source_lines=list(moved_source_lines),
             code401_template=copy.deepcopy(source_segment.code401_template),
+            segment_kind=source_segment.segment_kind,
+            line_entry_code=source_segment.line_entry_code,
+            script_entries_template=copy.deepcopy(source_segment.script_entries_template),
+            script_entry_roles=list(source_segment.script_entry_roles),
+            script_entry_quotes=list(source_segment.script_entry_quotes),
             tl_uid=self._new_translation_uid(),
             translation_lines=list(moved_tl_lines),
             original_translation_lines=list(moved_tl_lines),
@@ -629,6 +651,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         left_segment = session.segments[left_index]
         right_segment = session.segments[right_index]
+        if (not left_segment.is_structural_dialogue) or (not right_segment.is_structural_dialogue):
+            self.statusBar().showMessage(
+                "Merge is only available for standard dialogue blocks.")
+            return
         if translator_mode and not right_segment.translation_only:
             self.statusBar().showMessage(
                 "In Translator Edit mode, merge is only allowed when removing a translation-only block."
@@ -820,6 +846,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if segment_index < 0:
             return
         segment = session.segments[segment_index]
+        if not segment.is_structural_dialogue:
+            self.statusBar().showMessage(
+                "Delete is only available for standard dialogue blocks.")
+            return
         if translator_mode and not (segment.inserted or segment.translation_only):
             self.statusBar().showMessage(
                 "In Translator Edit mode, only translation-only blocks can be deleted."

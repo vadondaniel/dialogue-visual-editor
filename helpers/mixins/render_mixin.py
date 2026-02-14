@@ -18,6 +18,16 @@ class _RenderHostTypingFallback:
 
 
 class RenderMixin(_RenderHostTypingFallback):
+    def _segment_allows_structural_actions(
+        self,
+        segment: DialogueSegment,
+        *,
+        actor_mode: bool,
+    ) -> bool:
+        if actor_mode:
+            return False
+        return segment.is_structural_dialogue
+
     def _apply_block_visual_state(self, uid: str, widget: BlockWidgetType) -> None:
         set_selected = getattr(widget, "set_selected_state", None)
         if callable(set_selected):
@@ -304,6 +314,10 @@ class RenderMixin(_RenderHostTypingFallback):
                 name_index_label=name_index_label,
             )
         else:
+            allow_structural = self._segment_allows_structural_actions(
+                segment,
+                actor_mode=actor_mode,
+            )
             widget = DialogueBlockWidget(
                 segment=segment,
                 block_number=block_number,
@@ -324,7 +338,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 actor_mode=actor_mode,
                 name_index_kind=name_index_kind,
                 name_index_label=name_index_label,
-                allow_structural_actions=(not actor_mode),
+                allow_structural_actions=allow_structural,
             )
         self._bind_block_widget_signals(widget)
         return widget
@@ -352,6 +366,10 @@ class RenderMixin(_RenderHostTypingFallback):
 
         if not isinstance(widget, DialogueBlockWidget):
             return False
+        allow_structural = self._segment_allows_structural_actions(
+            segment,
+            actor_mode=actor_mode,
+        )
         return (
             bool(widget.translator_mode) == bool(translator_mode)
             and bool(widget.actor_mode) == bool(actor_mode)
@@ -361,7 +379,7 @@ class RenderMixin(_RenderHostTypingFallback):
             and int(widget.wide_width) == int(self.wide_width_spin.value())
             and int(widget.max_lines) == int(self.max_lines_spin.value())
             and bool(widget.infer_name_from_first_line) == bool(self.infer_speaker_check.isChecked())
-            and bool(widget.allow_structural_actions) == (not actor_mode)
+            and bool(widget.allow_structural_actions) == allow_structural
         )
 
     def _sync_reused_item_name_desc_widget(
@@ -409,6 +427,23 @@ class RenderMixin(_RenderHostTypingFallback):
         widget.max_lines = max(1, self.max_lines_spin.value())
         widget.infer_name_from_first_line = self.infer_speaker_check.isChecked()
         widget.speaker_tint_color = self._speaker_color_for_segment(segment)
+        widget.allow_structural_actions = self._segment_allows_structural_actions(
+            segment,
+            actor_mode=widget.actor_mode,
+        )
+        if widget.actor_mode:
+            widget.collapse_button.setVisible(False)
+            widget.smart_collapse_button.setVisible(False)
+            widget.wrap_button.setVisible(False)
+            widget.insert_button.setVisible(False)
+            widget.delete_button.setVisible(False)
+        else:
+            is_standard_dialogue = segment.is_structural_dialogue
+            widget.collapse_button.setVisible(is_standard_dialogue)
+            widget.smart_collapse_button.setVisible(is_standard_dialogue)
+            widget.wrap_button.setVisible(is_standard_dialogue)
+            widget.insert_button.setVisible(widget.allow_structural_actions)
+            widget.delete_button.setVisible(widget.allow_structural_actions)
         widget._actor_id = widget._actor_id_from_uid()
         widget._name_index_field = widget._name_index_field_from_uid()
         edited_lines = segment.translation_lines if widget.translator_mode else segment.lines
@@ -583,6 +618,8 @@ class RenderMixin(_RenderHostTypingFallback):
             for idx in range(len(session.segments) - 1):
                 left_segment = session.segments[idx]
                 right_segment = session.segments[idx + 1]
+                if (not left_segment.is_structural_dialogue) or (not right_segment.is_structural_dialogue):
+                    continue
                 if not right_segment.translation_only:
                     continue
                 if self._same_merge_signature(left_segment, right_segment):
@@ -598,6 +635,8 @@ class RenderMixin(_RenderHostTypingFallback):
                 left_segment = left.segment
                 right_segment = right.segment
                 if left_segment is None or right_segment is None:
+                    continue
+                if (not left_segment.is_structural_dialogue) or (not right_segment.is_structural_dialogue):
                     continue
                 if self._same_merge_signature(left_segment, right_segment):
                     pairs.add((left_segment.uid, right_segment.uid))
@@ -879,7 +918,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 )
             else:
                 label = QLabel(
-                    "No code 101 dialogue blocks found in this file.")
+                    "No dialogue/choice/script-message blocks found in this file.")
             self.blocks_layout.addWidget(label)
             self.blocks_layout.addStretch(1)
             self.scroll_area.setEnabled(True)

@@ -1004,6 +1004,12 @@ class DialogueBlockWidget(QFrame):
             self.wrap_button.setVisible(False)
             self.insert_button.setVisible(False)
             self.delete_button.setVisible(False)
+        elif not self._is_standard_dialogue_block():
+            self.collapse_button.setVisible(False)
+            self.smart_collapse_button.setVisible(False)
+            self.wrap_button.setVisible(False)
+            self.insert_button.setVisible(False)
+            self.delete_button.setVisible(False)
         root.addLayout(top_row)
 
         self.context_label = QLabel(self.segment.context)
@@ -1221,6 +1227,12 @@ class DialogueBlockWidget(QFrame):
     def _width_mode_name(self) -> str:
         return "thin" if self.segment.has_face else "wide"
 
+    def _is_standard_dialogue_block(self) -> bool:
+        return self.segment.segment_kind in {"dialogue", "script_message"}
+
+    def _is_choice_block(self) -> bool:
+        return self.segment.segment_kind == "choice"
+
     def _is_changed(self) -> bool:
         if self.translator_mode:
             speaker_changed = self.segment.translation_speaker.strip(
@@ -1277,6 +1289,10 @@ class DialogueBlockWidget(QFrame):
             speaker_border = QColor(self.speaker_tint_color)
             block_border = self.speaker_tint_color if speaker_border.isValid() else self._block_border
             meta_color = self._meta_dim_color
+            if self._is_choice_block():
+                block_bg = "#2f2a1d" if self._dark_theme else "#fef3c7"
+                block_border = "#f59e0b" if self._dark_theme else "#d97706"
+                meta_color = "#fde68a" if self._dark_theme else "#92400e"
         border_width = 2
         if self._selected:
             block_bg = "#14362e" if self._dark_theme else "#dcfce7"
@@ -1300,8 +1316,11 @@ class DialogueBlockWidget(QFrame):
             )
             self.title_label.setText(f"{label}{title_suffix}")
         else:
+            block_prefix = "Block"
+            if self._is_choice_block():
+                block_prefix = "Choice"
             self.title_label.setText(
-                f"Block {self.block_number}{title_suffix}")
+                f"{block_prefix} {self.block_number}{title_suffix}")
         self.setStyleSheet(
             f"""
             QFrame#DialogueBlock {{
@@ -1576,6 +1595,20 @@ class DialogueBlockWidget(QFrame):
             self.meta_label.setText(meta_html)
             return
 
+        if self._is_choice_block():
+            lines = self._current_lines()
+            option_count = len(lines) if lines else 0
+            option_label = "option" if option_count == 1 else "options"
+            view_text = "EN choices" if self.translator_mode else "JP choices"
+            meta_html = (
+                f"Type: Choice (code 102/402) | "
+                f"{option_count} {option_label} | "
+                f"View: {html.escape(view_text)}"
+            )
+            self.meta_label.setTextFormat(Qt.TextFormat.RichText)
+            self.meta_label.setText(meta_html)
+            return
+
         speaker_html = self._speaker_display_name_html()
         face_text = self.segment.face_name or "(none)"
         meta_html = (
@@ -1589,6 +1622,12 @@ class DialogueBlockWidget(QFrame):
 
     def _apply_overflow_highlighting(self) -> None:
         if self.actor_mode:
+            if self._displaying_masked_text:
+                self.editor.setExtraSelections(self._masked_color_selections())
+            else:
+                self.editor.setExtraSelections([])
+            return
+        if not self._is_standard_dialogue_block():
             if self._displaying_masked_text:
                 self.editor.setExtraSelections(self._masked_color_selections())
             else:
@@ -1628,6 +1667,41 @@ class DialogueBlockWidget(QFrame):
             char_label = "char" if char_count == 1 else "chars"
             self.status_label.setText(
                 f"{len(lines)} {line_label}, {char_count} {char_label}")
+            self._has_warning = False
+            self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
+            self.move_overflow_button.setVisible(False)
+            self.move_overflow_button.setEnabled(False)
+            if self.translator_mode:
+                speaker_changed = self.segment.translation_speaker.strip(
+                ) != self.segment.original_translation_speaker.strip()
+                original_tl = (
+                    self.segment.original_translation_lines
+                    if self.segment.original_translation_lines
+                    else [""]
+                )
+                current_tl = lines if lines else [""]
+                self.reset_button.setEnabled(
+                    current_tl != original_tl or speaker_changed)
+            else:
+                self.reset_button.setEnabled(
+                    lines != self.segment.original_lines or bool(self.segment.merged_segments))
+            self._refresh_action_button_state(lines, self._width_chars())
+            self._apply_overflow_highlighting()
+            self._apply_editor_style(False)
+            self._refresh_block_style()
+            self._refresh_source_hint_overlay()
+            return
+
+        if not self._is_standard_dialogue_block():
+            char_count = sum(len(line) for line in lines)
+            line_count = len(lines)
+            if self._is_choice_block():
+                entry_label = "option" if line_count == 1 else "options"
+            else:
+                entry_label = "line" if line_count == 1 else "lines"
+            char_label = "char" if char_count == 1 else "chars"
+            self.status_label.setText(
+                f"{line_count} {entry_label}, {char_count} {char_label}")
             self._has_warning = False
             self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
             self.move_overflow_button.setVisible(False)
@@ -1712,6 +1786,13 @@ class DialogueBlockWidget(QFrame):
 
     def _refresh_action_button_state(self, lines: list[str], width_chars: int) -> None:
         if self.actor_mode:
+            self.collapse_button.setEnabled(False)
+            self.smart_collapse_button.setEnabled(False)
+            self.wrap_button.setEnabled(False)
+            self.insert_button.setEnabled(False)
+            self.delete_button.setEnabled(False)
+            return
+        if not self._is_standard_dialogue_block():
             self.collapse_button.setEnabled(False)
             self.smart_collapse_button.setEnabled(False)
             self.wrap_button.setEnabled(False)

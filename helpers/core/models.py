@@ -16,6 +16,12 @@ class DialogueSegment:
     original_lines: list[str]
     source_lines: list[str] = field(default_factory=list)
     code401_template: dict[str, Any] = field(default_factory=dict)
+    segment_kind: str = "dialogue"
+    line_entry_code: int = 401
+    choice_branch_entries: list[dict[str, Any]] = field(default_factory=list)
+    script_entries_template: list[dict[str, Any]] = field(default_factory=list)
+    script_entry_roles: list[str] = field(default_factory=list)
+    script_entry_quotes: list[str] = field(default_factory=list)
     tl_uid: str = ""
     translation_lines: list[str] = field(default_factory=list)
     original_translation_lines: list[str] = field(default_factory=list)
@@ -59,6 +65,10 @@ class DialogueSegment:
     @property
     def has_face(self) -> bool:
         return bool(self.face_name)
+
+    @property
+    def is_structural_dialogue(self) -> bool:
+        return self.segment_kind in {"dialogue", "script_message"}
 
     def text_joined(self) -> str:
         return "\n".join(self.lines)

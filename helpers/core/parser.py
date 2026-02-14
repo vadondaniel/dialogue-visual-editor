@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import CommandBundle, CommandToken, DialogueSegment, FileSession
+from .script_message_utils import parse_game_message_call
 from .text_utils import first_parameter_text, is_command_entry, split_lines_preserve_empty
 
 
@@ -49,6 +50,75 @@ _SYSTEM_INDEXED_ARRAY_FIELDS: tuple[str, ...] = (
     "variables",
 )
 _SYSTEM_TERMS_ARRAY_FIELDS: tuple[str, ...] = ("basic", "commands", "params")
+
+
+def _choice_lines_from_code102(entry: dict[str, Any]) -> list[str]:
+    params = entry.get("parameters")
+    if not isinstance(params, list) or not params:
+        return [""]
+    raw_choices = params[0]
+    if not isinstance(raw_choices, list):
+        return [""]
+    lines: list[str] = []
+    for item in raw_choices:
+        if isinstance(item, str):
+            lines.append(item)
+        elif item is None:
+            lines.append("")
+        else:
+            lines.append(str(item))
+    return lines or [""]
+
+
+def _collect_choice_branch_entries(
+    commands: list[Any],
+    code102_index: int,
+) -> list[dict[str, Any]]:
+    entry = commands[code102_index]
+    if not isinstance(entry, dict):
+        return []
+    base_indent_raw = entry.get("indent", 0)
+    base_indent = base_indent_raw if isinstance(base_indent_raw, int) else 0
+    branch_entries: list[dict[str, Any]] = []
+    idx = code102_index + 1
+    while idx < len(commands):
+        candidate = commands[idx]
+        if not is_command_entry(candidate):
+            idx += 1
+            continue
+        if not isinstance(candidate, dict):
+            idx += 1
+            continue
+        code = candidate.get("code")
+        indent_raw = candidate.get("indent", base_indent)
+        indent = indent_raw if isinstance(indent_raw, int) else base_indent
+        if code == 404 and indent == base_indent:
+            break
+        if code == 402 and indent == base_indent:
+            branch_entries.append(candidate)
+        idx += 1
+    return branch_entries
+
+
+def _collect_script_block_entries(
+    commands: list[Any],
+    start_index: int,
+) -> tuple[list[dict[str, Any]], int]:
+    block_entries: list[dict[str, Any]] = []
+    idx = start_index
+    while idx < len(commands):
+        candidate = commands[idx]
+        if not is_command_entry(candidate) or not isinstance(candidate, dict):
+            break
+        code = candidate.get("code")
+        if idx == start_index:
+            if code != 355:
+                break
+        elif code != 655:
+            break
+        block_entries.append(candidate)
+        idx += 1
+    return block_entries, idx
 
 
 def _safe_system_field_slug(field_path: str) -> str:
@@ -172,6 +242,120 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                             kind="dialogue", segment=segment))
                         segments.append(segment)
                         i = j
+                        continue
+                    if is_command_entry(entry) and entry.get("code") == 102:
+                        base_cmd = copy.deepcopy(entry)
+                        lines = _choice_lines_from_code102(entry)
+                        branch_entries = _collect_choice_branch_entries(value, i)
+                        line_template: dict[str, Any] = {}
+                        if branch_entries:
+                            line_template = copy.deepcopy(branch_entries[0])
+                        if not line_template:
+                            indent_raw = entry.get("indent", 0)
+                            indent = indent_raw if isinstance(
+                                indent_raw, int) else 0
+                            line_template = {
+                                "code": 402,
+                                "indent": indent,
+                                "parameters": [0, ""],
+                            }
+                        uid = f"{path.name}:{list_id}:{segment_counter}"
+                        segment_counter += 1
+                        segment = DialogueSegment(
+                            uid=uid,
+                            context=f"{context} | choices",
+                            code101=base_cmd,
+                            lines=list(lines),
+                            original_lines=list(lines),
+                            source_lines=list(lines),
+                            code401_template=line_template,
+                            segment_kind="choice",
+                            line_entry_code=402,
+                            choice_branch_entries=list(branch_entries),
+                        )
+                        tokens.append(CommandToken(
+                            kind="dialogue", segment=segment))
+                        segments.append(segment)
+                        i += 1
+                        continue
+                    if is_command_entry(entry) and entry.get("code") == 355:
+                        script_entries, j = _collect_script_block_entries(
+                            value, i)
+                        if script_entries:
+                            script_templates = [
+                                copy.deepcopy(script_entry)
+                                for script_entry in script_entries
+                            ]
+                            script_roles: list[str] = []
+                            script_quotes: list[str] = []
+                            script_lines: list[str] = []
+                            speaker_text = ""
+                            line_template: dict[str, Any] = {}
+                            for script_entry in script_entries:
+                                text = first_parameter_text(script_entry)
+                                parsed = parse_game_message_call(text)
+                                if parsed is None:
+                                    script_roles.append("other")
+                                    script_quotes.append('"')
+                                    continue
+                                call_kind, decoded_text, quote_char = parsed
+                                if call_kind == "add":
+                                    script_roles.append("add")
+                                    script_quotes.append(quote_char)
+                                    script_lines.append(decoded_text)
+                                    if not line_template:
+                                        line_template = copy.deepcopy(
+                                            script_entry)
+                                else:
+                                    script_roles.append("speaker")
+                                    script_quotes.append(quote_char)
+                                    speaker_text = decoded_text
+                            if script_lines:
+                                if not line_template:
+                                    indent_raw = entry.get("indent", 0)
+                                    indent = indent_raw if isinstance(
+                                        indent_raw, int) else 0
+                                    line_template = {
+                                        "code": 655,
+                                        "indent": indent,
+                                        "parameters": [""],
+                                    }
+                                indent_raw = entry.get("indent", 0)
+                                indent = indent_raw if isinstance(
+                                    indent_raw, int) else 0
+                                line_code_raw = line_template.get("code")
+                                line_code = line_code_raw if isinstance(
+                                    line_code_raw, int) else 655
+                                synthetic_code101 = {
+                                    "code": 101,
+                                    "indent": indent,
+                                    "parameters": ["", 0, 0, 2, speaker_text],
+                                }
+                                uid = f"{path.name}:{list_id}:{segment_counter}"
+                                segment_counter += 1
+                                segment = DialogueSegment(
+                                    uid=uid,
+                                    context=context,
+                                    code101=synthetic_code101,
+                                    lines=list(script_lines),
+                                    original_lines=list(script_lines),
+                                    source_lines=list(script_lines),
+                                    code401_template=line_template,
+                                    segment_kind="script_message",
+                                    line_entry_code=line_code,
+                                    script_entries_template=script_templates,
+                                    script_entry_roles=script_roles,
+                                    script_entry_quotes=script_quotes,
+                                )
+                                tokens.append(CommandToken(
+                                    kind="dialogue", segment=segment))
+                                segments.append(segment)
+                                i = j
+                                continue
+                    if is_command_entry(entry):
+                        tokens.append(CommandToken(
+                            kind="raw", raw_entry=entry))
+                        i += 1
                     else:
                         tokens.append(CommandToken(
                             kind="raw", raw_entry=entry))

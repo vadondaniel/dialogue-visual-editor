@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 
 from PySide6.QtWidgets import QMessageBox, QWidget
 
-from ..core.models import CommandToken, DialogueSegment, FileSession
+from ..core.models import NO_SPEAKER_KEY, CommandToken, DialogueSegment, FileSession
+from ..core.script_message_utils import build_game_message_call
 from ..core.text_utils import chunk_lines, visible_length
 
 ApplyVersionKind = Literal["original", "working", "translated"]
@@ -29,6 +30,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         translator_mode: bool,
     ) -> bool:
         if self._is_name_index_session(session):
+            return False
+        if not segment.is_structural_dialogue:
             return False
         if (not translator_mode) and segment.translation_only:
             return False
@@ -131,7 +134,156 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             f"{prefix}{path.name} ({display_count}){problem_badge}{suffix}")
 
     def _build_entries_for_segment(self, segment: DialogueSegment) -> list[dict[str, Any]]:
+        if segment.segment_kind == "choice":
+            return self._build_entries_for_choice_segment(segment, segment.lines)
+        if segment.segment_kind == "script_message":
+            return self._build_entries_for_script_message_segment(segment, segment.lines)
         return self._build_entries_for_segment_lines(segment, segment.lines)
+
+    def _build_entries_for_choice_segment(
+        self,
+        segment: DialogueSegment,
+        lines_source: list[str],
+    ) -> list[dict[str, Any]]:
+        base_cmd = copy.deepcopy(segment.code101)
+        params = base_cmd.get("parameters")
+        if not isinstance(params, list):
+            params = []
+        existing_choices = params[0] if params and isinstance(params[0], list) else []
+        branch_entries = [
+            entry for entry in segment.choice_branch_entries if isinstance(entry, dict)
+        ]
+        target_count = 0
+        if isinstance(existing_choices, list) and existing_choices:
+            target_count = len(existing_choices)
+        elif branch_entries:
+            target_count = len(branch_entries)
+        else:
+            target_count = max(1, len(lines_source))
+
+        incoming_lines = list(lines_source) if lines_source else [""]
+        normalized_lines = list(incoming_lines[:target_count])
+        while len(normalized_lines) < target_count:
+            normalized_lines.append("")
+
+        while len(params) <= 0:
+            params.append([])
+        params[0] = list(normalized_lines)
+        base_cmd["parameters"] = params
+
+        for idx, branch_entry in enumerate(branch_entries):
+            branch_params = branch_entry.get("parameters")
+            if not isinstance(branch_params, list):
+                branch_params = []
+            if not branch_params:
+                branch_params = [idx, ""]
+            elif len(branch_params) == 1:
+                branch_params.append("")
+            text = normalized_lines[idx] if idx < len(normalized_lines) else ""
+            branch_params[1] = text
+            branch_entry["parameters"] = branch_params
+        return [base_cmd]
+
+    def _set_script_message_call_entry(
+        self,
+        entry: dict[str, Any],
+        *,
+        kind: str,
+        text: str,
+        quote_char: str,
+    ) -> None:
+        params = entry.get("parameters")
+        if not isinstance(params, list):
+            params = []
+        while len(params) <= 0:
+            params.append("")
+        params[0] = build_game_message_call(kind, text, quote_char)
+        entry["parameters"] = params
+
+    def _build_entries_for_script_message_segment(
+        self,
+        segment: DialogueSegment,
+        lines_source: list[str],
+        speaker_override: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        templates = [
+            entry for entry in segment.script_entries_template if isinstance(entry, dict)
+        ]
+        roles = list(segment.script_entry_roles)
+        quotes = list(segment.script_entry_quotes)
+        if not templates:
+            return self._build_entries_for_segment_lines(
+                segment,
+                lines_source,
+                speaker_override=speaker_override,
+            )
+
+        incoming_lines = list(lines_source) if lines_source else [""]
+        speaker_text_raw = (
+            speaker_override
+            if speaker_override is not None
+            else segment.speaker_name
+        )
+        speaker_text = "" if speaker_text_raw == NO_SPEAKER_KEY else speaker_text_raw
+
+        add_indexes = [
+            idx for idx, role in enumerate(roles)
+            if role == "add" and idx < len(templates)
+        ]
+        if not add_indexes:
+            return [copy.deepcopy(entry) for entry in templates]
+        last_add_index = add_indexes[-1]
+        first_add_template = copy.deepcopy(templates[add_indexes[0]])
+        first_add_quote = (
+            quotes[add_indexes[0]]
+            if add_indexes[0] < len(quotes)
+            else '"'
+        )
+        built_entries: list[dict[str, Any]] = []
+        add_cursor = 0
+
+        for idx, template in enumerate(templates):
+            role = roles[idx] if idx < len(roles) else "other"
+            quote_char = quotes[idx] if idx < len(quotes) else '"'
+            rebuilt_entry = copy.deepcopy(template)
+            if role == "speaker":
+                self._set_script_message_call_entry(
+                    rebuilt_entry,
+                    kind="setSpeakerName",
+                    text=speaker_text,
+                    quote_char=quote_char,
+                )
+                built_entries.append(rebuilt_entry)
+                continue
+            if role == "add":
+                if add_cursor >= len(incoming_lines):
+                    continue
+                next_text = incoming_lines[add_cursor]
+                add_cursor += 1
+                self._set_script_message_call_entry(
+                    rebuilt_entry,
+                    kind="add",
+                    text=next_text,
+                    quote_char=quote_char,
+                )
+                built_entries.append(rebuilt_entry)
+                if idx == last_add_index:
+                    while add_cursor < len(incoming_lines):
+                        extra_entry = copy.deepcopy(first_add_template)
+                        extra_code = extra_entry.get("code")
+                        if not isinstance(extra_code, int) or extra_code == 355:
+                            extra_entry["code"] = 655
+                        self._set_script_message_call_entry(
+                            extra_entry,
+                            kind="add",
+                            text=incoming_lines[add_cursor],
+                            quote_char=first_add_quote,
+                        )
+                        built_entries.append(extra_entry)
+                        add_cursor += 1
+                continue
+            built_entries.append(rebuilt_entry)
+        return built_entries
 
     def _build_entries_for_segment_lines(
         self,
@@ -148,6 +300,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         entries: list[dict[str, Any]] = []
         line_template = segment.code401_template if isinstance(
             segment.code401_template, dict) else {}
+        line_entry_code_raw = segment.line_entry_code
+        line_entry_code = line_entry_code_raw if isinstance(
+            line_entry_code_raw, int) else 401
         for chunk in chunks:
             cmd101 = copy.deepcopy(segment.code101)
             if speaker_override is not None:
@@ -165,7 +320,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             for line in chunk:
                 if line_template:
                     line_entry = copy.deepcopy(line_template)
-                    line_entry["code"] = 401
+                    line_entry["code"] = line_entry_code
                     if "indent" not in line_entry:
                         line_entry["indent"] = indent
                     params = line_entry.get("parameters")
@@ -179,7 +334,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     entries.append(line_entry)
                 else:
                     entries.append(
-                        {"code": 401, "indent": indent, "parameters": [line]})
+                        {"code": line_entry_code, "indent": indent, "parameters": [line]})
         return entries
 
     def _collect_change_log(self, session: FileSession) -> list[tuple[str, str, str]]:

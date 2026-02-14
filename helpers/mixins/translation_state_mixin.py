@@ -137,6 +137,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
     def _segment_source_hash(self, segment: DialogueSegment) -> str:
         payload = "\n".join(
             [
+                segment.segment_kind,
                 segment.context,
                 str(segment.background),
                 str(segment.position),

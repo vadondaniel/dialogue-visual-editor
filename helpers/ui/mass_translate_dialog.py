@@ -506,6 +506,7 @@ class MassTranslateDialog(QDialog):
                 existing_text = "\n".join(existing_lines).strip()
                 speaker_key = self.editor._speaker_key_for_segment(segment)
                 content_type = self._segment_content_type(path, session, segment)
+                is_choice_segment = segment.segment_kind == "choice"
 
                 if include_speakers and speaker_key != NO_SPEAKER_KEY:
                     speaker_keys.add(speaker_key)
@@ -523,7 +524,7 @@ class MassTranslateDialog(QDialog):
                 tl_uid = self._ensure_segment_translation_uid(segment)
                 if content_type == "dialogue":
                     entry_id = f"D:{tl_uid}"
-                    entry_type = "dialogue"
+                    entry_type = "choice" if is_choice_segment else "dialogue"
                 elif content_type == "speaker_segment":
                     entry_id = f"P:{tl_uid}"
                     entry_type = "speaker_text"
@@ -534,12 +535,15 @@ class MassTranslateDialog(QDialog):
                     speaker_key).strip()
                 if not speaker_for_prompt:
                     speaker_for_prompt = speaker_key
+                include_speaker_field = (
+                    content_type == "dialogue" and not is_choice_segment
+                )
                 entries.append(
                     {
                         "id": entry_id,
                         "type": entry_type,
                         **({"speaker": speaker_for_prompt}
-                           if content_type == "dialogue" else {}),
+                           if include_speaker_field else {}),
                         "jp_text": "\n".join(source_lines),
                         "en_translation": existing_text,
                     }
