@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from html import escape
 import re
 from pathlib import Path
@@ -19,6 +19,16 @@ class _AuditTermUsageHostTypingFallback:
 
 
 class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
+    _JP_TERM_RE = re.compile(r"[ぁ-ゟァ-ヿ一-龯々〆〤ー]{2,}")
+    _EN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’-]*")
+    _EN_STOPWORDS = {
+        "the", "and", "for", "that", "with", "from", "this", "have", "your",
+        "you", "are", "was", "were", "will", "would", "could", "should",
+        "they", "them", "their", "his", "her", "its", "our", "ours", "it's",
+        "is", "am", "be", "been", "being", "to", "of", "in", "on", "at", "as",
+        "by", "or", "an", "a", "it", "we", "i", "me", "my", "mine",
+    }
+
     def _marker_text_to_rich_html(self, text: str) -> str:
         if not text:
             return ""
@@ -65,6 +75,168 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         base = strip_control_tokens(value or "").replace("\u3000", " ")
         squashed = re.sub(r"\s+", "", base)
         return squashed.casefold()
+
+    def _plain_text_for_suggestions(self, value: str) -> str:
+        base = strip_control_tokens(value or "").replace("\u3000", " ")
+        return re.sub(r"\s+", " ", base).strip()
+
+    def _suggestion_item_payload(
+        self,
+        item: Optional[QListWidgetItem],
+    ) -> Optional[dict[str, Any]]:
+        if item is None:
+            return None
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _collect_audit_term_suggestions(
+        self,
+        dialogue_only: bool,
+    ) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+        source_resolver = getattr(self, "_segment_source_lines_for_translation", None)
+        tl_resolver = getattr(self, "_segment_translation_lines_for_translation", None)
+        jp_counts: Counter[str] = Counter()
+        en_word_counts: Counter[str] = Counter()
+        en_bigram_counts: Counter[str] = Counter()
+        for path in self.file_paths:
+            session = self.sessions.get(path)
+            if session is None:
+                continue
+            for segment in session.segments:
+                if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
+                    continue
+                if callable(source_resolver):
+                    source_lines = source_resolver(segment)
+                else:
+                    source_lines = self._segment_source_lines_for_display(segment)
+                if callable(tl_resolver):
+                    tl_lines = tl_resolver(segment)
+                else:
+                    tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                if isinstance(source_lines, list):
+                    for line in source_lines:
+                        plain = self._plain_text_for_suggestions(
+                            line if isinstance(line, str) else ""
+                        )
+                        if not plain:
+                            continue
+                        for token in self._JP_TERM_RE.findall(plain):
+                            if len(token) >= 2:
+                                jp_counts[token] += 1
+                if isinstance(tl_lines, list):
+                    for line in tl_lines:
+                        plain = self._plain_text_for_suggestions(
+                            line if isinstance(line, str) else ""
+                        )
+                        if not plain:
+                            continue
+                        words = [
+                            token.lower()
+                            for token in self._EN_WORD_RE.findall(plain)
+                            if len(token) >= 3
+                        ]
+                        filtered_words = [
+                            token
+                            for token in words
+                            if token not in self._EN_STOPWORDS
+                        ]
+                        for token in filtered_words:
+                            en_word_counts[token] += 1
+                        if len(filtered_words) >= 2:
+                            for idx in range(len(filtered_words) - 1):
+                                bigram = f"{filtered_words[idx]} {filtered_words[idx + 1]}"
+                                en_bigram_counts[bigram] += 1
+
+        jp_suggestions = [
+            (token, count)
+            for token, count in jp_counts.items()
+            if count >= 2
+        ]
+        jp_suggestions.sort(key=lambda row: (-row[1], -len(row[0]), row[0]))
+        jp_suggestions = jp_suggestions[:80]
+
+        en_suggestions_counter: Counter[str] = Counter()
+        for token, count in en_word_counts.items():
+            if count >= 3:
+                en_suggestions_counter[token] += count
+        for token, count in en_bigram_counts.items():
+            if count >= 2:
+                en_suggestions_counter[token] += count
+        en_suggestions = list(en_suggestions_counter.items())
+        en_suggestions.sort(key=lambda row: (-row[1], -len(row[0]), row[0]))
+        en_suggestions = en_suggestions[:120]
+        return jp_suggestions, en_suggestions
+
+    def _refresh_audit_term_suggestions_panel(self) -> None:
+        if (
+            self.audit_term_dialogue_only_check is None
+            or self.audit_term_suggest_jp_list is None
+            or self.audit_term_suggest_en_list is None
+        ):
+            return
+        dialogue_only = self.audit_term_dialogue_only_check.isChecked()
+        jp_suggestions, en_suggestions = self._collect_audit_term_suggestions(
+            dialogue_only
+        )
+        self.audit_term_suggest_jp_list.clear()
+        self.audit_term_suggest_en_list.clear()
+        for token, count in jp_suggestions:
+            item = QListWidgetItem(f"{token} ({count})")
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                {
+                    "token": token,
+                    "count": count,
+                },
+            )
+            self.audit_term_suggest_jp_list.addItem(item)
+        for token, count in en_suggestions:
+            item = QListWidgetItem(f"{token} ({count})")
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                {
+                    "token": token,
+                    "count": count,
+                },
+            )
+            self.audit_term_suggest_en_list.addItem(item)
+
+    def _use_selected_audit_term_jp_suggestion(self) -> None:
+        if self.audit_term_suggest_jp_list is None or self.audit_term_query_edit is None:
+            return
+        payload = self._suggestion_item_payload(
+            self.audit_term_suggest_jp_list.currentItem()
+        )
+        if payload is None:
+            return
+        token_raw = payload.get("token")
+        token = token_raw if isinstance(token_raw, str) else ""
+        if not token:
+            return
+        self.audit_term_query_edit.setText(token)
+        self._refresh_audit_term_panel()
+
+    def _append_selected_audit_term_en_suggestion(self) -> None:
+        if self.audit_term_suggest_en_list is None or self.audit_term_candidates_edit is None:
+            return
+        payload = self._suggestion_item_payload(
+            self.audit_term_suggest_en_list.currentItem()
+        )
+        if payload is None:
+            return
+        token_raw = payload.get("token")
+        token = token_raw if isinstance(token_raw, str) else ""
+        if not token:
+            return
+        current_candidates = self._parse_audit_term_candidates(
+            self.audit_term_candidates_edit.text()
+        )
+        if token.casefold() not in {value.casefold() for value in current_candidates}:
+            current_candidates.append(token)
+        self.audit_term_candidates_edit.setText(" | ".join(current_candidates))
+        self._refresh_audit_term_panel()
 
     def _parse_audit_term_candidates(self, raw_text: str) -> list[str]:
         if not raw_text.strip():

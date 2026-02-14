@@ -381,6 +381,38 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         term_splitter.setStretchFactor(0, 4)
         term_splitter.setStretchFactor(1, 6)
 
+        term_suggest_row = QHBoxLayout()
+        term_suggest_row.setContentsMargins(0, 0, 0, 0)
+        term_suggest_row.setSpacing(6)
+        term_suggest_row.addWidget(QLabel("Frequent Terms"))
+        term_suggest_row.addStretch(1)
+        term_suggest_refresh_btn = QPushButton("Refresh Suggestions")
+        term_suggest_row.addWidget(term_suggest_refresh_btn)
+        term_layout.addLayout(term_suggest_row)
+
+        term_suggest_splitter = QSplitter(Qt.Orientation.Horizontal)
+        term_layout.addWidget(term_suggest_splitter, 0)
+
+        term_suggest_jp_panel = QWidget()
+        term_suggest_jp_layout = QVBoxLayout(term_suggest_jp_panel)
+        term_suggest_jp_layout.setContentsMargins(0, 0, 0, 0)
+        term_suggest_jp_layout.setSpacing(6)
+        term_suggest_jp_layout.addWidget(QLabel("JP frequent words/phrases"))
+        term_suggest_jp_list = QListWidget()
+        term_suggest_jp_layout.addWidget(term_suggest_jp_list, 1)
+        term_suggest_splitter.addWidget(term_suggest_jp_panel)
+
+        term_suggest_en_panel = QWidget()
+        term_suggest_en_layout = QVBoxLayout(term_suggest_en_panel)
+        term_suggest_en_layout.setContentsMargins(0, 0, 0, 0)
+        term_suggest_en_layout.setSpacing(6)
+        term_suggest_en_layout.addWidget(QLabel("EN frequent words/phrases"))
+        term_suggest_en_list = QListWidget()
+        term_suggest_en_layout.addWidget(term_suggest_en_list, 1)
+        term_suggest_splitter.addWidget(term_suggest_en_panel)
+        term_suggest_splitter.setStretchFactor(0, 1)
+        term_suggest_splitter.setStretchFactor(1, 1)
+
         tabs.addTab(term_tab, "Term Usage")
 
         search_progress_overlay = self._create_audit_progress_overlay(
@@ -436,6 +468,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_term_status_label = term_status_label
         self.audit_term_goto_btn = term_goto_btn
         self.audit_term_apply_canonical_btn = term_apply_canonical_btn
+        self.audit_term_suggest_jp_list = term_suggest_jp_list
+        self.audit_term_suggest_en_list = term_suggest_en_list
+        self.audit_term_suggest_refresh_btn = term_suggest_refresh_btn
 
         for rule_id, label, find_text, replace_text in SANITIZE_CHAR_RULES:
             item = QListWidgetItem()
@@ -595,14 +630,35 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         term_candidates_edit.returnPressed.connect(self._refresh_audit_term_panel)
         term_dialogue_only_check.toggled.connect(
-            lambda _checked: self._refresh_audit_term_panel()
+            lambda _checked: (
+                self._refresh_audit_term_panel(),
+                self._refresh_audit_term_suggestions_panel(),
+            )
         )
-        term_refresh_btn.clicked.connect(self._refresh_audit_term_panel)
+        term_refresh_btn.clicked.connect(
+            lambda: (
+                self._refresh_audit_term_panel(),
+                self._refresh_audit_term_suggestions_panel(),
+            )
+        )
+        term_suggest_refresh_btn.clicked.connect(self._refresh_audit_term_suggestions_panel)
         term_variants_list.currentItemChanged.connect(
             lambda _current, _previous: (
                 self._refresh_audit_term_hits(),
                 self._refresh_audit_term_apply_state(),
             )
+        )
+        term_suggest_jp_list.itemActivated.connect(
+            lambda _item: self._use_selected_audit_term_jp_suggestion()
+        )
+        term_suggest_jp_list.itemDoubleClicked.connect(
+            lambda _item: self._use_selected_audit_term_jp_suggestion()
+        )
+        term_suggest_en_list.itemActivated.connect(
+            lambda _item: self._append_selected_audit_term_en_suggestion()
+        )
+        term_suggest_en_list.itemDoubleClicked.connect(
+            lambda _item: self._append_selected_audit_term_en_suggestion()
         )
         term_hits_list.currentItemChanged.connect(
             lambda current, _previous: term_goto_btn.setEnabled(current is not None)
@@ -623,6 +679,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self._refresh_audit_control_mismatch_panel()
         self._refresh_audit_consistency_panel()
         self._refresh_audit_term_panel()
+        self._refresh_audit_term_suggestions_panel()
         self._refresh_audit_search_replace_preview()
 
     def _on_audit_tab_changed(self, _index: int) -> None:
@@ -633,3 +690,4 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self._refresh_audit_sanitize_panel()
         self._refresh_audit_consistency_panel()
         self._refresh_audit_term_panel()
+        self._refresh_audit_term_suggestions_panel()
