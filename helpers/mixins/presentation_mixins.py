@@ -109,7 +109,12 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
                     mapped[idx] = cleaned
         return mapped
 
-    def _system_variables_from_session(self, translated: bool) -> dict[int, str]:
+    def _system_variables_from_session(
+        self,
+        translated: bool,
+        *,
+        translated_fallback_to_source: bool = True,
+    ) -> dict[int, str]:
         session = self._system_session()
         if session is None:
             return {}
@@ -130,7 +135,7 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
                     segment.translation_lines
                 )
                 text_value = "\n".join(translated_lines).strip()
-                if not text_value:
+                if not text_value and translated_fallback_to_source:
                     base_lines = (
                         segment.source_lines
                         or segment.original_lines
@@ -146,6 +151,16 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
 
     def _variable_label_for_rpgm_index(self, variable_id: int) -> str:
         safe_id = max(0, int(variable_id))
+
+        if self._is_translator_mode():
+            translated_values = self._system_variables_from_session(
+                translated=True,
+                translated_fallback_to_source=False,
+            )
+            translated_label = translated_values.get(safe_id, "")
+            if translated_label:
+                return f"system.variables[{safe_id}]: {translated_label}"
+
         version = self._selected_variable_label_version()
         if version == "original":
             values = self._system_variables_from_original_snapshot()
