@@ -57,12 +57,14 @@ try:
         NO_SPEAKER_KEY,
         StructuralAction,
         configure_message_text_metrics,
+        configure_name_text_metrics,
         configure_variable_text_metrics,
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
         parse_dialogue_data,
         parse_dialogue_file,
+        strip_control_tokens,
     )
     from .helpers.audit import AuditMixin
     from .helpers.mixins import (
@@ -92,12 +94,14 @@ except ImportError:
         NO_SPEAKER_KEY,
         StructuralAction,
         configure_message_text_metrics,
+        configure_name_text_metrics,
         configure_variable_text_metrics,
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
         parse_dialogue_data,
         parse_dialogue_file,
+        strip_control_tokens,
     )
     from helpers.audit import AuditMixin
     from helpers.mixins import (
@@ -170,6 +174,8 @@ _JS_SYSTEM_ADVANCED_FONT_RE = re.compile(
 _VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
 _DEFAULT_VARIABLE_LENGTH_ESTIMATE = 4
 _MAX_VARIABLE_LENGTH_ESTIMATE = 64
+_DEFAULT_NAME_LENGTH_ESTIMATE = 8
+_MAX_NAME_LENGTH_ESTIMATE = 64
 
 
 class DialogueVisualEditor(
@@ -2340,12 +2346,33 @@ class DialogueVisualEditor(
     def _default_variable_length_for_manager(self) -> int:
         return self._clamp_variable_length_estimate(self.default_variable_length_estimate)
 
+    def _clamp_name_length_estimate(self, value: int) -> int:
+        return max(1, min(_MAX_NAME_LENGTH_ESTIMATE, int(value)))
+
+    def _name_length_estimate_for_actor_id(self, actor_id: int) -> int:
+        safe_id = max(0, int(actor_id))
+        jp_by_id, en_by_id = self._actor_name_maps()
+        use_translated = self._is_translator_mode()
+        primary = en_by_id if use_translated else jp_by_id
+        fallback = jp_by_id if use_translated else en_by_id
+        candidate = primary.get(safe_id, "").strip() or fallback.get(safe_id, "").strip()
+        if not candidate:
+            return _DEFAULT_NAME_LENGTH_ESTIMATE
+        visible_name = strip_control_tokens(candidate).replace("\n", " ").strip()
+        if not visible_name:
+            return _DEFAULT_NAME_LENGTH_ESTIMATE
+        return self._clamp_name_length_estimate(len(visible_name))
+
     def _sync_variable_length_measurement_settings(self) -> None:
         configure_variable_text_metrics(
             self._clamp_variable_length_estimate(
                 self.default_variable_length_estimate
             ),
             self._variable_length_estimate_for_id,
+        )
+        configure_name_text_metrics(
+            _DEFAULT_NAME_LENGTH_ESTIMATE,
+            self._name_length_estimate_for_actor_id,
         )
 
     def _extract_variable_ids_from_text(self, text: str) -> set[int]:

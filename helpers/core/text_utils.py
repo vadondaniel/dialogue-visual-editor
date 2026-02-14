@@ -53,6 +53,7 @@ _VARIABLE_TOKEN_RE = re.compile(r"^\\[Vv]\[(\d+)\]$")
 _ICON_TOKEN_RE = re.compile(r"^\\[Ii]\[(\d+)\]$")
 _PARTY_TOKEN_RE = re.compile(r"^\\[Pp]\[(\d+)\]$")
 _CURRENCY_TOKEN_RE = re.compile(r"^\\[Gg]$")
+_NAME_TOKEN_RE = re.compile(r"^\\[Nn]\[(\d+)\]$")
 _DEFAULT_FONT_SIZE = 28
 _MIN_FONT_SIZE = 1
 _MAX_FONT_SIZE = 512
@@ -67,7 +68,10 @@ _MAX_VARIABLE_VISIBLE_LENGTH = 64
 _DEFAULT_ICON_VISIBLE_LENGTH = 2
 _DEFAULT_PARTY_VISIBLE_LENGTH = 8
 _DEFAULT_CURRENCY_VISIBLE_LENGTH = 2
+_DEFAULT_NAME_VISIBLE_LENGTH = 8
+_MAX_NAME_VISIBLE_LENGTH = 64
 _VARIABLE_VISIBLE_LENGTH_RESOLVER: Optional[Callable[[int], int]] = None
+_NAME_VISIBLE_LENGTH_RESOLVER: Optional[Callable[[int], int]] = None
 
 
 def clamp_message_font_size(value: int) -> int:
@@ -128,6 +132,21 @@ def configure_variable_text_metrics(
     return safe_default
 
 
+def _clamp_name_visible_length(value: int) -> int:
+    return max(1, min(_MAX_NAME_VISIBLE_LENGTH, int(value)))
+
+
+def configure_name_text_metrics(
+    default_visible_length: int = _DEFAULT_NAME_VISIBLE_LENGTH,
+    resolver: Optional[Callable[[int], int]] = None,
+) -> int:
+    global _DEFAULT_NAME_VISIBLE_LENGTH, _NAME_VISIBLE_LENGTH_RESOLVER
+    safe_default = _clamp_name_visible_length(default_visible_length)
+    _DEFAULT_NAME_VISIBLE_LENGTH = safe_default
+    _NAME_VISIBLE_LENGTH_RESOLVER = resolver
+    return safe_default
+
+
 def _variable_visible_length_for_id(variable_id: int) -> int:
     resolver = _VARIABLE_VISIBLE_LENGTH_RESOLVER
     if resolver is None:
@@ -144,6 +163,24 @@ def _variable_visible_length_for_id(variable_id: int) -> int:
         except Exception:
             return _DEFAULT_VARIABLE_VISIBLE_LENGTH
     return _clamp_variable_visible_length(resolved)
+
+
+def _name_visible_length_for_id(actor_id: int) -> int:
+    resolver = _NAME_VISIBLE_LENGTH_RESOLVER
+    if resolver is None:
+        return _DEFAULT_NAME_VISIBLE_LENGTH
+    try:
+        resolved = resolver(actor_id)
+    except Exception:
+        return _DEFAULT_NAME_VISIBLE_LENGTH
+    if isinstance(resolved, bool):
+        return _DEFAULT_NAME_VISIBLE_LENGTH
+    if not isinstance(resolved, int):
+        try:
+            resolved = int(resolved)
+        except Exception:
+            return _DEFAULT_NAME_VISIBLE_LENGTH
+    return _clamp_name_visible_length(resolved)
 
 
 def _variable_visible_units_for_token(token: str, current_font_size: int) -> float:
@@ -177,6 +214,18 @@ def _currency_visible_units_for_token(token: str, current_font_size: int) -> flo
     if match is None:
         return 0.0
     return float(_DEFAULT_CURRENCY_VISIBLE_LENGTH) * _font_scale_for_size(current_font_size)
+
+
+def _name_visible_units_for_token(token: str, current_font_size: int) -> float:
+    match = _NAME_TOKEN_RE.match(token)
+    if match is None:
+        return 0.0
+    try:
+        actor_id = int(match.group(1))
+    except Exception:
+        return 0.0
+    estimated_chars = _name_visible_length_for_id(actor_id)
+    return float(estimated_chars) * _font_scale_for_size(current_font_size)
 
 
 def _clamp_font_size(value: int) -> int:
@@ -273,6 +322,9 @@ def parse_units_for_measure(text: str) -> list[dict[str, Any]]:
                 token, current_font_size)
         if token_visible <= _FLOAT_EPSILON:
             token_visible = _currency_visible_units_for_token(
+                token, current_font_size)
+        if token_visible <= _FLOAT_EPSILON:
+            token_visible = _name_visible_units_for_token(
                 token, current_font_size)
         units.append({"text": token, "visible": token_visible, "is_newline": False})
         current_font_size = _next_font_size_for_token(token, current_font_size)
