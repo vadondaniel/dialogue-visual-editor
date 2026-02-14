@@ -116,8 +116,8 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 continue
             for idx, segment in enumerate(session.segments, start=1):
                 source_text = "\n".join(
-                    self._segment_source_lines_for_display(segment)).strip()
-                if not source_text:
+                    self._segment_source_lines_for_display(segment))
+                if not source_text.strip():
                     continue
                 if source_text not in first_seen_order:
                     first_seen_order[source_text] = source_order
@@ -125,7 +125,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 tl_text = "\n".join(
                     self._normalize_translation_lines(
                         segment.translation_lines)
-                ).strip()
+                )
                 entry = {
                     "path": str(path),
                     "uid": segment.uid,
@@ -138,8 +138,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         for source_text, entries in grouped.items():
             if len(entries) < 2:
                 continue
-            variants = Counter((entry.get("translation") or "").strip()
-                               for entry in entries)
+            variants = Counter(str(entry.get("translation", "")) for entry in entries)
             unique_count = len(variants)
             if only_inconsistent and unique_count <= 1:
                 continue
@@ -147,7 +146,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             if variants:
                 most_common_text = max(
                     variants.items(),
-                    key=lambda kv: (kv[1], bool(kv[0]), len(kv[0])),
+                    key=lambda kv: (kv[1], bool(str(kv[0]).strip()), len(str(kv[0]))),
                 )[0]
             groups.append(
                 {
