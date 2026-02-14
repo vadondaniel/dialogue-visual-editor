@@ -20,6 +20,15 @@ SIMILARITY_PUNCT_RE = re.compile(
 NAME_MACRO_LINE_RE = re.compile(
     r"^\s*(?:\\[Cc]\[\d+\]\s*)*\\N\[\d+\](?:\s*(?:\\[Cc]\[\d+\])\s*)*(?:[:：])?\s*$"
 )
+SENTENCE_ENDINGS = set(
+    ".!?！？。♪〜~…♡"
+    "()[]{}"
+    "\"'“”‘’"
+    "（）［］｛｝"
+    "「」『』【】〈〉《》〔〕"
+)
+SOFT_SENTENCE_ENDINGS = set(".!?！？。♪〜~…♡")
+CAPITAL_START_FORCE_BREAK = False
 NAME_CONNECTOR_WORDS = {
     "of",
     "the",
@@ -275,6 +284,82 @@ def _units_to_text(units: list[dict[str, Any]]) -> str:
     return "".join(text_parts)
 
 
+def _has_visible_nonspace_characters(text: str) -> bool:
+    for unit in parse_units_for_measure(text):
+        if unit.get("is_newline"):
+            continue
+        if _unit_visible_value(unit) <= 0:
+            continue
+        if _unit_is_space(unit):
+            continue
+        return True
+    return False
+
+
+def _last_visible_nonspace_character(text: str) -> Optional[str]:
+    units = parse_units_for_measure(text)
+    for unit in reversed(units):
+        if unit.get("is_newline"):
+            continue
+        if _unit_visible_value(unit) <= 0:
+            continue
+        if _unit_is_space(unit):
+            continue
+        token_text = unit.get("text")
+        token = token_text if isinstance(token_text, str) else ""
+        if token:
+            return token
+    return None
+
+
+def _starts_with_capital_visible_letter(text: str) -> bool:
+    for unit in parse_units_for_measure(text):
+        if unit.get("is_newline"):
+            break
+        if _unit_visible_value(unit) <= 0:
+            continue
+        if _unit_is_space(unit):
+            continue
+        token_text = unit.get("text")
+        token = token_text if isinstance(token_text, str) else ""
+        if len(token) == 1 and token.isalpha() and token.isupper():
+            return True
+        return False
+    return False
+
+
+def _should_force_break_after_line(line: str, line_width: int) -> bool:
+    if not _has_visible_nonspace_characters(line):
+        return True
+    last_char = _last_visible_nonspace_character(line)
+    if last_char is None:
+        return False
+    if last_char not in SENTENCE_ENDINGS:
+        return False
+    if last_char not in SOFT_SENTENCE_ENDINGS:
+        return True
+    return visible_length(line) >= (line_width / 2)
+
+
+def _build_smart_collapse_body_text(lines: list[str], line_width: int) -> str:
+    parts: list[str] = []
+    previous_line: Optional[str] = None
+    for line in lines:
+        if previous_line is not None:
+            joiner = "\n" if _should_force_break_after_line(previous_line, line_width) else " "
+            if (
+                joiner == " "
+                and CAPITAL_START_FORCE_BREAK
+                and _starts_with_capital_visible_letter(line)
+                and _last_visible_nonspace_character(previous_line) not in SENTENCE_ENDINGS
+            ):
+                joiner = "\n"
+            parts.append(joiner)
+        parts.append(line)
+        previous_line = line
+    return "".join(parts)
+
+
 def _wrap_text_to_width_fallback(text: str, width: int) -> list[str]:
     units = parse_units_for_measure(text)
     if not units:
@@ -427,9 +512,30 @@ def collapse_lines_force(lines: list[str], width: int) -> list[str]:
     return wrapped or [""]
 
 
-def smart_collapse_lines_space_efficient(lines: list[str], width: int) -> list[str]:
+def smart_collapse_lines_space_efficient(
+    lines: list[str],
+    width: int,
+    *,
+    infer_name_from_first_line: bool = False,
+) -> list[str]:
     safe_width = max(1, width)
-    return collapse_lines_force(lines, safe_width)
+    if not lines:
+        return [""]
+
+    body_lines = list(lines)
+    result_prefix: list[str] = []
+    if infer_name_from_first_line and len(body_lines) > 1:
+        first_line = body_lines[0].strip()
+        if first_line and looks_like_name_line(first_line):
+            result_prefix.append(first_line)
+            body_lines = body_lines[1:]
+
+    if not body_lines:
+        return result_prefix or [""]
+
+    body_text = _build_smart_collapse_body_text(body_lines, safe_width)
+    wrapped_body = wrap_text_to_width(body_text, safe_width)
+    return (result_prefix + wrapped_body) or [""]
 
 
 def now_utc_iso() -> str:

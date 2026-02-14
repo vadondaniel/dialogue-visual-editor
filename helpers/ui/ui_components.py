@@ -968,7 +968,7 @@ class DialogueBlockWidget(QFrame):
         self.collapse_button.setToolTip(
             "Force-collapse lines and refill width without sentence heuristics.")
         self.smart_collapse_button.setToolTip(
-            "Collapse with sentence/name-aware heuristics.")
+            "Collapse with sentence heuristics.")
         self.wrap_button.setToolTip("Wrap each existing line to fit width.")
         self.collapse_button.clicked.connect(self._on_collapse_clicked)
         self.smart_collapse_button.clicked.connect(
@@ -1689,7 +1689,10 @@ class DialogueBlockWidget(QFrame):
 
         can_collapse = collapse_lines_force(lines, width_chars) != lines
         can_smart_collapse = smart_collapse_lines_space_efficient(
-            lines, width_chars) != lines
+            lines,
+            width_chars,
+            infer_name_from_first_line=self.infer_name_from_first_line,
+        ) != lines
         can_wrap = wrap_lines_keep_breaks(lines, width_chars) != lines
         can_insert = self.allow_structural_actions
         can_delete = (
@@ -1727,7 +1730,10 @@ class DialogueBlockWidget(QFrame):
 
     def _on_smart_collapse_clicked(self) -> None:
         collapsed = smart_collapse_lines_space_efficient(
-            self._current_lines(), self._width_chars())
+            self._current_lines(),
+            self._width_chars(),
+            infer_name_from_first_line=self.infer_name_from_first_line,
+        )
         self._set_editor_lines(collapsed)
 
     def _on_wrap_clicked(self) -> None:

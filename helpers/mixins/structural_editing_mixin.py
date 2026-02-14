@@ -260,7 +260,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         width = self._segment_line_width(left)
         before = len(left.lines) + len(right.lines)
         merged = smart_collapse_lines_space_efficient(
-            list(left.lines) + list(right.lines), width)
+            list(left.lines) + list(right.lines),
+            width,
+            infer_name_from_first_line=self.infer_speaker_check.isChecked(),
+        )
         return before - len(merged)
 
     def _build_merge_connector_widget(
@@ -638,11 +641,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         merged_lines = smart_collapse_lines_space_efficient(
             list(left_segment.lines) + list(right_segment.lines),
             self._segment_line_width(left_segment),
+            infer_name_from_first_line=self.infer_speaker_check.isChecked(),
         )
         merged_tl_lines = smart_collapse_lines_space_efficient(
             self._normalize_translation_lines(left_segment.translation_lines)
             + self._normalize_translation_lines(right_segment.translation_lines),
             self._segment_line_width(left_segment),
+            infer_name_from_first_line=self.infer_speaker_check.isChecked(),
         )
         merged_speaker_translation = (
             left_segment.translation_speaker.strip() or right_segment.translation_speaker.strip()
