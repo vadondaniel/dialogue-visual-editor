@@ -11,6 +11,7 @@ from PySide6.QtGui import (
     QFont,
     QFontMetrics,
     QHelpEvent,
+    QMouseEvent,
     QPalette,
     QSyntaxHighlighter,
     QTextCharFormat,
@@ -56,6 +57,13 @@ VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
 ICON_TOKEN_RE = re.compile(r"\\[Ii]\[(\d+)\]")
 PARTY_TOKEN_RE = re.compile(r"\\[Pp]\[(\d+)\]")
 CURRENCY_TOKEN_RE = re.compile(r"\\[Gg](?![A-Za-z0-9_])")
+VARIABLE_PLACEHOLDER_TOKEN_RE = re.compile(
+    r"<(?:VAR:|V)(\d+)>", re.IGNORECASE)
+ICON_PLACEHOLDER_TOKEN_RE = re.compile(r"<(?:ICON:|I)(\d+)>", re.IGNORECASE)
+PARTY_PLACEHOLDER_TOKEN_RE = re.compile(
+    r"<(?:PARTY:|P)(\d+)>", re.IGNORECASE)
+CURRENCY_PLACEHOLDER_TOKEN_RE = re.compile(
+    r"<(?:CUR:|G)>", re.IGNORECASE)
 ControlMismatchStatus = Literal["matched", "missing", "extra"]
 ControlMismatchSpan = tuple[int, int, ControlMismatchStatus]
 
@@ -280,6 +288,18 @@ def _token_id_at_editor_position(
     return None
 
 
+def _token_id_at_editor_position_for_patterns(
+    editor: QPlainTextEdit,
+    pos: QPoint,
+    token_patterns: tuple[re.Pattern[str], ...],
+) -> Optional[int]:
+    for token_pattern in token_patterns:
+        token_id = _token_id_at_editor_position(editor, pos, token_pattern)
+        if token_id is not None:
+            return token_id
+    return None
+
+
 def _token_present_at_editor_position(
     editor: QPlainTextEdit,
     pos: QPoint,
@@ -301,28 +321,48 @@ def _variable_token_id_at_editor_position(
     editor: QPlainTextEdit,
     pos: QPoint,
 ) -> Optional[int]:
-    return _token_id_at_editor_position(editor, pos, VARIABLE_TOKEN_RE)
+    return _token_id_at_editor_position_for_patterns(
+        editor,
+        pos,
+        (VARIABLE_TOKEN_RE, VARIABLE_PLACEHOLDER_TOKEN_RE),
+    )
 
 
 def _icon_token_id_at_editor_position(
     editor: QPlainTextEdit,
     pos: QPoint,
 ) -> Optional[int]:
-    return _token_id_at_editor_position(editor, pos, ICON_TOKEN_RE)
+    return _token_id_at_editor_position_for_patterns(
+        editor,
+        pos,
+        (ICON_TOKEN_RE, ICON_PLACEHOLDER_TOKEN_RE),
+    )
 
 
 def _party_token_id_at_editor_position(
     editor: QPlainTextEdit,
     pos: QPoint,
 ) -> Optional[int]:
-    return _token_id_at_editor_position(editor, pos, PARTY_TOKEN_RE)
+    return _token_id_at_editor_position_for_patterns(
+        editor,
+        pos,
+        (PARTY_TOKEN_RE, PARTY_PLACEHOLDER_TOKEN_RE),
+    )
 
 
 def _currency_token_at_editor_position(
     editor: QPlainTextEdit,
     pos: QPoint,
 ) -> bool:
-    return _token_present_at_editor_position(editor, pos, CURRENCY_TOKEN_RE)
+    return _token_present_at_editor_position(
+        editor,
+        pos,
+        CURRENCY_TOKEN_RE,
+    ) or _token_present_at_editor_position(
+        editor,
+        pos,
+        CURRENCY_PLACEHOLDER_TOKEN_RE,
+    )
 
 
 class ControlCodeHighlighter(QSyntaxHighlighter):
@@ -1036,6 +1076,16 @@ class ItemNameDescriptionWidget(QFrame):
         return ""
 
     def _handle_variable_tooltip_event(self, editor: QPlainTextEdit, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseMove:
+            mouse_event = cast(QMouseEvent, event)
+            local_pos = mouse_event.position().toPoint()
+            text = self._variable_tooltip_text(editor, local_pos)
+            if not text:
+                QToolTip.hideText()
+                return False
+            global_pos = editor.viewport().mapToGlobal(local_pos)
+            QToolTip.showText(global_pos, text, editor.viewport())
+            return False
         if event.type() != QEvent.Type.ToolTip:
             return False
         help_event = cast(QHelpEvent, event)
@@ -1544,6 +1594,16 @@ class DialogueBlockWidget(QFrame):
         return ""
 
     def _handle_variable_tooltip_event(self, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseMove:
+            mouse_event = cast(QMouseEvent, event)
+            local_pos = mouse_event.position().toPoint()
+            text = self._variable_tooltip_text(local_pos)
+            if not text:
+                QToolTip.hideText()
+                return False
+            global_pos = self.editor.viewport().mapToGlobal(local_pos)
+            QToolTip.showText(global_pos, text, self.editor.viewport())
+            return False
         if event.type() != QEvent.Type.ToolTip:
             return False
         help_event = cast(QHelpEvent, event)
