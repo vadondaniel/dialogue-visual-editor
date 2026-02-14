@@ -218,8 +218,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self._flash_pending_audit_target(focus_uid, target_widget)
         if target_widget is not None:
             def focus_and_reveal() -> None:
-                target_widget.focus_editor()
-                self.scroll_area.ensureWidgetVisible(target_widget, 20, 20)
+                self._focus_target_widget(
+                    target_widget,
+                    preserve_scroll_value=previous_scroll_value if preserve_scroll else None,
+                )
 
             QTimer.singleShot(0, focus_and_reveal)
             return True

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ..core.models import DialogueSegment, FileSession
@@ -38,6 +38,37 @@ class RenderMixin(_RenderHostTypingFallback):
             return
         flash_highlight()
         self.pending_audit_flash_uid = None
+
+    def _target_widget_visible_in_viewport(
+        self, target_widget: BlockWidgetType
+    ) -> bool:
+        viewport = self.scroll_area.viewport()
+        target_top_left = target_widget.mapTo(viewport, QPoint(0, 0))
+        target_rect = QRect(target_top_left, target_widget.size())
+        visible_rect = viewport.rect().adjusted(20, 20, -20, -20)
+        if visible_rect.isEmpty():
+            visible_rect = viewport.rect()
+        return target_rect.intersects(visible_rect)
+
+    def _focus_target_widget(
+        self,
+        target_widget: BlockWidgetType,
+        *,
+        preserve_scroll_value: Optional[int] = None,
+    ) -> None:
+        scroll_bar = self.scroll_area.verticalScrollBar()
+        if preserve_scroll_value is not None:
+            scroll_bar.setValue(preserve_scroll_value)
+        already_visible = self._target_widget_visible_in_viewport(target_widget)
+        target_widget.focus_editor()
+        if preserve_scroll_value is not None and already_visible:
+            scroll_bar.setValue(preserve_scroll_value)
+            QTimer.singleShot(
+                0, lambda: self.scroll_area.verticalScrollBar().setValue(preserve_scroll_value)
+            )
+            return
+        if not already_visible:
+            self.scroll_area.ensureWidgetVisible(target_widget, 20, 20)
 
     def _block_view_meta(
         self,
@@ -144,9 +175,13 @@ class RenderMixin(_RenderHostTypingFallback):
         self._flash_pending_audit_target(focus_uid, target_widget)
         if preserve_scroll and previous_scroll_value is not None:
             def restore_scroll_and_focus_cached_container() -> None:
-                self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
                 if target_widget is not None:
-                    target_widget.focus_editor()
+                    self._focus_target_widget(
+                        target_widget,
+                        preserve_scroll_value=previous_scroll_value,
+                    )
+                else:
+                    self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
 
             QTimer.singleShot(0, restore_scroll_and_focus_cached_container)
             return True
@@ -156,8 +191,7 @@ class RenderMixin(_RenderHostTypingFallback):
             return True
         if target_widget is not None:
             def focus_and_reveal_cached_container() -> None:
-                target_widget.focus_editor()
-                self.scroll_area.ensureWidgetVisible(target_widget, 20, 20)
+                self._focus_target_widget(target_widget)
 
             QTimer.singleShot(0, focus_and_reveal_cached_container)
         return True
@@ -707,9 +741,13 @@ class RenderMixin(_RenderHostTypingFallback):
 
         if preserve_scroll and previous_scroll_value is not None:
             def restore_scroll_and_focus() -> None:
-                self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
                 if target_widget is not None:
-                    target_widget.focus_editor()
+                    self._focus_target_widget(
+                        target_widget,
+                        preserve_scroll_value=previous_scroll_value,
+                    )
+                else:
+                    self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
 
             QTimer.singleShot(0, restore_scroll_and_focus)
             return
@@ -721,8 +759,7 @@ class RenderMixin(_RenderHostTypingFallback):
 
         if target_widget is not None:
             def focus_and_reveal() -> None:
-                target_widget.focus_editor()
-                self.scroll_area.ensureWidgetVisible(target_widget, 20, 20)
+                self._focus_target_widget(target_widget)
 
             QTimer.singleShot(0, focus_and_reveal)
 
@@ -854,9 +891,13 @@ class RenderMixin(_RenderHostTypingFallback):
             self._flash_pending_audit_target(focus_uid, target_widget)
             if preserve_scroll and previous_scroll_value is not None:
                 def restore_scroll_and_focus_reused() -> None:
-                    self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
                     if target_widget is not None:
-                        target_widget.focus_editor()
+                        self._focus_target_widget(
+                            target_widget,
+                            preserve_scroll_value=previous_scroll_value,
+                        )
+                    else:
+                        self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
 
                 QTimer.singleShot(0, restore_scroll_and_focus_reused)
                 return
@@ -866,8 +907,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 return
             if target_widget is not None:
                 def focus_and_reveal_reused() -> None:
-                    target_widget.focus_editor()
-                    self.scroll_area.ensureWidgetVisible(target_widget, 20, 20)
+                    self._focus_target_widget(target_widget)
 
                 QTimer.singleShot(0, focus_and_reveal_reused)
             return
@@ -942,9 +982,13 @@ class RenderMixin(_RenderHostTypingFallback):
             self._flash_pending_audit_target(focus_uid, target_widget)
             if preserve_scroll and previous_scroll_value is not None:
                 def restore_scroll_and_focus_cached() -> None:
-                    self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
                     if target_widget is not None:
-                        target_widget.focus_editor()
+                        self._focus_target_widget(
+                            target_widget,
+                            preserve_scroll_value=previous_scroll_value,
+                        )
+                    else:
+                        self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
 
                 QTimer.singleShot(0, restore_scroll_and_focus_cached)
                 return
@@ -954,8 +998,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 return
             if target_widget is not None:
                 def focus_and_reveal_cached() -> None:
-                    target_widget.focus_editor()
-                    self.scroll_area.ensureWidgetVisible(target_widget, 20, 20)
+                    self._focus_target_widget(target_widget)
 
                 QTimer.singleShot(0, focus_and_reveal_cached)
             return
