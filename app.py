@@ -905,10 +905,12 @@ class DialogueVisualEditor(
         self,
         *,
         include_source_text: bool,
+        include_source_speaker: bool,
         include_translation_text: bool,
         include_translation_speaker: bool,
-    ) -> tuple[int, int, int]:
+    ) -> tuple[int, int, int, int]:
         source_text = 0
+        source_speaker = 0
         translation_text = 0
         translation_speaker = 0
         for session in self.sessions.values():
@@ -918,6 +920,11 @@ class DialogueVisualEditor(
                         segment.lines
                     )
                     source_text += source_count
+                if include_source_speaker:
+                    _, source_speaker_count = normalize_control_code_word_case(
+                        segment.speaker_name
+                    )
+                    source_speaker += source_speaker_count
                 if include_translation_text:
                     _, tl_count = self._normalize_control_codes_in_lines(
                         segment.translation_lines
@@ -928,16 +935,18 @@ class DialogueVisualEditor(
                         segment.translation_speaker
                     )
                     translation_speaker += speaker_count
-        return source_text, translation_text, translation_speaker
+        return source_text, source_speaker, translation_text, translation_speaker
 
     def _apply_control_code_normalization(
         self,
         *,
         include_source_text: bool,
+        include_source_speaker: bool,
         include_translation_text: bool,
         include_translation_speaker: bool,
-    ) -> tuple[int, int, int, int, int]:
+    ) -> tuple[int, int, int, int, int, int]:
         source_text = 0
+        source_speaker = 0
         translation_text = 0
         translation_speaker = 0
         changed_paths: set[Path] = set()
@@ -957,6 +966,35 @@ class DialogueVisualEditor(
                         segment.source_lines = list(normalized_source_lines)
                         source_text += source_count
                         segment_changed = True
+
+                if include_source_speaker:
+                    old_speaker_key = self._speaker_key_for_segment(segment)
+                    normalized_source_speaker, source_speaker_count = (
+                        normalize_control_code_word_case(segment.speaker_name)
+                    )
+                    if (
+                        source_speaker_count > 0
+                        and normalized_source_speaker != segment.speaker_name
+                    ):
+                        params = segment.params
+                        while len(params) <= 4:
+                            params.append("")
+                        params[4] = normalized_source_speaker
+                        segment.code101["parameters"] = params
+                        source_speaker += source_speaker_count
+                        segment_changed = True
+
+                        new_speaker_key = self._speaker_key_for_segment(segment)
+                        if (
+                            old_speaker_key != new_speaker_key
+                            and old_speaker_key in self.speaker_translation_map
+                        ):
+                            mapped = self.speaker_translation_map.pop(old_speaker_key, "")
+                            if mapped and (
+                                new_speaker_key not in self.speaker_translation_map
+                                or not self.speaker_translation_map[new_speaker_key].strip()
+                            ):
+                                self.speaker_translation_map[new_speaker_key] = mapped
 
                 if include_translation_text:
                     normalized_tl_lines, tl_count = self._normalize_control_codes_in_lines(
@@ -996,8 +1034,15 @@ class DialogueVisualEditor(
             if current_session is not None:
                 self._render_session(current_session, preserve_scroll=True)
 
-        total = source_text + translation_text + translation_speaker
-        return total, source_text, translation_text, translation_speaker, changed_blocks
+        total = source_text + source_speaker + translation_text + translation_speaker
+        return (
+            total,
+            source_text,
+            source_speaker,
+            translation_text,
+            translation_speaker,
+            changed_blocks,
+        )
 
     def _open_normalize_codes_dialog(self) -> None:
         if not self.sessions:
@@ -1009,16 +1054,18 @@ class DialogueVisualEditor(
             return
 
         include_source_text = True
+        include_source_speaker = True
         include_translation_text = True
         include_translation_speaker = True
-        source_count, tl_count, speaker_count = (
+        source_count, source_speaker_count, tl_count, tl_speaker_count = (
             self._count_possible_control_code_normalizations(
                 include_source_text=include_source_text,
+                include_source_speaker=include_source_speaker,
                 include_translation_text=include_translation_text,
                 include_translation_speaker=include_translation_speaker,
             )
         )
-        total_count = source_count + tl_count + speaker_count
+        total_count = source_count + source_speaker_count + tl_count + tl_speaker_count
         if total_count <= 0:
             QMessageBox.information(
                 self,
@@ -1037,11 +1084,12 @@ class DialogueVisualEditor(
                 "Normalize control-code casing across loaded files?\n\n"
                 "This makes control-code words uppercase for consistency.\n"
                 "Example: \\c[0] -> \\C[0]\n\n"
-                "Scope: Source text + translation text + translation speaker.\n\n"
+                "Scope: Source text + source speaker + translation text + translation speaker.\n\n"
                 f"Possible normalizations: {total_count}\n"
                 f"Source text: {source_count}\n"
+                f"Source speaker: {source_speaker_count}\n"
                 f"Translation text: {tl_count}\n"
-                f"Translation speaker: {speaker_count}\n\n"
+                f"Translation speaker: {tl_speaker_count}\n\n"
                 "This updates editor state only. Save to persist."
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1053,11 +1101,13 @@ class DialogueVisualEditor(
         (
             applied_total,
             applied_source,
+            applied_source_speaker,
             applied_tl,
-            applied_speaker,
+            applied_tl_speaker,
             changed_blocks,
         ) = self._apply_control_code_normalization(
             include_source_text=include_source_text,
+            include_source_speaker=include_source_speaker,
             include_translation_text=include_translation_text,
             include_translation_speaker=include_translation_speaker,
         )
@@ -1069,7 +1119,8 @@ class DialogueVisualEditor(
         self.statusBar().showMessage(
             (
                 f"Normalized {applied_total} control-code occurrences "
-                f"(source {applied_source}, TL {applied_tl}, speaker {applied_speaker}) "
+                f"(source text {applied_source}, source speaker {applied_source_speaker}, "
+                f"TL text {applied_tl}, TL speaker {applied_tl_speaker}) "
                 f"across {changed_blocks} {block_label}."
             )
         )
