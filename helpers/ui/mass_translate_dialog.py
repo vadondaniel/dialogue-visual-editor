@@ -71,8 +71,12 @@ class MassTranslateDialog(QDialog):
         self.dialogue_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.misc_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.speaker_segment_targets: dict[str, tuple[Path, DialogueSegment]] = {}
+        self.dialogue_duplicate_targets: dict[str, list[tuple[Path, DialogueSegment]]] = {}
+        self.misc_duplicate_targets: dict[str, list[tuple[Path, DialogueSegment]]] = {}
+        self.speaker_segment_duplicate_targets: dict[str, list[tuple[Path, DialogueSegment]]] = {}
         self.dialogue_block_refs: dict[str, tuple[Path, int]] = {}
         self.speaker_targets: dict[str, str] = {}
+        self._dedupe_collapsed_entries = 0
         self._active_chunk_index = -1
         self._updating_paste_box = False
 
@@ -111,6 +115,16 @@ class MassTranslateDialog(QDialog):
             lambda _idx: self._on_scope_or_filters_changed())
         self.only_untranslated_check.toggled.connect(
             lambda _checked: self._on_scope_or_filters_changed())
+
+        self.deduplicate_blocks_check = QCheckBox("Deduplicate Duplicates")
+        self.deduplicate_blocks_check.setChecked(False)
+        self.deduplicate_blocks_check.setToolTip(
+            "Include duplicate source blocks once, then apply the result to all duplicates."
+        )
+        self.deduplicate_blocks_check.toggled.connect(
+            self._on_deduplicate_blocks_toggled
+        )
+        options_row.addWidget(self.deduplicate_blocks_check)
 
         options_row.addWidget(QLabel("Context boxes/side"))
         self.context_boxes_spin = QSpinBox()
@@ -295,6 +309,237 @@ class MassTranslateDialog(QDialog):
     def _on_scope_or_filters_changed(self) -> None:
         self._refresh_scope_items()
         self._build_chunks()
+
+    def _dedupe_key_for_entry(
+        self,
+        *,
+        content_type: str,
+        entry_type: str,
+        speaker_value: str,
+        jp_text: str,
+    ) -> tuple[str, str, str, str]:
+        return (
+            content_type.strip(),
+            entry_type.strip(),
+            speaker_value.strip(),
+            jp_text.strip(),
+        )
+
+    def _on_deduplicate_blocks_toggled(self, checked: bool) -> None:
+        if not checked:
+            self._on_scope_or_filters_changed()
+            return
+
+        response = QMessageBox.question(
+            self,
+            "Deduplicate Duplicates",
+            (
+                "Deduplicating sends only one entry for repeated source blocks.\n"
+                "This reduces token usage, but can lose per-context nuance.\n\n"
+                "When enabled, applying a translation also updates every duplicate block.\n"
+                "Existing translated duplicates will be propagated retroactively to empty matches.\n\n"
+                "Enable this mode?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            self.deduplicate_blocks_check.blockSignals(True)
+            self.deduplicate_blocks_check.setChecked(False)
+            self.deduplicate_blocks_check.blockSignals(False)
+            return
+
+        (
+            retro_groups,
+            retro_blocks,
+            retro_files,
+        ) = self._apply_duplicate_translations_retroactively()
+        self._refresh_scope_items()
+        self._build_chunks()
+        if retro_blocks > 0:
+            self.result_box.setPlainText(
+                (
+                    "Deduplicate mode enabled.\n"
+                    f"Retroactive groups resolved: {retro_groups}\n"
+                    f"Retroactive blocks updated: {retro_blocks}\n"
+                    f"Touched files: {retro_files}"
+                )
+            )
+            self.editor.statusBar().showMessage(
+                f"Deduplicate mode: filled {retro_blocks} duplicate blocks from existing translations."
+            )
+        else:
+            self.result_box.setPlainText(
+                "Deduplicate mode enabled. No retroactive duplicate updates were needed."
+            )
+
+    def _apply_duplicate_translations_retroactively(self) -> tuple[int, int, int]:
+        include_dialogue, include_misc, include_speakers = self._content_mode_flags()
+        if not include_dialogue and not include_misc and not include_speakers:
+            return 0, 0, 0
+
+        groups: dict[
+            tuple[str, str, str, str],
+            dict[str, Any],
+        ] = {}
+        translation_lines_resolver = getattr(
+            self.editor, "_segment_translation_lines_for_translation", None
+        )
+        source_lines_resolver = getattr(
+            self.editor, "_segment_source_lines_for_translation", None
+        )
+        compose_resolver = getattr(
+            self.editor, "_compose_translation_lines_for_segment", None
+        )
+
+        for path, session in self._scoped_session_items():
+            for segment in session.segments:
+                content_type = self._segment_content_type(path, session, segment)
+                include_segment = (
+                    (content_type == "dialogue" and include_dialogue)
+                    or (content_type == "misc" and include_misc)
+                    or (content_type == "speaker_segment" and include_speakers)
+                )
+                if not include_segment:
+                    continue
+
+                speaker_key = self.editor._speaker_key_for_segment(segment)
+                speaker_for_prompt = self.editor._speaker_translation_for_key(
+                    speaker_key
+                ).strip()
+                if not speaker_for_prompt:
+                    speaker_for_prompt = speaker_key
+                is_choice_segment = segment.segment_kind == "choice"
+                include_speaker_field = (
+                    content_type == "dialogue" and not is_choice_segment
+                )
+                speaker_field_value = speaker_for_prompt if include_speaker_field else ""
+
+                if callable(source_lines_resolver):
+                    try:
+                        resolved_source = source_lines_resolver(segment)
+                    except Exception:
+                        resolved_source = self.editor._segment_source_lines_for_display(
+                            segment
+                        )
+                    source_lines = (
+                        resolved_source
+                        if isinstance(resolved_source, list)
+                        else self.editor._segment_source_lines_for_display(segment)
+                    )
+                else:
+                    source_lines = self.editor._segment_source_lines_for_display(segment)
+                source_text = "\n".join(source_lines)
+
+                if content_type == "dialogue":
+                    entry_type = "choice" if is_choice_segment else "dialogue"
+                elif content_type == "speaker_segment":
+                    entry_type = "speaker_text"
+                else:
+                    entry_type = self._segment_specific_type_label(path, segment)
+                dedupe_key = self._dedupe_key_for_entry(
+                    content_type=content_type,
+                    entry_type=entry_type,
+                    speaker_value=speaker_field_value,
+                    jp_text=source_text,
+                )
+
+                if callable(translation_lines_resolver):
+                    try:
+                        resolved_translation = translation_lines_resolver(segment)
+                    except Exception:
+                        resolved_translation = self.editor._normalize_translation_lines(
+                            segment.translation_lines
+                        )
+                    if isinstance(resolved_translation, list):
+                        existing_lines = self.editor._normalize_translation_lines(
+                            resolved_translation
+                        )
+                    else:
+                        existing_lines = self.editor._normalize_translation_lines(
+                            segment.translation_lines
+                        )
+                else:
+                    existing_lines = self.editor._normalize_translation_lines(
+                        segment.translation_lines
+                    )
+
+                group = groups.setdefault(
+                    dedupe_key,
+                    {
+                        "targets": [],
+                        "reference_lines": None,
+                    },
+                )
+                targets = cast(list[tuple[Path, DialogueSegment]], group["targets"])
+                targets.append((path, segment))
+
+                if "\n".join(existing_lines).strip() and group["reference_lines"] is None:
+                    group["reference_lines"] = list(existing_lines)
+
+        touched_paths: set[Path] = set()
+        groups_resolved = 0
+        updated_blocks = 0
+        for group in groups.values():
+            targets = cast(list[tuple[Path, DialogueSegment]], group.get("targets", []))
+            reference_lines_raw = group.get("reference_lines")
+            if not isinstance(reference_lines_raw, list):
+                continue
+            if len(targets) <= 1:
+                continue
+
+            reference_lines = self.editor._normalize_translation_lines(
+                reference_lines_raw
+            )
+            if not "\n".join(reference_lines).strip():
+                continue
+
+            group_updated = False
+            for path, segment in targets:
+                current_lines = self.editor._normalize_translation_lines(
+                    segment.translation_lines
+                )
+                if "\n".join(current_lines).strip():
+                    continue
+
+                stored_lines = list(reference_lines)
+                if callable(compose_resolver):
+                    try:
+                        resolved_stored = compose_resolver(segment, reference_lines)
+                        if isinstance(resolved_stored, list):
+                            stored_lines = self.editor._normalize_translation_lines(
+                                resolved_stored
+                            )
+                    except Exception:
+                        pass
+
+                if current_lines == stored_lines:
+                    continue
+                segment.translation_lines = list(stored_lines)
+                touched_paths.add(path)
+                group_updated = True
+                updated_blocks += 1
+
+            if group_updated:
+                groups_resolved += 1
+
+        for path in touched_paths:
+            session = self.editor.sessions.get(path)
+            if session is None:
+                continue
+            self.editor._refresh_dirty_state(session)
+
+        current_touched = bool(
+            self.editor.current_path and self.editor.current_path in touched_paths
+        )
+        if current_touched and self.editor.current_path is not None:
+            current_session = self.editor.sessions.get(self.editor.current_path)
+            if current_session is not None:
+                self.editor._render_session(current_session, preserve_scroll=True)
+        else:
+            self.editor._refresh_translator_detail_panel()
+
+        return groups_resolved, updated_blocks, len(touched_paths)
 
     def _segment_content_type(self, path: Path, session: FileSession, segment: DialogueSegment) -> str:
         _ = path
@@ -491,11 +736,17 @@ class MassTranslateDialog(QDialog):
         self.dialogue_targets.clear()
         self.misc_targets.clear()
         self.speaker_segment_targets.clear()
+        self.dialogue_duplicate_targets.clear()
+        self.misc_duplicate_targets.clear()
+        self.speaker_segment_duplicate_targets.clear()
         self.dialogue_block_refs.clear()
         self.speaker_targets.clear()
+        self._dedupe_collapsed_entries = 0
         entries: list[dict[str, Any]] = []
         session_items = self._scoped_session_items()
         speaker_keys: set[str] = set()
+        dedupe_enabled = bool(self.deduplicate_blocks_check.isChecked())
+        dedupe_key_to_entry_id: dict[tuple[str, str, str, str], str] = {}
         source_lines_resolver = getattr(
             self.editor, "_segment_source_lines_for_translation", None
         )
@@ -575,23 +826,53 @@ class MassTranslateDialog(QDialog):
                 include_speaker_field = (
                     content_type == "dialogue" and not is_choice_segment
                 )
+                source_text = "\n".join(source_lines)
+                speaker_field_value = speaker_for_prompt if include_speaker_field else ""
+
+                if dedupe_enabled:
+                    dedupe_key = self._dedupe_key_for_entry(
+                        content_type=content_type,
+                        entry_type=entry_type,
+                        speaker_value=speaker_field_value,
+                        jp_text=source_text,
+                    )
+                    canonical_entry_id = dedupe_key_to_entry_id.get(dedupe_key)
+                    if canonical_entry_id is not None:
+                        if content_type == "dialogue":
+                            self.dialogue_duplicate_targets.setdefault(
+                                canonical_entry_id, []
+                            ).append((path, segment))
+                        elif content_type == "speaker_segment":
+                            self.speaker_segment_duplicate_targets.setdefault(
+                                canonical_entry_id, []
+                            ).append((path, segment))
+                        else:
+                            self.misc_duplicate_targets.setdefault(
+                                canonical_entry_id, []
+                            ).append((path, segment))
+                        self._dedupe_collapsed_entries += 1
+                        continue
+                    dedupe_key_to_entry_id[dedupe_key] = entry_id
+
                 entries.append(
                     {
                         "id": entry_id,
                         "type": entry_type,
-                        **({"speaker": speaker_for_prompt}
-                           if include_speaker_field else {}),
-                        "jp_text": "\n".join(source_lines),
+                        **({"speaker": speaker_for_prompt} if include_speaker_field else {}),
+                        "jp_text": source_text,
                         "en_translation": existing_text,
                     }
                 )
                 if content_type == "dialogue":
                     self.dialogue_targets[entry_id] = (path, segment)
+                    self.dialogue_duplicate_targets[entry_id] = []
                     self.dialogue_block_refs[entry_id] = (path, idx)
                 elif content_type == "speaker_segment":
                     self.speaker_segment_targets[entry_id] = (path, segment)
+                    self.speaker_segment_duplicate_targets[entry_id] = []
                 else:
                     self.misc_targets[entry_id] = (path, segment)
+                    self.misc_duplicate_targets[entry_id] = []
 
         if include_speakers:
             used_entry_ids: set[str] = set()
@@ -759,6 +1040,9 @@ class MassTranslateDialog(QDialog):
             )
             return
 
+        if self.deduplicate_blocks_check.isChecked():
+            self._apply_duplicate_translations_retroactively()
+
         entries = self._collect_chunk_entries(
             include_dialogue=include_dialogue,
             include_misc=include_misc,
@@ -818,8 +1102,18 @@ class MassTranslateDialog(QDialog):
         chunk_label = "chunk" if chunk_count == 1 else "chunks"
         entry_count = len(entries)
         entry_label = "entry" if entry_count == 1 else "entries"
+        dedupe_suffix = ""
+        if self.deduplicate_blocks_check.isChecked() and self._dedupe_collapsed_entries > 0:
+            collapsed_label = (
+                "duplicate"
+                if self._dedupe_collapsed_entries == 1
+                else "duplicates"
+            )
+            dedupe_suffix = (
+                f" Collapsed {self._dedupe_collapsed_entries} {collapsed_label}."
+            )
         self.chunk_summary_label.setText(
-            f"Built {chunk_count} {chunk_label} from {entry_count} {entry_label}."
+            f"Built {chunk_count} {chunk_label} from {entry_count} {entry_label}.{dedupe_suffix}"
         )
         self.result_box.setPlainText(
             "Chunks built. Use Copy Prompt, send to your LLM, then paste JSON output and apply."
@@ -1048,82 +1342,96 @@ class MassTranslateDialog(QDialog):
                 continue
 
             if entry_id.startswith("D:"):
-                target = self.dialogue_targets.get(entry_id)
-                if target is None:
+                primary_target = self.dialogue_targets.get(entry_id)
+                if primary_target is None:
                     continue
                 lines = self._extract_dialogue_translation_lines(update)
                 if lines is None:
                     missing_translation_field_ids.append(entry_id)
                     continue
-                path, segment = target
+                targets = [primary_target]
+                targets.extend(self.dialogue_duplicate_targets.get(entry_id, []))
                 source_lines_resolver = getattr(
                     self.editor, "_segment_source_lines_for_translation", None
                 )
-                if callable(source_lines_resolver):
-                    try:
-                        resolved_source = source_lines_resolver(segment)
-                    except Exception:
-                        resolved_source = self.editor._segment_source_lines_for_display(
-                            segment
-                        )
-                    if isinstance(resolved_source, list):
-                        expected_line_count = len(resolved_source)
+                compose_resolver = getattr(
+                    self.editor, "_compose_translation_lines_for_segment", None
+                )
+                for path, segment in targets:
+                    if callable(source_lines_resolver):
+                        try:
+                            resolved_source = source_lines_resolver(segment)
+                        except Exception:
+                            resolved_source = self.editor._segment_source_lines_for_display(
+                                segment
+                            )
+                        if isinstance(resolved_source, list):
+                            expected_line_count = len(resolved_source)
+                        else:
+                            expected_line_count = len(
+                                self.editor._segment_source_lines_for_display(segment)
+                            )
                     else:
                         expected_line_count = len(
                             self.editor._segment_source_lines_for_display(segment)
                         )
-                else:
-                    expected_line_count = len(
-                        self.editor._segment_source_lines_for_display(segment)
-                    )
-                if len(lines) != expected_line_count:
-                    line_label = "line" if len(lines) == 1 else "lines"
-                    line_count_mismatches.append(
-                        f"{entry_id} ({len(lines)} {line_label}, expected {expected_line_count})"
-                    )
-                stored_lines = list(lines)
-                compose_resolver = getattr(
-                    self.editor, "_compose_translation_lines_for_segment", None
-                )
-                if callable(compose_resolver):
-                    try:
-                        resolved_stored = compose_resolver(segment, lines)
-                        if isinstance(resolved_stored, list):
-                            stored_lines = self.editor._normalize_translation_lines(
-                                resolved_stored
+                    if len(lines) != expected_line_count:
+                        line_label = "line" if len(lines) == 1 else "lines"
+                        line_count_mismatches.append(
+                            (
+                                f"{entry_id} @ {self.editor._relative_path(path)} "
+                                f"({len(lines)} {line_label}, expected {expected_line_count})"
                             )
-                    except Exception:
-                        pass
-                current_lines = self.editor._normalize_translation_lines(
-                    segment.translation_lines)
-                if current_lines != stored_lines:
-                    segment.translation_lines = list(stored_lines)
-                    touched_paths.add(path)
-                    dialogue_applied += 1
+                        )
+                    stored_lines = list(lines)
+                    if callable(compose_resolver):
+                        try:
+                            resolved_stored = compose_resolver(segment, lines)
+                            if isinstance(resolved_stored, list):
+                                stored_lines = self.editor._normalize_translation_lines(
+                                    resolved_stored
+                                )
+                        except Exception:
+                            pass
+                    current_lines = self.editor._normalize_translation_lines(
+                        segment.translation_lines
+                    )
+                    if current_lines != stored_lines:
+                        segment.translation_lines = list(stored_lines)
+                        touched_paths.add(path)
+                        dialogue_applied += 1
                 continue
 
             if entry_id.startswith("M:") or entry_id.startswith("P:"):
-                target: Optional[tuple[Path, DialogueSegment]] = None
+                primary_target: Optional[tuple[Path, DialogueSegment]] = None
                 if entry_id.startswith("M:"):
-                    target = self.misc_targets.get(entry_id)
+                    primary_target = self.misc_targets.get(entry_id)
                 else:
-                    target = self.speaker_segment_targets.get(entry_id)
-                if target is None:
+                    primary_target = self.speaker_segment_targets.get(entry_id)
+                if primary_target is None:
                     continue
                 lines = self._extract_dialogue_translation_lines(update)
                 if lines is None:
                     missing_translation_field_ids.append(entry_id)
                     continue
-                path, segment = target
-                current_lines = self.editor._normalize_translation_lines(
-                    segment.translation_lines)
-                if current_lines != lines:
-                    segment.translation_lines = list(lines)
-                    touched_paths.add(path)
-                    if entry_id.startswith("M:"):
-                        misc_applied += 1
-                    else:
-                        speaker_segments_applied += 1
+                targets = [primary_target]
+                if entry_id.startswith("M:"):
+                    targets.extend(self.misc_duplicate_targets.get(entry_id, []))
+                else:
+                    targets.extend(
+                        self.speaker_segment_duplicate_targets.get(entry_id, [])
+                    )
+                for path, segment in targets:
+                    current_lines = self.editor._normalize_translation_lines(
+                        segment.translation_lines
+                    )
+                    if current_lines != lines:
+                        segment.translation_lines = list(lines)
+                        touched_paths.add(path)
+                        if entry_id.startswith("M:"):
+                            misc_applied += 1
+                        else:
+                            speaker_segments_applied += 1
                 continue
 
             if entry_id.startswith("S:"):
