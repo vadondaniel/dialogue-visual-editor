@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import html
 import json
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -24,6 +25,7 @@ _HTML_TITLE_TAG_RE = re.compile(
     r"(<title\b[^>]*>)(.*?)(</title>)",
     re.IGNORECASE | re.DOTALL,
 )
+logger = logging.getLogger(__name__)
 
 
 class _EditorHostTypingFallback:
@@ -97,12 +99,15 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             translator_mode = self._is_translator_mode()
             display_segments_resolver = getattr(self, "_display_segments_for_session", None)
             if callable(display_segments_resolver):
-                block_count = len(
-                    display_segments_resolver(
-                        session,
-                        translator_mode=translator_mode,
-                        actor_mode=actor_mode,
-                    )
+                display_segments_raw = display_segments_resolver(
+                    session,
+                    translator_mode=translator_mode,
+                    actor_mode=actor_mode,
+                )
+                block_count = (
+                    len(display_segments_raw)
+                    if isinstance(display_segments_raw, list)
+                    else len(session.segments)
                 )
             else:
                 block_count = len(session.segments)
@@ -130,12 +135,15 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         translator_mode = self._is_translator_mode()
         display_segments_resolver = getattr(self, "_display_segments_for_session", None)
         if callable(display_segments_resolver):
-            display_count = len(
-                display_segments_resolver(
-                    session,
-                    translator_mode=translator_mode,
-                    actor_mode=actor_mode,
-                )
+            display_segments_raw = display_segments_resolver(
+                session,
+                translator_mode=translator_mode,
+                actor_mode=actor_mode,
+            )
+            display_count = (
+                len(display_segments_raw)
+                if isinstance(display_segments_raw, list)
+                else len(session.segments)
             )
         else:
             display_count = len(session.segments)
@@ -546,7 +554,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                         session.segments,
                     )
                 except Exception:
-                    pass
+                    logger.exception(
+                        "Failed to update index DB while saving '%s'.", session.path
+                    )
 
             if translator_mode:
                 if source_dirty_before_save:
@@ -570,6 +580,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     f"Saved snapshot to DB: {session.path.name}")
             return True
         except Exception as exc:
+            logger.exception("Failed to save snapshot for '%s'.", session.path)
             QMessageBox.critical(
                 cast(QWidget, self),
                 "Save failed",
@@ -877,6 +888,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     dst.write(output_text)
                 applied += 1
             except Exception as exc:
+                logger.exception("Failed to apply snapshot to '%s'.", path)
                 failed.append(f"{path.name}: {exc}")
 
         if applied > 0:
@@ -886,6 +898,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     game_title
                 )
             except Exception as exc:
+                logger.exception("Failed while syncing index.html title.")
                 failed.append(f"index.html title sync: {exc}")
 
         if failed:
@@ -907,7 +920,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         try:
             self.version_db.set_applied_version(version)
         except Exception:
-            pass
+            logger.exception("Failed to persist applied snapshot version '%s'.", version)
 
         current_dir = self.data_dir
         self._load_data_folder(current_dir)

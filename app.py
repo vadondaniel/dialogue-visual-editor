@@ -2,6 +2,7 @@
 
 from concurrent.futures import Future, ThreadPoolExecutor
 import json
+import logging
 import re
 import sys
 from pathlib import Path
@@ -114,8 +115,20 @@ except ImportError:
         VariableLengthManagerDialog,
     )
 
+try:
+    from .helpers.core.logging_utils import (
+        configure_file_logging,
+        install_global_exception_hooks,
+    )
+except ImportError:
+    from helpers.core.logging_utils import (
+        configure_file_logging,
+        install_global_exception_hooks,
+    )
+
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
 FILE_LIST_SECTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+logger = logging.getLogger(__name__)
 
 
 class FileListItemDelegate(QStyledItemDelegate):
@@ -2415,6 +2428,7 @@ class DialogueVisualEditor(
                             if isinstance(key, str) and isinstance(value, dict):
                                 loaded_project_settings[key] = value
         except Exception:
+            logger.exception("Failed to load UI state from '%s'.", self.ui_state_path)
             return
 
         self.project_ui_settings_by_folder = loaded_project_settings
@@ -2448,7 +2462,7 @@ class DialogueVisualEditor(
             with self.ui_state_path.open("w", encoding="utf-8") as dst:
                 json.dump(payload, dst, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logger.exception("Failed to save UI state to '%s'.", self.ui_state_path)
 
     def _choose_folder(self) -> None:
         start_dir = str(self.data_dir) if self.data_dir else str(Path.cwd())
@@ -2722,6 +2736,12 @@ class DialogueVisualEditor(
 
         self.data_dir = folder.resolve()
         self.last_folder_path = str(self.data_dir)
+        logger.info(
+            "Loading data folder '%s' (force_disk_import=%s, import_target_version=%s).",
+            self.data_dir,
+            force_disk_import,
+            import_target_version,
+        )
         self.detected_rpg_engine = self._detect_rpg_maker_engine(self.data_dir)
         self.default_variable_length_estimate = _DEFAULT_VARIABLE_LENGTH_ESTIMATE
         self.variable_length_overrides = {}
@@ -2808,6 +2828,10 @@ class DialogueVisualEditor(
                             session = parse_dialogue_data(path, decoded)
                             loaded_from_db = True
                         except Exception:
+                            logger.exception(
+                                "Failed to parse working snapshot JSON for '%s'; falling back to disk file.",
+                                rel_path,
+                            )
                             session = None
 
                 if session is None:
@@ -2848,7 +2872,9 @@ class DialogueVisualEditor(
                                     session),
                             )
                     except Exception:
-                        pass
+                        logger.exception(
+                            "Failed to update version snapshots for '%s'.", rel_path
+                        )
                 if self.index_db is not None:
                     try:
                         self.index_db.update_file_index(
@@ -2857,8 +2883,12 @@ class DialogueVisualEditor(
                             session.segments,
                         )
                     except Exception:
-                        pass
+                        logger.exception(
+                            "Failed to update index DB for '%s' during folder load.",
+                            rel_path,
+                        )
             except Exception:
+                logger.exception("Failed to load supported file '%s'.", path)
                 load_errors.append(path.name)
 
         if not self.sessions:
@@ -2874,6 +2904,7 @@ class DialogueVisualEditor(
             self.current_reference_map = {}
             self._refresh_translator_detail_panel()
             self.statusBar().showMessage("No readable supported files found.")
+            logger.warning("No readable supported files were loaded from '%s'.", self.data_dir)
             return
 
         has_explicit_speakers = any(
@@ -2924,11 +2955,25 @@ class DialogueVisualEditor(
                 f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}. "
                 f"Skipped {len(load_errors)} unreadable {skipped_label}.{engine_suffix}{font_suffix}{infer_suffix}"
             )
+            logger.warning(
+                "Folder load completed with unreadable files: %s",
+                ", ".join(load_errors),
+            )
         else:
             self.statusBar().showMessage(
                 f"Loaded {len(self.sessions)} files ({visible_count} shown), "
                 f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}.{engine_suffix}{font_suffix}{infer_suffix}"
             )
+        logger.info(
+            "Folder load complete: total_files=%d loaded=%d visible=%d blocks=%d db=%d disk=%d errors=%d.",
+            len(self.file_paths),
+            len(self.sessions),
+            visible_count,
+            total_blocks,
+            loaded_from_db_count,
+            loaded_from_disk_count,
+            len(load_errors),
+        )
 
     def _file_path_from_item(self, item: Optional[QListWidgetItem]) -> Optional[Path]:
         if item is None:
@@ -3011,6 +3056,10 @@ class DialogueVisualEditor(
                             decoded = json.loads(payload)
                             session = parse_dialogue_data(path, decoded)
                         except Exception:
+                            logger.exception(
+                                "Failed to parse working snapshot JSON for '%s'; falling back to disk file.",
+                                rel_path,
+                            )
                             session = None
                 if session is None:
                     session = parse_dialogue_file(path)
@@ -3024,10 +3073,12 @@ class DialogueVisualEditor(
             else:
                 session = self.sessions[path]
         except json.JSONDecodeError as exc:
+            logger.exception("JSON parse error while opening '%s'.", path)
             QMessageBox.critical(self, "JSON parse error",
                                  f"Failed to parse file:\n{path}\n\n{exc}")
             return
         except Exception as exc:
+            logger.exception("Failed to open file '%s'.", path)
             QMessageBox.critical(
                 self, "Error", f"Failed to open file:\n{path}\n\n{exc}")
             return
@@ -3049,7 +3100,7 @@ class DialogueVisualEditor(
                     session.segments,
                 )
             except Exception:
-                pass
+                logger.exception("Failed to update index DB for '%s'.", path)
 
     def _rerender_current_file(self) -> None:
         if self.current_path is None:
@@ -3159,7 +3210,21 @@ class DialogueVisualEditor(
 
 
 def main() -> int:
+    log_path: Optional[Path] = None
+    try:
+        log_path = configure_file_logging()
+    except Exception:
+        # Last-resort fallback: keep the app functional even if logging setup fails.
+        log_path = None
+    install_global_exception_hooks()
+    if log_path is not None:
+        logger.info("Starting %s. Log file: %s", APP_TITLE, log_path)
+    else:
+        logger.warning("Starting %s without file logging.", APP_TITLE)
+
     app = QApplication(sys.argv)
     window = DialogueVisualEditor()
     window.show()
-    return app.exec()
+    exit_code = app.exec()
+    logger.info("Exited %s with code %s.", APP_TITLE, exit_code)
+    return exit_code

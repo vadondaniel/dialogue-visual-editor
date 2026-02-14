@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -26,6 +27,8 @@ from ..core.text_utils import (
 
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QCheckBox, QComboBox, QPushButton
+
+logger = logging.getLogger(__name__)
 
 
 class _EditorHostTypingFallback:
@@ -273,6 +276,10 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             if isinstance(loaded, dict):
                 self.translation_state.update(loaded)
         except Exception as exc:
+            logger.exception(
+                "Failed to load translation state from '%s'.",
+                self.translation_state_path,
+            )
             QMessageBox.warning(
                 cast(QWidget, self),
                 "Translation state warning",
@@ -537,6 +544,10 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                           ensure_ascii=False, indent=2)
             return True
         except Exception as exc:
+            logger.exception(
+                "Failed to save translation state to '%s'.",
+                self.translation_state_path,
+            )
             QMessageBox.critical(
                 cast(QWidget, self),
                 "Save failed",

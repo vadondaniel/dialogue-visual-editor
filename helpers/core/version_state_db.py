@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -9,6 +10,7 @@ from .text_utils import now_utc_iso
 
 VersionKind = Literal["original", "working", "translated"]
 ImportTargetKind = Literal["working", "translated"]
+logger = logging.getLogger(__name__)
 
 
 class DialogueVersionDB:
@@ -267,4 +269,4 @@ class DialogueVersionDB:
         try:
             self.conn.close()
         except Exception:
-            pass
+            logger.exception("Failed to close version DB '%s'.", self.path)

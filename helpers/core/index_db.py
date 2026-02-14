@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 
 from .models import DialogueSegment
 from .text_utils import now_utc_iso
+
+logger = logging.getLogger(__name__)
 
 
 class DialogueIndexDB:
@@ -121,4 +124,4 @@ class DialogueIndexDB:
         try:
             self.conn.close()
         except Exception:
-            pass
+            logger.exception("Failed to close index DB '%s'.", self.path)
