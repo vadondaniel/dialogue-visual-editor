@@ -750,12 +750,14 @@ def _wrap_text_hard_break(text: str, width: int) -> list[str]:
     lines: list[str] = []
     current_units: list[dict[str, Any]] = []
     current_visible = 0.0
+    last_break_idx: Optional[int] = None
 
     def flush_current() -> None:
-        nonlocal current_units, current_visible
+        nonlocal current_units, current_visible, last_break_idx
         lines.append(_units_to_text(current_units).rstrip(" \t\u3000"))
         current_units = []
         current_visible = 0.0
+        last_break_idx = None
 
     for unit in units:
         if unit.get("is_newline"):
@@ -763,23 +765,47 @@ def _wrap_text_hard_break(text: str, width: int) -> list[str]:
             continue
 
         unit_visible = _unit_visible_value(unit)
-        if unit_visible <= _FLOAT_EPSILON:
-            current_units.append(unit)
-            continue
+        token_text = unit.get("text")
+        token = token_text if isinstance(token_text, str) else ""
+        is_break_char = _unit_is_space(unit) or token == "-"
 
-        if _unit_is_space(unit):
-            if current_visible <= _FLOAT_EPSILON:
-                continue
-            if current_visible + unit_visible >= (safe_width_float - _FLOAT_EPSILON):
-                continue
-
-        if current_visible + unit_visible > (safe_width_float + _FLOAT_EPSILON) and current_units:
-            flush_current()
-            if _unit_is_space(unit):
+        if unit_visible > _FLOAT_EPSILON:
+            if (
+                current_visible + unit_visible > (safe_width_float + _FLOAT_EPSILON)
+                and current_units
+            ):
+                if last_break_idx is not None:
+                    line_units = current_units[:last_break_idx]
+                    remainder_units = current_units[last_break_idx:]
+                    while remainder_units and _unit_is_space(remainder_units[0]):
+                        remainder_units.pop(0)
+                    lines.append(_units_to_text(line_units).rstrip(" \t\u3000"))
+                    current_units = remainder_units
+                    current_visible = _units_visible_length(current_units)
+                    last_break_idx = None
+                    for idx, candidate in enumerate(current_units, start=1):
+                        candidate_text = candidate.get("text")
+                        candidate_token = (
+                            candidate_text
+                            if isinstance(candidate_text, str)
+                            else ""
+                        )
+                        if _unit_is_space(candidate) or candidate_token == "-":
+                            last_break_idx = idx
+                    if _unit_is_space(unit) and current_visible <= _FLOAT_EPSILON:
+                        continue
+                else:
+                    flush_current()
+                    if _unit_is_space(unit):
+                        continue
+            elif _unit_is_space(unit) and current_visible <= _FLOAT_EPSILON:
                 continue
 
         current_units.append(unit)
-        current_visible += unit_visible
+        if unit_visible > _FLOAT_EPSILON:
+            current_visible += unit_visible
+            if is_break_char:
+                last_break_idx = len(current_units)
 
     if current_units:
         flush_current()
