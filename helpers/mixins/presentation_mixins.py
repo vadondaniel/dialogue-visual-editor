@@ -34,6 +34,7 @@ HIDDEN_STYLE_TOKEN_RE = re.compile(
     """,
     re.VERBOSE,
 )
+PREVIEW_BASE_POINT_SIZE = 10.0
 
 MaskedStyleSpan = tuple[int, int, str, float]
 
@@ -519,7 +520,8 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             if effective_color:
                 style_parts.append(f"color: {effective_color};")
             if abs(font_scale - 1.0) > 0.01:
-                style_parts.append(f"font-size: {font_scale * 100.0:.1f}%;")
+                point_size = max(1.0, PREVIEW_BASE_POINT_SIZE * font_scale)
+                style_parts.append(f"font-size: {point_size:.1f}pt;")
             if style_parts:
                 style_attr = " ".join(style_parts)
                 parts.append(f"<span style=\"{style_attr}\">{escaped}</span>")

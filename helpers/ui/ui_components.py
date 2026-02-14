@@ -1064,19 +1064,18 @@ class DialogueBlockWidget(QFrame):
             self._dark_theme,
             color_code_resolver=self.color_code_resolver,
         )
-        if self.translator_mode:
-            self._source_hint_overlay = QLabel(self.editor.viewport())
-            self._source_hint_overlay.setTextFormat(Qt.TextFormat.RichText)
-            self._source_hint_overlay.setWordWrap(True)
-            self._source_hint_overlay.setAlignment(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-            )
-            self._source_hint_overlay.setAttribute(
-                Qt.WidgetAttribute.WA_TransparentForMouseEvents,
-                True,
-            )
-            self._source_hint_overlay.setStyleSheet("background: transparent;")
-            self._source_hint_overlay.setFont(mono)
+        self._source_hint_overlay = QLabel(self.editor.viewport())
+        self._source_hint_overlay.setTextFormat(Qt.TextFormat.RichText)
+        self._source_hint_overlay.setWordWrap(True)
+        self._source_hint_overlay.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        self._source_hint_overlay.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+            True,
+        )
+        self._source_hint_overlay.setStyleSheet("background: transparent;")
+        self._source_hint_overlay.setFont(mono)
         self.editor.viewport().setMouseTracking(True)
         self.editor.viewport().installEventFilter(self)
         self._apply_editor_width()
@@ -1516,11 +1515,16 @@ class DialogueBlockWidget(QFrame):
         if self._audit_pinned:
             bg = "#2a1515" if self._dark_theme else "#fff1f2"
             border = "#ef4444" if self._dark_theme else "#b91c1c"
+        editor_fg = (
+            "transparent"
+            if self._should_show_masked_preview_overlay()
+            else self._editor_fg
+        )
         self.editor.setStyleSheet(
             f"""
             QPlainTextEdit {{
                 background: {bg};
-                color: {self._editor_fg};
+                color: {editor_fg};
                 border: 2px solid {border};
                 border-radius: 6px;
             }}
@@ -1549,13 +1553,40 @@ class DialogueBlockWidget(QFrame):
             rows.append(html.escape(line) if line else "&nbsp;")
         return "<br/>".join(rows)
 
+    def _should_show_masked_preview_overlay(self) -> bool:
+        return (
+            self._displaying_masked_text
+            and self.hidden_control_colored_line_resolver is not None
+        )
+
+    def _masked_preview_html(self) -> str:
+        lines = self._raw_lines or [""]
+        full_text = "\n".join(lines)
+        if self.speaker_display_html_resolver is not None:
+            rendered = self.speaker_display_html_resolver(full_text).strip()
+            if rendered:
+                return rendered
+        rows: list[str] = []
+        for line in lines:
+            rows.append(html.escape(line) if line else "&nbsp;")
+        return "<br/>".join(rows)
+
     def _refresh_source_hint_overlay(self) -> None:
         if self._source_hint_overlay is None:
             return
         has_user_text = any(line.strip() for line in self._raw_lines)
-        should_show = self.translator_mode and not has_user_text
+        show_masked_preview = self._should_show_masked_preview_overlay()
+        show_source_hint = (
+            self.translator_mode
+            and not has_user_text
+            and bool(self._source_hint_lines)
+        )
+        should_show = show_masked_preview or show_source_hint
         if should_show:
-            self._source_hint_overlay.setText(self._source_hint_html())
+            if show_masked_preview:
+                self._source_hint_overlay.setText(self._masked_preview_html())
+            else:
+                self._source_hint_overlay.setText(self._source_hint_html())
             self._source_hint_overlay.setGeometry(
                 self.editor.viewport().rect().adjusted(6, 4, -6, -4)
             )
@@ -1787,19 +1818,14 @@ class DialogueBlockWidget(QFrame):
 
     def _apply_overflow_highlighting(self) -> None:
         if self.actor_mode:
-            if self._displaying_masked_text:
-                self.editor.setExtraSelections(self._masked_color_selections())
-            else:
-                self.editor.setExtraSelections([])
+            self.editor.setExtraSelections([])
             return
         if not self._is_standard_dialogue_block():
-            if self._displaying_masked_text:
-                self.editor.setExtraSelections(self._masked_color_selections())
-            else:
-                self.editor.setExtraSelections([])
+            self.editor.setExtraSelections([])
             return
         if self._displaying_masked_text:
-            self.editor.setExtraSelections(self._masked_color_selections())
+            # Rich-text overlay renders masked preview styling.
+            self.editor.setExtraSelections([])
             return
         width_chars = self._width_chars()
         selections: list[QTextEdit.ExtraSelection] = []
