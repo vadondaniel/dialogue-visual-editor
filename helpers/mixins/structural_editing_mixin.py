@@ -6,7 +6,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..core.models import (
     CommandBundle,
@@ -37,6 +49,229 @@ class _EditorHostTypingFallback:
 class StructuralEditingMixin(_EditorHostTypingFallback):
     _COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]")
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
+    def _prompt_smart_collapse_all_options(
+        self,
+    ) -> Optional[tuple[bool, bool, float, bool]]:
+        dialog = QDialog(cast(QWidget, self))
+        dialog.setWindowTitle("Smart Collapse All")
+        dialog.resize(420, 220)
+
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        layout.addLayout(form)
+
+        soft_rule_check = QCheckBox(
+            "Collapse if previous line is shorter than threshold"
+        )
+        soft_rule_check.setChecked(
+            bool(getattr(self, "smart_collapse_soft_ratio_rule_enabled", True))
+        )
+        form.addRow(soft_rule_check)
+
+        allow_comma_check = QCheckBox(
+            "Collapse if previous line ends with comma (, 、 ，)"
+        )
+        allow_comma_check.setChecked(
+            bool(getattr(self, "smart_collapse_allow_comma_endings", False))
+        )
+        form.addRow(allow_comma_check)
+
+        no_punctuation_check = QCheckBox(
+            "Collapse if previous line ends without punctuation"
+        )
+        no_punctuation_check.setChecked(
+            bool(getattr(self, "smart_collapse_collapse_if_no_punctuation", True))
+        )
+        form.addRow(no_punctuation_check)
+
+        threshold_spin = QSpinBox(dialog)
+        threshold_spin.setRange(0, 100)
+        threshold_spin.setSuffix("%")
+        threshold_spin.setValue(
+            int(getattr(self, "smart_collapse_soft_ratio_percent", 50))
+        )
+        threshold_spin.setEnabled(soft_rule_check.isChecked())
+        soft_rule_check.toggled.connect(threshold_spin.setEnabled)
+        form.addRow("Length threshold for collapse-if-short", threshold_spin)
+
+        scope_all_files_check = QCheckBox("Apply to all dialogue files")
+        scope_all_files_check.setChecked(False)
+        form.addRow(scope_all_files_check)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return None
+
+        allow_comma_endings = bool(allow_comma_check.isChecked())
+        collapse_if_no_punctuation = bool(no_punctuation_check.isChecked())
+        min_soft_ratio = (
+            float(int(threshold_spin.value())) / 100.0
+            if bool(soft_rule_check.isChecked())
+            else 0.0
+        )
+        return (
+            allow_comma_endings,
+            collapse_if_no_punctuation,
+            max(0.0, min(1.0, min_soft_ratio)),
+            bool(scope_all_files_check.isChecked()),
+        )
+
+    def _is_smart_collapse_eligible_segment(self, segment: DialogueSegment) -> bool:
+        if not segment.is_structural_dialogue:
+            return False
+        return segment.segment_kind in {"dialogue", "script_message"}
+
+    def _collapsed_source_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        *,
+        allow_comma_endings: bool,
+        collapse_if_no_punctuation: bool,
+        min_soft_ratio: float,
+    ) -> list[str]:
+        current_lines = list(segment.lines) if segment.lines else [""]
+        has_inferred_speaker = self._segment_has_inferred_line1_speaker(segment)
+        if has_inferred_speaker:
+            editable_lines = list(current_lines[1:]) if len(current_lines) > 1 else [""]
+        else:
+            editable_lines = list(current_lines)
+        collapsed = smart_collapse_lines(
+            editable_lines,
+            self._segment_line_width(segment),
+            infer_name_from_first_line=(
+                self.infer_speaker_check.isChecked() and (not has_inferred_speaker)
+            ),
+            allow_comma_endings=allow_comma_endings,
+            collapse_if_no_punctuation=collapse_if_no_punctuation,
+            min_soft_ratio=max(0.0, min(1.0, float(min_soft_ratio))),
+        )
+        if has_inferred_speaker:
+            speaker_line = current_lines[0] if current_lines else ""
+            return [speaker_line] + collapsed
+        return collapsed
+
+    def _collapsed_translation_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        *,
+        allow_comma_endings: bool,
+        collapse_if_no_punctuation: bool,
+        min_soft_ratio: float,
+    ) -> list[str]:
+        editable_lines = self._segment_translation_lines_for_translation(segment)
+        collapsed = smart_collapse_lines(
+            editable_lines,
+            self._segment_line_width(segment),
+            infer_name_from_first_line=(
+                self.infer_speaker_check.isChecked()
+                and (not self._segment_has_inferred_line1_speaker(segment))
+            ),
+            allow_comma_endings=allow_comma_endings,
+            collapse_if_no_punctuation=collapse_if_no_punctuation,
+            min_soft_ratio=max(0.0, min(1.0, float(min_soft_ratio))),
+        )
+        return self._compose_translation_lines_for_segment(segment, collapsed)
+
+    def _smart_collapse_all_dialogue_blocks(self) -> None:
+        if not self.sessions:
+            return
+        options = self._prompt_smart_collapse_all_options()
+        if options is None:
+            return
+
+        (
+            allow_comma_endings,
+            collapse_if_no_punctuation,
+            min_soft_ratio,
+            apply_all_files,
+        ) = options
+        translator_mode = self._is_translator_mode()
+        changed_count = 0
+        changed_sessions: list[FileSession] = []
+        if apply_all_files:
+            target_sessions = list(self.sessions.values())
+        else:
+            if self.current_path is None:
+                return
+            current_session = self.sessions.get(self.current_path)
+            if current_session is None:
+                return
+            target_sessions = [current_session]
+        for session in target_sessions:
+            if self._is_name_index_session(session):
+                continue
+            session_changed = False
+            for segment in session.segments:
+                if not self._is_smart_collapse_eligible_segment(segment):
+                    continue
+                if translator_mode:
+                    current_lines = self._normalize_translation_lines(
+                        segment.translation_lines
+                    )
+                    collapsed_lines = self._collapsed_translation_lines_for_segment(
+                        segment,
+                        allow_comma_endings=allow_comma_endings,
+                        collapse_if_no_punctuation=collapse_if_no_punctuation,
+                        min_soft_ratio=min_soft_ratio,
+                    )
+                    if collapsed_lines == current_lines:
+                        continue
+                    segment.translation_lines = list(collapsed_lines)
+                else:
+                    current_lines = list(segment.lines) if segment.lines else [""]
+                    collapsed_lines = self._collapsed_source_lines_for_segment(
+                        segment,
+                        allow_comma_endings=allow_comma_endings,
+                        collapse_if_no_punctuation=collapse_if_no_punctuation,
+                        min_soft_ratio=min_soft_ratio,
+                    )
+                    if collapsed_lines == current_lines:
+                        continue
+                    segment.lines = list(collapsed_lines)
+                    segment.source_lines = list(collapsed_lines)
+                changed_count += 1
+                session_changed = True
+            if session_changed:
+                changed_sessions.append(session)
+
+        if changed_count <= 0:
+            self.statusBar().showMessage(
+                "Smart Collapse All made no changes."
+            )
+            return
+
+        for session in changed_sessions:
+            self._refresh_dirty_state(session)
+        focus_uid = self.selected_segment_uid
+        current_session = (
+            self.sessions.get(self.current_path)
+            if self.current_path is not None
+            else None
+        )
+        if current_session is not None:
+            if not self._refresh_after_structure_change_without_full_rerender(
+                current_session,
+                focus_uid=focus_uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(
+                    current_session,
+                    focus_uid=focus_uid,
+                    preserve_scroll=True,
+                )
+        block_label = "block" if changed_count == 1 else "blocks"
+        file_label = "file" if len(changed_sessions) == 1 else "files"
+        self.statusBar().showMessage(
+            f"Smart-collapsed {changed_count} {block_label} across {len(changed_sessions)} {file_label}."
+        )
 
     def _active_color_code_at_end(self, lines: list[str]) -> int:
         active = 0

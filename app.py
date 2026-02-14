@@ -174,6 +174,7 @@ _JS_SYSTEM_ADVANCED_FONT_RE = re.compile(
 _VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
 _DEFAULT_VARIABLE_LENGTH_ESTIMATE = 4
 _MAX_VARIABLE_LENGTH_ESTIMATE = 64
+_DEFAULT_SMART_COLLAPSE_SOFT_RATIO_PERCENT = 50
 _DEFAULT_NAME_LENGTH_ESTIMATE = 8
 _MAX_NAME_LENGTH_ESTIMATE = 64
 
@@ -229,6 +230,10 @@ class DialogueVisualEditor(
         self.detected_message_font_source = "default"
         self.default_variable_length_estimate = _DEFAULT_VARIABLE_LENGTH_ESTIMATE
         self.variable_length_overrides: dict[int, int] = {}
+        self.smart_collapse_soft_ratio_rule_enabled = True
+        self.smart_collapse_allow_comma_endings = False
+        self.smart_collapse_collapse_if_no_punctuation = True
+        self.smart_collapse_soft_ratio_percent = _DEFAULT_SMART_COLLAPSE_SOFT_RATIO_PERCENT
         self.ui_state_path = Path(
             __file__).resolve().with_name(UI_STATE_FILENAME)
         self.project_ui_settings_by_folder: dict[str, dict[str, Any]] = {}
@@ -778,6 +783,10 @@ class DialogueVisualEditor(
         self._settings_thin_width_action: Optional[QAction] = None
         self._settings_wide_width_action: Optional[QAction] = None
         self._settings_max_lines_action: Optional[QAction] = None
+        self._settings_smart_collapse_soft_rule_action: Optional[QAction] = None
+        self._settings_smart_collapse_allow_comma_action: Optional[QAction] = None
+        self._settings_smart_collapse_no_punctuation_action: Optional[QAction] = None
+        self._settings_smart_collapse_soft_ratio_action: Optional[QAction] = None
         self._settings_toggle_bindings: list[tuple[QAction, QCheckBox]] = []
         self._apply_to_game_files_actions: list[QAction] = []
 
@@ -876,6 +885,13 @@ class DialogueVisualEditor(
         audit_action.triggered.connect(self._open_audit_window)
         tools_menu.addAction(audit_action)
 
+        tools_menu.addSeparator()
+        smart_collapse_all_action = QAction("Smart Collapse All...", self)
+        smart_collapse_all_action.triggered.connect(
+            self._smart_collapse_all_dialogue_blocks
+        )
+        tools_menu.addAction(smart_collapse_all_action)
+
         settings_menu = menu_bar.addMenu("Settings")
         mode_menu = settings_menu.addMenu("Edit Mode")
         mode_group = QActionGroup(self)
@@ -921,6 +937,48 @@ class DialogueVisualEditor(
         )
         limits_menu.addAction(self._settings_max_lines_action)
         self._sync_settings_limits_menu_labels()
+
+        smart_collapse_menu = settings_menu.addMenu("Smart Collapse")
+        self._settings_smart_collapse_soft_rule_action = QAction(
+            "Collapse if previous line is shorter than threshold",
+            self,
+        )
+        self._settings_smart_collapse_soft_rule_action.setCheckable(True)
+        self._settings_smart_collapse_soft_rule_action.toggled.connect(
+            self._set_smart_collapse_soft_rule_enabled
+        )
+        smart_collapse_menu.addAction(self._settings_smart_collapse_soft_rule_action)
+
+        self._settings_smart_collapse_allow_comma_action = QAction(
+            "Collapse if previous line ends with comma (, 、 ，)",
+            self,
+        )
+        self._settings_smart_collapse_allow_comma_action.setCheckable(True)
+        self._settings_smart_collapse_allow_comma_action.toggled.connect(
+            self._set_smart_collapse_allow_comma_enabled
+        )
+        smart_collapse_menu.addAction(self._settings_smart_collapse_allow_comma_action)
+
+        self._settings_smart_collapse_no_punctuation_action = QAction(
+            "Collapse if previous line ends without punctuation",
+            self,
+        )
+        self._settings_smart_collapse_no_punctuation_action.setCheckable(True)
+        self._settings_smart_collapse_no_punctuation_action.toggled.connect(
+            self._set_smart_collapse_collapse_if_no_punctuation_enabled
+        )
+        smart_collapse_menu.addAction(
+            self._settings_smart_collapse_no_punctuation_action
+        )
+
+        self._settings_smart_collapse_soft_ratio_action = QAction("", self)
+        self._settings_smart_collapse_soft_ratio_action.triggered.connect(
+            self._set_smart_collapse_soft_ratio_from_menu
+        )
+        smart_collapse_menu.addAction(
+            self._settings_smart_collapse_soft_ratio_action
+        )
+        self._sync_smart_collapse_menu_state()
 
         problem_checks_menu = settings_menu.addMenu("Problem Checks")
         problem_char_limit_action = QAction("Flag char-width overflow", self)
@@ -1037,6 +1095,86 @@ class DialogueVisualEditor(
             max_lines_action.setText(
                 f"Max Lines: {int(self.max_lines_spin.value())}..."
             )
+
+    def _smart_collapse_min_soft_ratio(self) -> float:
+        percent = int(self.smart_collapse_soft_ratio_percent)
+        clamped = max(0, min(100, percent))
+        return float(clamped) / 100.0
+
+    def _smart_collapse_use_soft_ratio_rule(self) -> bool:
+        return bool(self.smart_collapse_soft_ratio_rule_enabled)
+
+    def _sync_smart_collapse_menu_state(self) -> None:
+        checkbox_actions: tuple[tuple[Optional[QAction], bool], ...] = (
+            (self._settings_smart_collapse_soft_rule_action, bool(self.smart_collapse_soft_ratio_rule_enabled)),
+            (self._settings_smart_collapse_allow_comma_action, bool(self.smart_collapse_allow_comma_endings)),
+            (self._settings_smart_collapse_no_punctuation_action, bool(self.smart_collapse_collapse_if_no_punctuation)),
+        )
+        for action, checked in checkbox_actions:
+            if action is None or action.isChecked() == checked:
+                continue
+            action.blockSignals(True)
+            try:
+                action.setChecked(checked)
+            finally:
+                action.blockSignals(False)
+        ratio_action = self._settings_smart_collapse_soft_ratio_action
+        if ratio_action is not None:
+            ratio_action.setText(
+                f"Length threshold for collapse-if-short: {int(self.smart_collapse_soft_ratio_percent)}%..."
+            )
+
+    def _set_smart_collapse_soft_rule_enabled(self, checked: bool) -> None:
+        next_value = bool(checked)
+        if next_value == self.smart_collapse_soft_ratio_rule_enabled:
+            return
+        self.smart_collapse_soft_ratio_rule_enabled = next_value
+        self._sync_smart_collapse_menu_state()
+        self._on_project_setting_changed()
+        if self.current_path is not None:
+            self._rerender_current_file()
+
+    def _set_smart_collapse_allow_comma_enabled(self, checked: bool) -> None:
+        next_value = bool(checked)
+        if next_value == self.smart_collapse_allow_comma_endings:
+            return
+        self.smart_collapse_allow_comma_endings = next_value
+        self._sync_smart_collapse_menu_state()
+        self._on_project_setting_changed()
+        if self.current_path is not None:
+            self._rerender_current_file()
+
+    def _set_smart_collapse_collapse_if_no_punctuation_enabled(self, checked: bool) -> None:
+        next_value = bool(checked)
+        if next_value == self.smart_collapse_collapse_if_no_punctuation:
+            return
+        self.smart_collapse_collapse_if_no_punctuation = next_value
+        self._sync_smart_collapse_menu_state()
+        self._on_project_setting_changed()
+        if self.current_path is not None:
+            self._rerender_current_file()
+
+    def _set_smart_collapse_soft_ratio_from_menu(self) -> None:
+        value, accepted = QInputDialog.getInt(
+            self,
+            "Smart Collapse Threshold",
+            "Collapse if previous line is shorter than this (% of max width):",
+            int(self.smart_collapse_soft_ratio_percent),
+            0,
+            100,
+            1,
+        )
+        if not accepted:
+            return
+        clamped = max(0, min(100, int(value)))
+        if clamped == self.smart_collapse_soft_ratio_percent:
+            self._sync_smart_collapse_menu_state()
+            return
+        self.smart_collapse_soft_ratio_percent = clamped
+        self._sync_smart_collapse_menu_state()
+        self._on_project_setting_changed()
+        if self.current_path is not None:
+            self._rerender_current_file()
 
     def _set_apply_version_by_data(self, version_data: str) -> None:
         self._set_combo_data_if_present(self.apply_version_combo, version_data)
@@ -2768,6 +2906,18 @@ class DialogueVisualEditor(
             "max_lines": int(self.max_lines_spin.value()),
             "auto_split": bool(self.auto_split_check.isChecked()),
             "infer_speaker": bool(self.infer_speaker_check.isChecked()),
+            "smart_collapse_soft_rule_enabled": bool(
+                self.smart_collapse_soft_ratio_rule_enabled
+            ),
+            "smart_collapse_allow_comma_endings": bool(
+                self.smart_collapse_allow_comma_endings
+            ),
+            "smart_collapse_collapse_if_no_punctuation": bool(
+                self.smart_collapse_collapse_if_no_punctuation
+            ),
+            "smart_collapse_soft_ratio_percent": int(
+                self.smart_collapse_soft_ratio_percent
+            ),
             "hide_control_codes": bool(self.hide_control_codes_check.isChecked()),
             "create_backup": bool(self.backup_check.isChecked()),
             "problem_char_limit": bool(self.problem_char_limit_check.isChecked()),
@@ -2836,6 +2986,42 @@ class DialogueVisualEditor(
             infer_speaker = settings.get("infer_speaker")
             if isinstance(infer_speaker, bool):
                 self.infer_speaker_check.setChecked(infer_speaker)
+            smart_collapse_soft_rule_enabled = settings.get(
+                "smart_collapse_soft_rule_enabled"
+            )
+            if isinstance(smart_collapse_soft_rule_enabled, bool):
+                self.smart_collapse_soft_ratio_rule_enabled = (
+                    smart_collapse_soft_rule_enabled
+                )
+            smart_collapse_allow_comma_endings = settings.get(
+                "smart_collapse_allow_comma_endings"
+            )
+            if isinstance(smart_collapse_allow_comma_endings, bool):
+                self.smart_collapse_allow_comma_endings = (
+                    smart_collapse_allow_comma_endings
+                )
+            collapse_if_no_punctuation = settings.get(
+                "smart_collapse_collapse_if_no_punctuation"
+            )
+            if not isinstance(collapse_if_no_punctuation, bool):
+                collapse_if_no_punctuation = settings.get(
+                    "smart_collapse_keep_break_on_any_punctuation"
+                )
+            if not isinstance(collapse_if_no_punctuation, bool):
+                collapse_if_no_punctuation = settings.get(
+                    "smart_collapse_only_no_punctuation"
+                )
+            if isinstance(collapse_if_no_punctuation, bool):
+                self.smart_collapse_collapse_if_no_punctuation = (
+                    collapse_if_no_punctuation
+                )
+            smart_collapse_soft_ratio_percent = settings.get(
+                "smart_collapse_soft_ratio_percent"
+            )
+            if isinstance(smart_collapse_soft_ratio_percent, int):
+                self.smart_collapse_soft_ratio_percent = max(
+                    0, min(100, int(smart_collapse_soft_ratio_percent))
+                )
             hide_control_codes = settings.get("hide_control_codes")
             if isinstance(hide_control_codes, bool):
                 self.hide_control_codes_check.setChecked(hide_control_codes)
@@ -2903,6 +3089,7 @@ class DialogueVisualEditor(
         self._sync_settings_toggle_actions_from_controls()
         self._update_problem_checks_ui()
         self._sync_settings_limits_menu_labels()
+        self._sync_smart_collapse_menu_state()
         refresh_file_items = getattr(self, "_refresh_all_file_item_text", None)
         if callable(refresh_file_items):
             refresh_file_items()
@@ -3258,6 +3445,10 @@ class DialogueVisualEditor(
         self.detected_rpg_engine = self._detect_rpg_maker_engine(self.data_dir)
         self.default_variable_length_estimate = _DEFAULT_VARIABLE_LENGTH_ESTIMATE
         self.variable_length_overrides = {}
+        self.smart_collapse_soft_ratio_rule_enabled = True
+        self.smart_collapse_allow_comma_endings = False
+        self.smart_collapse_collapse_if_no_punctuation = True
+        self.smart_collapse_soft_ratio_percent = _DEFAULT_SMART_COLLAPSE_SOFT_RATIO_PERCENT
         self._sync_variable_length_measurement_settings()
         self._configure_project_message_text_metrics(self.data_dir)
         self._update_window_title()

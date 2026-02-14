@@ -1500,6 +1500,9 @@ class DialogueBlockWidget(QFrame):
         wide_width: int,
         max_lines: int,
         infer_name_from_first_line: bool,
+        smart_collapse_allow_comma_endings: bool,
+        smart_collapse_collapse_if_no_punctuation: bool,
+        smart_collapse_min_soft_ratio: float,
         hide_control_codes_when_unfocused: bool,
         hidden_control_line_transform: Optional[Callable[[str], str]],
         hidden_control_colored_line_resolver: Optional[
@@ -1527,6 +1530,15 @@ class DialogueBlockWidget(QFrame):
         self.wide_width = max(1, wide_width)
         self.max_lines = max(1, max_lines)
         self.infer_name_from_first_line = infer_name_from_first_line
+        self.smart_collapse_allow_comma_endings = bool(
+            smart_collapse_allow_comma_endings
+        )
+        self.smart_collapse_collapse_if_no_punctuation = bool(
+            smart_collapse_collapse_if_no_punctuation
+        )
+        self.smart_collapse_min_soft_ratio = max(
+            0.0, min(1.0, float(smart_collapse_min_soft_ratio))
+        )
         self.hide_control_codes_when_unfocused = hide_control_codes_when_unfocused
         self.hidden_control_line_transform = hidden_control_line_transform
         self.hidden_control_colored_line_resolver = hidden_control_colored_line_resolver
@@ -2796,6 +2808,9 @@ class DialogueBlockWidget(QFrame):
             lines,
             width_chars,
             infer_name_from_first_line=infer_name_in_editor_lines,
+            allow_comma_endings=self.smart_collapse_allow_comma_endings,
+            collapse_if_no_punctuation=self.smart_collapse_collapse_if_no_punctuation,
+            min_soft_ratio=self.smart_collapse_min_soft_ratio,
         ) != lines
         can_wrap = wrap_lines_hard_break(lines, width_chars) != lines
         can_insert = self.allow_structural_actions
@@ -2846,6 +2861,9 @@ class DialogueBlockWidget(QFrame):
             self._current_lines(),
             self._width_chars(),
             infer_name_from_first_line=infer_name_in_editor_lines,
+            allow_comma_endings=self.smart_collapse_allow_comma_endings,
+            collapse_if_no_punctuation=self.smart_collapse_collapse_if_no_punctuation,
+            min_soft_ratio=self.smart_collapse_min_soft_ratio,
         )
         self._set_editor_lines(collapsed)
 

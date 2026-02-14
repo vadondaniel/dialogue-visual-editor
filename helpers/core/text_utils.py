@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 NATURAL_KEY_RE = re.compile(r"(\d+)")
 CONTROL_TOKEN_RE = re.compile(
@@ -30,6 +30,8 @@ SENTENCE_ENDINGS = set(
     "「」『』【】〈〉《》〔〕"
 )
 SOFT_SENTENCE_ENDINGS = set(".!?！？。♪〜~…♡")
+COMMA_ENDINGS = {",", "，", "、"}
+PUNCTUATION_ENDINGS = set(SENTENCE_ENDINGS) | COMMA_ENDINGS | {";", "；", ":", "："}
 CAPITAL_START_FORCE_BREAK = False
 NAME_CONNECTOR_WORDS = {
     "of",
@@ -627,25 +629,63 @@ def _starts_with_capital_visible_letter(text: str) -> bool:
     return False
 
 
-def _should_force_break_after_line(line: str, line_width: int) -> bool:
+def _should_force_break_after_line(
+    line: str,
+    line_width: int,
+    *,
+    ending_policy: Literal["default", "allow_comma", "no_punctuation_only"] = "default",
+    min_soft_ratio: float = 0.5,
+    allow_comma_endings: bool = False,
+    collapse_if_no_punctuation: bool = True,
+) -> bool:
+    if ending_policy == "no_punctuation_only":
+        collapse_if_no_punctuation = True
+        allow_comma_endings = False
+        min_soft_ratio = 0.0
+    elif ending_policy == "allow_comma":
+        allow_comma_endings = True
+
     if not _has_visible_nonspace_characters(line):
         return True
     last_char = _last_visible_nonspace_character(line)
     if last_char is None:
         return False
+    if last_char in COMMA_ENDINGS:
+        return not allow_comma_endings
     if last_char not in SENTENCE_ENDINGS:
-        return False
+        if last_char in PUNCTUATION_ENDINGS:
+            return True
+        return not collapse_if_no_punctuation
     if last_char not in SOFT_SENTENCE_ENDINGS:
         return True
-    return visible_length(line) >= (line_width / 2)
+    return visible_length(line) >= (line_width * max(0.0, float(min_soft_ratio)))
 
 
-def _build_smart_collapse_body_text(lines: list[str], line_width: int) -> str:
+def _build_smart_collapse_body_text(
+    lines: list[str],
+    line_width: int,
+    *,
+    ending_policy: Literal["default", "allow_comma", "no_punctuation_only"] = "default",
+    min_soft_ratio: float = 0.5,
+    allow_comma_endings: bool = False,
+    collapse_if_no_punctuation: bool = True,
+) -> str:
     parts: list[str] = []
     previous_line: Optional[str] = None
     for line in lines:
         if previous_line is not None:
-            joiner = "\n" if _should_force_break_after_line(previous_line, line_width) else " "
+            joiner = (
+                "\n"
+                if _should_force_break_after_line(
+                    previous_line,
+                    line_width,
+                    ending_policy=ending_policy,
+                    min_soft_ratio=min_soft_ratio,
+                    allow_comma_endings=allow_comma_endings,
+                    collapse_if_no_punctuation=collapse_if_no_punctuation,
+                )
+                else " "
+            )
             if (
                 joiner == " "
                 and CAPITAL_START_FORCE_BREAK
@@ -844,6 +884,10 @@ def smart_collapse_lines(
     width: int,
     *,
     infer_name_from_first_line: bool = False,
+    ending_policy: Literal["default", "allow_comma", "no_punctuation_only"] = "default",
+    min_soft_ratio: float = 0.5,
+    allow_comma_endings: bool = False,
+    collapse_if_no_punctuation: bool = True,
 ) -> list[str]:
     safe_width = max(1, width)
     if not lines:
@@ -860,7 +904,14 @@ def smart_collapse_lines(
     if not body_lines:
         return result_prefix or [""]
 
-    body_text = _build_smart_collapse_body_text(body_lines, safe_width)
+    body_text = _build_smart_collapse_body_text(
+        body_lines,
+        safe_width,
+        ending_policy=ending_policy,
+        min_soft_ratio=min_soft_ratio,
+        allow_comma_endings=allow_comma_endings,
+        collapse_if_no_punctuation=collapse_if_no_punctuation,
+    )
     wrapped_body = wrap_text_word_aware(body_text, safe_width)
     return (result_prefix + wrapped_body) or [""]
 

@@ -329,6 +329,17 @@ class RenderMixin(_RenderHostTypingFallback):
                 wide_width=self.wide_width_spin.value(),
                 max_lines=self.max_lines_spin.value(),
                 infer_name_from_first_line=self.infer_speaker_check.isChecked(),
+                smart_collapse_allow_comma_endings=bool(
+                    self.smart_collapse_allow_comma_endings
+                ),
+                smart_collapse_collapse_if_no_punctuation=bool(
+                    self.smart_collapse_collapse_if_no_punctuation
+                ),
+                smart_collapse_min_soft_ratio=(
+                    self._smart_collapse_min_soft_ratio()
+                    if self._smart_collapse_use_soft_ratio_rule()
+                    else 0.0
+                ),
                 hide_control_codes_when_unfocused=self.hide_control_codes_check.isChecked(),
                 hidden_control_line_transform=self._hidden_control_line_transform,
                 hidden_control_colored_line_resolver=self._hidden_control_line_with_color_spans,
@@ -434,6 +445,23 @@ class RenderMixin(_RenderHostTypingFallback):
         widget.wide_width = max(1, self.wide_width_spin.value())
         widget.max_lines = max(1, self.max_lines_spin.value())
         widget.infer_name_from_first_line = self.infer_speaker_check.isChecked()
+        widget.smart_collapse_allow_comma_endings = bool(
+            self.smart_collapse_allow_comma_endings
+        )
+        widget.smart_collapse_collapse_if_no_punctuation = bool(
+            self.smart_collapse_collapse_if_no_punctuation
+        )
+        widget.smart_collapse_min_soft_ratio = max(
+            0.0,
+            min(
+                1.0,
+                float(
+                    self._smart_collapse_min_soft_ratio()
+                    if self._smart_collapse_use_soft_ratio_rule()
+                    else 0.0
+                ),
+            ),
+        )
         widget.inferred_speaker_name_resolver = self._inferred_speaker_from_segment_line1
         widget.speaker_tint_color = self._speaker_color_for_segment(segment)
         widget.allow_structural_actions = self._segment_allows_structural_actions(
