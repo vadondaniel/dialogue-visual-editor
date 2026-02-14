@@ -280,6 +280,7 @@ class DialogueVisualEditor(
         self.audit_term_hits_list: Optional[QListWidget] = None
         self.audit_term_status_label: Optional[QLabel] = None
         self.audit_term_goto_btn: Optional[QPushButton] = None
+        self.audit_term_apply_canonical_btn: Optional[QPushButton] = None
         self.mass_translate_dialog: Optional[MassTranslateDialog] = None
         self.audit_cache_generation = 0
         self.audit_result_batch_size = 16

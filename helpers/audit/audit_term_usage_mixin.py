@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from html import escape
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QListWidgetItem
+from PySide6.QtWidgets import QLabel, QListWidgetItem
 
 from ..core.models import DialogueSegment, FileSession
 from ..core.text_utils import preview_text, strip_control_tokens
@@ -18,6 +19,48 @@ class _AuditTermUsageHostTypingFallback:
 
 
 class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
+    def _marker_text_to_rich_html(self, text: str) -> str:
+        if not text:
+            return ""
+        parts: list[str] = []
+        cursor = 0
+        while cursor < len(text):
+            start = text.find("[[", cursor)
+            if start < 0:
+                parts.append(escape(text[cursor:]))
+                break
+            parts.append(escape(text[cursor:start]))
+            end = text.find("]]", start + 2)
+            if end < 0:
+                parts.append(escape(text[start:]))
+                break
+            highlighted = escape(text[start + 2:end])
+            parts.append(
+                "<span style=\"background-color:#facc15;color:#111827;font-weight:700;\">"
+                f"{highlighted}"
+                "</span>"
+            )
+            cursor = end + 2
+        return "".join(parts).replace("\n", "<br>")
+
+    def _add_audit_term_hit_item(
+        self,
+        text: str,
+        payload: dict[str, str],
+    ) -> None:
+        if self.audit_term_hits_list is None:
+            return
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, payload)
+        rich_label = QLabel()
+        rich_label.setTextFormat(Qt.TextFormat.RichText)
+        rich_label.setWordWrap(True)
+        rich_label.setText(self._marker_text_to_rich_html(text))
+        rich_label.setStyleSheet("QLabel { padding: 6px 8px; }")
+        item.setSizeHint(rich_label.sizeHint())
+        self.audit_term_hits_list.addItem(item)
+        self.audit_term_hits_list.setItemWidget(item, rich_label)
+
     def _normalize_text_for_block_match(self, value: str) -> str:
         base = strip_control_tokens(value or "").replace("\u3000", " ")
         squashed = re.sub(r"\s+", "", base)
@@ -38,7 +81,6 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                 continue
             seen.add(folded)
             cleaned.append(token)
-        cleaned.sort(key=lambda value: (-len(value), value.casefold()))
         return cleaned
 
     def _highlight_candidate_in_text(self, text: str, candidate: str) -> str:
@@ -54,6 +96,49 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             end = len(text)
         return f"{text[:start]}[[{text[start:end]}]]{text[end:]}"
 
+    def _visible_text_for_match(self, value: str) -> str:
+        base = strip_control_tokens(value or "").replace("\u3000", " ")
+        return re.sub(r"\s+", " ", base).strip()
+
+    def _normalized_no_space_with_map(self, value: str) -> tuple[str, list[int]]:
+        normalized = self._visible_text_for_match(value)
+        chars: list[str] = []
+        idx_map: list[int] = []
+        for idx, ch in enumerate(normalized):
+            if ch.isspace():
+                continue
+            chars.append(ch.casefold())
+            idx_map.append(idx)
+        return "".join(chars), idx_map
+
+    def _candidate_context_snippet(self, text: str, candidate: str, radius: int = 70) -> str:
+        if not text:
+            return ""
+        visible = self._visible_text_for_match(text)
+        if not candidate:
+            return preview_text(visible, 170)
+        compact_text, idx_map = self._normalized_no_space_with_map(text)
+        compact_candidate, _unused = self._normalized_no_space_with_map(candidate)
+        if not compact_text or not compact_candidate:
+            return preview_text(visible, 170)
+        found = compact_text.find(compact_candidate)
+        if found < 0:
+            return preview_text(visible, 170)
+        start_idx = idx_map[found]
+        end_compact = found + len(compact_candidate) - 1
+        if end_compact >= len(idx_map):
+            end_compact = len(idx_map) - 1
+        end_idx = idx_map[end_compact] + 1
+        left = max(0, start_idx - radius)
+        right = min(len(visible), end_idx + radius)
+        snippet = visible[left:right]
+        rel_start = max(0, start_idx - left)
+        rel_end = max(rel_start, end_idx - left)
+        highlighted = f"{snippet[:rel_start]}[[{snippet[rel_start:rel_end]}]]{snippet[rel_end:]}"
+        prefix = "..." if left > 0 else ""
+        suffix = "..." if right < len(visible) else ""
+        return f"{prefix}{highlighted}{suffix}"
+
     def _candidate_group_for_entry(
         self,
         entry: dict[str, Any],
@@ -63,9 +148,17 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             return "__all__"
         block_match_raw = entry.get("translation_block_match")
         block_match = block_match_raw if isinstance(block_match_raw, str) else ""
-        for candidate in candidates:
-            if self._normalize_text_for_block_match(candidate) in block_match:
-                return candidate
+        matched: list[tuple[int, int, str]] = []
+        for idx, candidate in enumerate(candidates):
+            normalized_candidate = self._normalize_text_for_block_match(candidate)
+            if not normalized_candidate:
+                continue
+            if normalized_candidate in block_match:
+                matched.append((len(normalized_candidate), idx, candidate))
+        if matched:
+            # Prefer the most specific (longest) candidate; keep user order as tie-breaker.
+            matched.sort(key=lambda row: (-row[0], row[1]))
+            return matched[0][2]
         return "__unmatched__"
 
     def _audit_term_variant_payload(
@@ -245,33 +338,60 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                 translation_block_text = ""
             line_label = int(line_index) if isinstance(line_index, int) else 0
             relative = self._relative_path(Path(path_raw))
-            display_en = translation_line if translation_line else "(empty)"
+            display_en = preview_text(translation_line if translation_line else "(empty)", 170)
             if candidates and group_key not in ("", "__all__", "__unmatched__"):
-                display_en = self._highlight_candidate_in_text(display_en, group_key)
-            block_preview = preview_text(translation_block_text, 170)
-            if candidates and group_key not in ("", "__all__", "__unmatched__"):
-                block_preview = self._highlight_candidate_in_text(
-                    block_preview,
+                display_en = self._candidate_context_snippet(
+                    translation_block_text,
                     group_key,
                 )
             label = (
                 f"{relative} | {entry_label} | line {line_label}\n"
                 f"JP: {preview_text(source_line, 170)}\n"
-                f"EN: {preview_text(display_en, 170)}\n"
-                f"EN block: {block_preview}"
+                f"EN: {display_en}"
             )
-            item = QListWidgetItem(label)
-            item.setData(
-                Qt.ItemDataRole.UserRole,
+            self._add_audit_term_hit_item(
+                label,
                 {
                     "path": path_raw,
                     "uid": uid_raw,
                 },
             )
-            self.audit_term_hits_list.addItem(item)
         if self.audit_term_hits_list.count() > 0:
             self.audit_term_hits_list.setCurrentRow(0)
             self.audit_term_goto_btn.setEnabled(True)
+        self._refresh_audit_term_apply_state()
+
+    def _refresh_audit_term_apply_state(self) -> None:
+        if (
+            self.audit_term_apply_canonical_btn is None
+            or self.audit_term_candidates_edit is None
+            or self.audit_term_variants_list is None
+        ):
+            return
+        candidates = self._parse_audit_term_candidates(
+            self.audit_term_candidates_edit.text()
+        )
+        payload = self._audit_term_variant_payload(
+            self.audit_term_variants_list.currentItem()
+        )
+        if not candidates or payload is None:
+            self.audit_term_apply_canonical_btn.setEnabled(False)
+            return
+        canonical = candidates[0]
+        group_key_raw = payload.get("group_key")
+        group_key = group_key_raw if isinstance(group_key_raw, str) else ""
+        can_apply = (
+            group_key not in ("", "__all__", "__unmatched__")
+            and group_key.casefold() != canonical.casefold()
+        )
+        self.audit_term_apply_canonical_btn.setEnabled(can_apply)
+
+    def _replace_case_insensitive(self, text: str, source: str, target: str) -> tuple[str, int]:
+        if not text or not source:
+            return text, 0
+        pattern = re.compile(re.escape(source), flags=re.IGNORECASE)
+        replaced, count = pattern.subn(target, text)
+        return replaced, count
 
     def _refresh_audit_term_panel(self) -> None:
         if (
@@ -319,14 +439,16 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         if self.audit_term_variants_list.count() > 0:
             self.audit_term_variants_list.setCurrentRow(0)
         if candidates:
+            canonical = candidates[0]
             self.audit_term_status_label.setText(
-                f"Candidates: {len(candidates)} | Groups: {len(groups)} | Hits: {total_hits}"
+                f"Canonical: {canonical} | Candidates: {len(candidates)} | Groups: {len(groups)} | Hits: {total_hits}"
             )
         else:
             self.audit_term_status_label.setText(
                 f"Candidates empty: showing raw hits | Hits: {total_hits}"
             )
         self._refresh_audit_term_hits()
+        self._refresh_audit_term_apply_state()
 
     def _go_to_selected_audit_term_hit(self) -> None:
         if self.audit_term_hits_list is None:
@@ -343,3 +465,117 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         if not isinstance(uid_raw, str) or not uid_raw:
             return
         self._jump_to_audit_location(path_raw, uid_raw)
+
+    def _apply_selected_audit_term_variant_to_canonical(self) -> None:
+        if (
+            self.audit_term_candidates_edit is None
+            or self.audit_term_variants_list is None
+            or self.audit_term_apply_canonical_btn is None
+        ):
+            return
+        candidates = self._parse_audit_term_candidates(
+            self.audit_term_candidates_edit.text()
+        )
+        if not candidates:
+            self.statusBar().showMessage("Enter candidates first; first one is canonical.")
+            return
+        canonical = candidates[0]
+        payload = self._audit_term_variant_payload(
+            self.audit_term_variants_list.currentItem()
+        )
+        if payload is None:
+            self.statusBar().showMessage("Select a candidate group first.")
+            return
+        source_raw = payload.get("group_key")
+        source_candidate = source_raw if isinstance(source_raw, str) else ""
+        if source_candidate in ("", "__all__", "__unmatched__"):
+            self.statusBar().showMessage("Select a concrete candidate group.")
+            return
+        if source_candidate.casefold() == canonical.casefold():
+            self.statusBar().showMessage("Selected group is already canonical.")
+            return
+        entries = payload.get("entries")
+        if not isinstance(entries, list) or not entries:
+            self.statusBar().showMessage("Selected group is empty.")
+            return
+
+        touched_paths: set[Path] = set()
+        touched_current = False
+        changed_blocks = 0
+        replaced_total = 0
+        processed_uids: set[tuple[str, str]] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            path_raw = entry.get("path")
+            uid_raw = entry.get("uid")
+            if not isinstance(path_raw, str) or not path_raw:
+                continue
+            if not isinstance(uid_raw, str) or not uid_raw:
+                continue
+            key = (path_raw, uid_raw)
+            if key in processed_uids:
+                continue
+            processed_uids.add(key)
+            path = Path(path_raw)
+            session = self.sessions.get(path)
+            if session is None:
+                continue
+            target_segment = None
+            for segment in session.segments:
+                if segment.uid == uid_raw:
+                    target_segment = segment
+                    break
+            if target_segment is None:
+                continue
+            current_lines = self._normalize_translation_lines(
+                target_segment.translation_lines
+            )
+            next_lines: list[str] = []
+            segment_replace_count = 0
+            for line in current_lines:
+                replaced_line, count = self._replace_case_insensitive(
+                    line,
+                    source_candidate,
+                    canonical,
+                )
+                next_lines.append(replaced_line)
+                segment_replace_count += count
+            if segment_replace_count <= 0:
+                continue
+            target_segment.translation_lines = list(next_lines)
+            changed_blocks += 1
+            replaced_total += segment_replace_count
+            touched_paths.add(path)
+            if self.current_path is not None and path == self.current_path:
+                touched_current = True
+
+        if changed_blocks <= 0:
+            self.statusBar().showMessage(
+                f"No replaceable '{source_candidate}' occurrences found in selected group."
+            )
+            return
+
+        for path in touched_paths:
+            session = self.sessions.get(path)
+            if session is None:
+                continue
+            self._refresh_dirty_state(session)
+
+        self._invalidate_audit_caches()
+        self._refresh_audit_sanitize_panel()
+        self._refresh_audit_control_mismatch_panel()
+        if touched_current and self.current_path is not None:
+            current_session = self.sessions.get(self.current_path)
+            if current_session is not None:
+                self._render_session(
+                    current_session,
+                    focus_uid=self.selected_segment_uid,
+                    preserve_scroll=True,
+                )
+        else:
+            self._refresh_translator_detail_panel()
+        self._refresh_audit_term_panel()
+        self.statusBar().showMessage(
+            f"Replaced '{source_candidate}' -> '{canonical}' in {changed_blocks} blocks ({replaced_total} matches)."
+        )

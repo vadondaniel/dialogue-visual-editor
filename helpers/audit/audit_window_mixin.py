@@ -370,6 +370,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         term_footer.setSpacing(6)
         term_status_label = QLabel("Type a JP source term to inspect variants.")
         term_footer.addWidget(term_status_label, 1)
+        term_apply_canonical_btn = QPushButton("Apply To Canonical")
+        term_apply_canonical_btn.setEnabled(False)
+        term_footer.addWidget(term_apply_canonical_btn)
         term_goto_btn = QPushButton("Go To")
         term_goto_btn.setEnabled(False)
         term_footer.addWidget(term_goto_btn)
@@ -432,6 +435,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_term_hits_list = term_hits_list
         self.audit_term_status_label = term_status_label
         self.audit_term_goto_btn = term_goto_btn
+        self.audit_term_apply_canonical_btn = term_apply_canonical_btn
 
         for rule_id, label, find_text, replace_text in SANITIZE_CHAR_RULES:
             item = QListWidgetItem()
@@ -595,7 +599,10 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         term_refresh_btn.clicked.connect(self._refresh_audit_term_panel)
         term_variants_list.currentItemChanged.connect(
-            lambda _current, _previous: self._refresh_audit_term_hits()
+            lambda _current, _previous: (
+                self._refresh_audit_term_hits(),
+                self._refresh_audit_term_apply_state(),
+            )
         )
         term_hits_list.currentItemChanged.connect(
             lambda current, _previous: term_goto_btn.setEnabled(current is not None)
@@ -605,6 +612,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         term_hits_list.itemActivated.connect(
             lambda _item: self._go_to_selected_audit_term_hit()
+        )
+        term_apply_canonical_btn.clicked.connect(
+            self._apply_selected_audit_term_variant_to_canonical
         )
         term_goto_btn.clicked.connect(self._go_to_selected_audit_term_hit)
         tabs.currentChanged.connect(self._on_audit_tab_changed)
