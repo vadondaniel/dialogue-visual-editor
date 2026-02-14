@@ -1847,18 +1847,21 @@ class DialogueBlockWidget(QFrame):
         if self._source_hint_overlay is None:
             return
         has_user_text = any(line.strip() for line in self._raw_lines)
-        show_masked_preview = self._should_show_masked_preview_overlay()
         show_source_hint = (
             self.translator_mode
             and not has_user_text
             and bool(self._source_hint_lines)
         )
+        show_masked_preview = (
+            self._should_show_masked_preview_overlay()
+            and (not show_source_hint)
+        )
         should_show = show_masked_preview or show_source_hint
         if should_show:
-            if show_masked_preview:
-                self._source_hint_overlay.setText(self._masked_preview_html())
-            else:
+            if show_source_hint:
                 self._source_hint_overlay.setText(self._source_hint_html())
+            else:
+                self._source_hint_overlay.setText(self._masked_preview_html())
             self._source_hint_overlay.setGeometry(
                 self.editor.viewport().rect().adjusted(6, 4, -6, -4)
             )
