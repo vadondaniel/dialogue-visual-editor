@@ -17,6 +17,7 @@ from .core.models import (
 from .core.parser import parse_dialogue_data, parse_dialogue_file
 from .core.text_utils import (
     chunk_lines,
+    collapse_lines_join_paragraphs,
     collapse_lines_force,
     first_overflow_char_index,
     fuzzy_compare_text,
@@ -24,11 +25,14 @@ from .core.text_utils import (
     natural_sort_key,
     preview_text,
     similarity_signature,
+    smart_collapse_lines,
     smart_collapse_lines_space_efficient,
     split_lines_preserve_empty,
     unique_preserve_order,
     visible_length,
+    wrap_lines_hard_break,
     wrap_lines_keep_breaks,
+    wrap_text_word_aware,
 )
 
 __all__ = [
@@ -46,6 +50,7 @@ __all__ = [
     "SplitOverflowAction",
     "StructuralAction",
     "chunk_lines",
+    "collapse_lines_join_paragraphs",
     "collapse_lines_force",
     "first_overflow_char_index",
     "fuzzy_compare_text",
@@ -55,9 +60,12 @@ __all__ = [
     "parse_dialogue_file",
     "preview_text",
     "similarity_signature",
+    "smart_collapse_lines",
     "smart_collapse_lines_space_efficient",
     "split_lines_preserve_empty",
     "unique_preserve_order",
     "visible_length",
+    "wrap_lines_hard_break",
     "wrap_lines_keep_breaks",
+    "wrap_text_word_aware",
 ]

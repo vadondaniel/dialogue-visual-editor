@@ -241,9 +241,9 @@ def chunk_lines(lines: list[str], size: int) -> list[list[str]]:
     return chunks or [[""]]
 
 
-def wrap_text_to_width(text: str, width: int) -> list[str]:
+def wrap_text_word_aware(text: str, width: int) -> list[str]:
     safe_width = max(1, width)
-    return _wrap_text_to_width_fallback(text, safe_width)
+    return _wrap_text_word_aware_fallback(text, safe_width)
 
 
 def _unit_visible_value(unit: dict[str, Any]) -> int:
@@ -360,7 +360,7 @@ def _build_smart_collapse_body_text(lines: list[str], line_width: int) -> str:
     return "".join(parts)
 
 
-def _wrap_text_to_width_fallback(text: str, width: int) -> list[str]:
+def _wrap_text_word_aware_fallback(text: str, width: int) -> list[str]:
     units = parse_units_for_measure(text)
     if not units:
         return [""]
@@ -430,17 +430,17 @@ def _wrap_text_to_width_fallback(text: str, width: int) -> list[str]:
     return lines or [""]
 
 
-def wrap_lines_keep_breaks(lines: list[str], width: int) -> list[str]:
+def wrap_lines_hard_break(lines: list[str], width: int) -> list[str]:
     if not lines:
         return [""]
     wrapped: list[str] = []
     for line in lines:
-        wrapped_line = _wrap_text_to_width_hard(line, width)
+        wrapped_line = _wrap_text_hard_break(line, width)
         wrapped.extend(wrapped_line or [""])
     return wrapped or [""]
 
 
-def _wrap_text_to_width_hard(text: str, width: int) -> list[str]:
+def _wrap_text_hard_break(text: str, width: int) -> list[str]:
     safe_width = max(1, width)
     units = parse_units_for_measure(text)
     if not units:
@@ -486,7 +486,7 @@ def _wrap_text_to_width_hard(text: str, width: int) -> list[str]:
     return lines or [""]
 
 
-def collapse_lines_force(lines: list[str], width: int) -> list[str]:
+def collapse_lines_join_paragraphs(lines: list[str], width: int) -> list[str]:
     safe_width = max(1, width)
 
     if not lines:
@@ -500,19 +500,19 @@ def collapse_lines_force(lines: list[str], width: int) -> list[str]:
             continue
         if paragraph:
             merged = " ".join(paragraph)
-            wrapped.extend(wrap_text_to_width(merged, safe_width))
+            wrapped.extend(wrap_text_word_aware(merged, safe_width))
             paragraph = []
         if not wrapped or wrapped[-1] != "":
             wrapped.append("")
 
     if paragraph:
         merged = " ".join(paragraph)
-        wrapped.extend(wrap_text_to_width(merged, safe_width))
+        wrapped.extend(wrap_text_word_aware(merged, safe_width))
 
     return wrapped or [""]
 
 
-def smart_collapse_lines_space_efficient(
+def smart_collapse_lines(
     lines: list[str],
     width: int,
     *,
@@ -534,8 +534,33 @@ def smart_collapse_lines_space_efficient(
         return result_prefix or [""]
 
     body_text = _build_smart_collapse_body_text(body_lines, safe_width)
-    wrapped_body = wrap_text_to_width(body_text, safe_width)
+    wrapped_body = wrap_text_word_aware(body_text, safe_width)
     return (result_prefix + wrapped_body) or [""]
+
+
+def wrap_text_to_width(text: str, width: int) -> list[str]:
+    return wrap_text_word_aware(text, width)
+
+
+def wrap_lines_keep_breaks(lines: list[str], width: int) -> list[str]:
+    return wrap_lines_hard_break(lines, width)
+
+
+def collapse_lines_force(lines: list[str], width: int) -> list[str]:
+    return collapse_lines_join_paragraphs(lines, width)
+
+
+def smart_collapse_lines_space_efficient(
+    lines: list[str],
+    width: int,
+    *,
+    infer_name_from_first_line: bool = False,
+) -> list[str]:
+    return smart_collapse_lines(
+        lines,
+        width,
+        infer_name_from_first_line=infer_name_from_first_line,
+    )
 
 
 def now_utc_iso() -> str:

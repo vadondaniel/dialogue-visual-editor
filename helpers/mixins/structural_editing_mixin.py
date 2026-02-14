@@ -20,7 +20,7 @@ from ..core.models import (
     SplitOverflowAction,
     StructuralAction,
 )
-from ..core.text_utils import smart_collapse_lines_space_efficient
+from ..core.text_utils import smart_collapse_lines
 
 class _EditorHostTypingFallback:
     # DialogueVisualEditor provides many attributes/methods consumed by mixins.
@@ -259,7 +259,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     def _merged_pair_line_savings(self, left: DialogueSegment, right: DialogueSegment) -> int:
         width = self._segment_line_width(left)
         before = len(left.lines) + len(right.lines)
-        merged = smart_collapse_lines_space_efficient(
+        merged = smart_collapse_lines(
             list(left.lines) + list(right.lines),
             width,
             infer_name_from_first_line=self.infer_speaker_check.isChecked(),
@@ -638,12 +638,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         left_translation_before = self._normalize_translation_lines(
             left_segment.translation_lines)
         left_speaker_translation_before = left_segment.translation_speaker
-        merged_lines = smart_collapse_lines_space_efficient(
+        merged_lines = smart_collapse_lines(
             list(left_segment.lines) + list(right_segment.lines),
             self._segment_line_width(left_segment),
             infer_name_from_first_line=self.infer_speaker_check.isChecked(),
         )
-        merged_tl_lines = smart_collapse_lines_space_efficient(
+        merged_tl_lines = smart_collapse_lines(
             self._normalize_translation_lines(left_segment.translation_lines)
             + self._normalize_translation_lines(right_segment.translation_lines),
             self._segment_line_width(left_segment),

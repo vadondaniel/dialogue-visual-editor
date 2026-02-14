@@ -37,14 +37,14 @@ from PySide6.QtWidgets import (
 
 from ..core.models import NO_SPEAKER_KEY, DialogueSegment
 from ..core.text_utils import (
-    collapse_lines_force,
+    collapse_lines_join_paragraphs,
     first_overflow_char_index,
     looks_like_name_line,
-    strip_control_tokens,
-    smart_collapse_lines_space_efficient,
+    smart_collapse_lines,
     split_lines_preserve_empty,
+    strip_control_tokens,
     visible_length,
-    wrap_lines_keep_breaks,
+    wrap_lines_hard_break,
 )
 
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
@@ -1687,13 +1687,13 @@ class DialogueBlockWidget(QFrame):
             self.delete_button.setEnabled(False)
             return
 
-        can_collapse = collapse_lines_force(lines, width_chars) != lines
-        can_smart_collapse = smart_collapse_lines_space_efficient(
+        can_collapse = collapse_lines_join_paragraphs(lines, width_chars) != lines
+        can_smart_collapse = smart_collapse_lines(
             lines,
             width_chars,
             infer_name_from_first_line=self.infer_name_from_first_line,
         ) != lines
-        can_wrap = wrap_lines_keep_breaks(lines, width_chars) != lines
+        can_wrap = wrap_lines_hard_break(lines, width_chars) != lines
         can_insert = self.allow_structural_actions
         can_delete = (
             self.allow_structural_actions
@@ -1724,12 +1724,12 @@ class DialogueBlockWidget(QFrame):
         self.text_changed.emit(self.segment.uid, list(self._raw_lines))
 
     def _on_collapse_clicked(self) -> None:
-        collapsed = collapse_lines_force(
+        collapsed = collapse_lines_join_paragraphs(
             self._current_lines(), self._width_chars())
         self._set_editor_lines(collapsed)
 
     def _on_smart_collapse_clicked(self) -> None:
-        collapsed = smart_collapse_lines_space_efficient(
+        collapsed = smart_collapse_lines(
             self._current_lines(),
             self._width_chars(),
             infer_name_from_first_line=self.infer_name_from_first_line,
@@ -1737,7 +1737,7 @@ class DialogueBlockWidget(QFrame):
         self._set_editor_lines(collapsed)
 
     def _on_wrap_clicked(self) -> None:
-        wrapped = wrap_lines_keep_breaks(
+        wrapped = wrap_lines_hard_break(
             self._current_lines(), self._width_chars())
         self._set_editor_lines(wrapped)
 
