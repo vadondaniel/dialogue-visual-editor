@@ -350,11 +350,16 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             source_hash = self._segment_source_hash(segment)
             chosen_uid = ""
             preferred_uid = order[idx] if idx < len(order) else ""
+            preferred_hash = ""
 
             if preferred_uid and preferred_uid in unused:
-                preferred_entry = entries.get(preferred_uid, {})
-                preferred_hash = preferred_entry.get("source_hash")
-                if isinstance(preferred_hash, str) and preferred_hash == source_hash:
+                preferred_entry_raw = entries.get(preferred_uid)
+                preferred_entry = preferred_entry_raw if isinstance(
+                    preferred_entry_raw, dict) else {}
+                preferred_hash_raw = preferred_entry.get("source_hash")
+                preferred_hash = preferred_hash_raw.strip() if isinstance(
+                    preferred_hash_raw, str) else ""
+                if preferred_hash == source_hash:
                     chosen_uid = preferred_uid
                     unused.remove(preferred_uid)
 
@@ -365,7 +370,15 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                         unused.remove(candidate_uid)
                         break
 
-            if not chosen_uid and preferred_uid and preferred_uid in unused:
+            # Keep positional fallback only for legacy state rows that don't have
+            # source hashes; otherwise parser changes (e.g. added choice segments)
+            # can shift IDs and misalign all following translations.
+            if (
+                not chosen_uid
+                and preferred_uid
+                and preferred_uid in unused
+                and not preferred_hash
+            ):
                 chosen_uid = preferred_uid
                 unused.remove(preferred_uid)
 
