@@ -114,7 +114,7 @@ DB_FILENAME = ".dialogue_editor_index.sqlite3"
 VERSION_DB_FILENAME = ".dialogue_version_state.sqlite3"
 TRANSLATION_STATE_FILENAME = ".dialogue_translation_state.json"
 UI_STATE_FILENAME = ".dialogue_visual_editor_ui_state.json"
-APP_TITLE = "Dialogue Visual Editor (Code 101/401)"
+APP_TITLE = "Dialogue Visual Editor"
 
 
 class DialogueVisualEditor(
@@ -1743,7 +1743,8 @@ class DialogueVisualEditor(
         if self.data_dir is None:
             self.setWindowTitle(APP_TITLE)
             return
-        self.setWindowTitle(f"{APP_TITLE} | {self.data_dir}")
+        dirty_suffix = " *" if any(session.dirty for session in self.sessions.values()) else ""
+        self.setWindowTitle(f"{APP_TITLE} | {self.data_dir}{dirty_suffix}")
 
     def _project_state_key(self, folder: Path) -> str:
         try:
@@ -2092,6 +2093,7 @@ class DialogueVisualEditor(
 
         if not visible_paths:
             self.current_path = None
+            self._update_window_title()
             self._clear_blocks()
             self.current_segment_lookup.clear()
             self.block_widgets.clear()
@@ -2150,6 +2152,7 @@ class DialogueVisualEditor(
         self._load_translation_state()
 
         self.sessions.clear()
+        self._update_window_title()
         self.current_path = None
         self.current_segment_lookup.clear()
         self.block_widgets.clear()
@@ -2405,6 +2408,7 @@ class DialogueVisualEditor(
             return
 
         self.current_path = path
+        self._update_window_title()
         self._update_file_item_text(path)
         self._render_session(
             session,

@@ -75,6 +75,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         setattr(session, "_cached_source_dirty", source_dirty)
         setattr(session, "_cached_tl_dirty", tl_dirty)
         session.dirty = source_dirty or tl_dirty
+        self._update_window_title()
         self._update_file_item_text(session.path)
         if self.current_path == session.path:
             actor_mode = self._is_name_index_session(session)
