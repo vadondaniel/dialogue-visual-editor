@@ -250,6 +250,49 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     def _segment_line_width(self, segment: DialogueSegment) -> int:
         return self.thin_width_spin.value() if segment.has_face else self.wide_width_spin.value()
 
+    def _inferred_line1_speaker_marker(self, segment: DialogueSegment) -> str:
+        resolver = getattr(self, "_inferred_speaker_from_segment_line1", None)
+        if not callable(resolver):
+            return ""
+        try:
+            inferred = resolver(segment)
+        except Exception:
+            return ""
+        if not isinstance(inferred, str) or not inferred.strip():
+            return ""
+        source_lines = self._segment_source_lines_for_display(segment)
+        if len(source_lines) <= 1:
+            return ""
+        first_line = source_lines[0]
+        return first_line if isinstance(first_line, str) else ""
+
+    def _with_inferred_line1_marker(self, lines: list[str], marker: str) -> list[str]:
+        normalized = list(lines) if lines else [""]
+        marker_text = marker if isinstance(marker, str) else ""
+        if not marker_text:
+            return normalized
+        if normalized and normalized[0] == marker_text:
+            if len(normalized) == 1:
+                return [marker_text, ""]
+            return normalized
+        return [marker_text] + normalized
+
+    def _dedupe_leading_inferred_marker_for_merge(
+        self,
+        left_segment: DialogueSegment,
+        right_segment: DialogueSegment,
+        right_lines: list[str],
+    ) -> list[str]:
+        normalized_right = list(right_lines) if right_lines else [""]
+        left_marker = self._inferred_line1_speaker_marker(left_segment)
+        right_marker = self._inferred_line1_speaker_marker(right_segment)
+        if not left_marker or left_marker != right_marker:
+            return normalized_right
+        if normalized_right and normalized_right[0] == right_marker:
+            trimmed = normalized_right[1:]
+            return trimmed if trimmed else [""]
+        return normalized_right
+
     def _same_merge_signature(self, left: DialogueSegment, right: DialogueSegment) -> bool:
         if (not left.is_structural_dialogue) or (not right.is_structural_dialogue):
             return False
@@ -625,13 +668,17 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             except ValueError:
                 return
 
+        inferred_marker = self._inferred_line1_speaker_marker(source_segment)
+        new_source_lines = self._with_inferred_line1_marker([""], inferred_marker)
+        new_translation_lines = self._with_inferred_line1_marker([""], inferred_marker)
+
         new_segment = DialogueSegment(
             uid=self._new_segment_uid(session.path),
             context=source_segment.context,
             code101=copy.deepcopy(source_segment.code101),
-            lines=[""],
-            original_lines=[""],
-            source_lines=[""],
+            lines=list(new_source_lines),
+            original_lines=list(new_source_lines),
+            source_lines=list(new_source_lines),
             code401_template=copy.deepcopy(source_segment.code401_template),
             segment_kind=source_segment.segment_kind,
             line_entry_code=source_segment.line_entry_code,
@@ -639,8 +686,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             script_entry_roles=list(source_segment.script_entry_roles),
             script_entry_quotes=list(source_segment.script_entry_quotes),
             tl_uid=self._new_translation_uid(),
-            translation_lines=[""],
-            original_translation_lines=[""],
+            translation_lines=list(new_translation_lines),
+            original_translation_lines=list(new_translation_lines),
             translation_speaker=self.speaker_translation_map.get(
                 source_segment.speaker_name, ""),
             original_translation_speaker=self.speaker_translation_map.get(
@@ -743,6 +790,16 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             moved_tl_lines = self._normalize_translation_lines(
                 source_segment.translation_lines[max_lines:]
             )
+
+        inferred_marker = self._inferred_line1_speaker_marker(source_segment)
+        moved_source_lines = self._with_inferred_line1_marker(
+            moved_source_lines,
+            inferred_marker,
+        )
+        moved_tl_lines = self._with_inferred_line1_marker(
+            moved_tl_lines,
+            inferred_marker,
+        )
 
         new_segment = DialogueSegment(
             uid=self._new_segment_uid(session.path),
@@ -868,18 +925,28 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             left_segment.translation_lines)
         left_speaker_translation_before = left_segment.translation_speaker
         source_affected = not translator_mode
+        right_lines_for_merge = self._dedupe_leading_inferred_marker_for_merge(
+            left_segment,
+            right_segment,
+            right_segment.lines,
+        )
         merged_lines = (
             smart_collapse_lines(
-                list(left_segment.lines) + list(right_segment.lines),
+                list(left_segment.lines) + list(right_lines_for_merge),
                 self._segment_line_width(left_segment),
                 infer_name_from_first_line=self.infer_speaker_check.isChecked(),
             )
             if source_affected
             else list(left_segment.lines)
         )
+        right_tl_lines_for_merge = self._dedupe_leading_inferred_marker_for_merge(
+            left_segment,
+            right_segment,
+            self._normalize_translation_lines(right_segment.translation_lines),
+        )
         merged_tl_lines = smart_collapse_lines(
             self._normalize_translation_lines(left_segment.translation_lines)
-            + self._normalize_translation_lines(right_segment.translation_lines),
+            + right_tl_lines_for_merge,
             self._segment_line_width(left_segment),
             infer_name_from_first_line=self.infer_speaker_check.isChecked(),
         )
