@@ -84,11 +84,18 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         translator_mode = self._is_translator_mode()
         display_segments_resolver = getattr(self, "_display_segments_for_session", None)
+        display_segments_raw: object
         if callable(display_segments_resolver):
-            display_segments = display_segments_resolver(
+            display_segments_raw = display_segments_resolver(
                 session,
                 translator_mode=translator_mode,
                 actor_mode=actor_mode,
+            )
+        else:
+            display_segments_raw = list(session.segments)
+        if isinstance(display_segments_raw, list):
+            display_segments: list[DialogueSegment] = cast(
+                list[DialogueSegment], display_segments_raw
             )
         else:
             display_segments = list(session.segments)
