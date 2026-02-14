@@ -257,6 +257,28 @@ class MassTranslateDialog(QDialog):
         mode = str(self.content_scope_combo.currentData())
         return self._content_mode_flags_for_mode(mode)
 
+    def _segment_source_lines_for_mass_translate(
+        self,
+        segment: DialogueSegment,
+        source_lines_resolver: Optional[Any] = None,
+    ) -> list[str]:
+        resolver = source_lines_resolver
+        if resolver is None:
+            resolver = getattr(self.editor, "_segment_source_lines_for_translation", None)
+        if callable(resolver):
+            try:
+                resolved_source = resolver(segment)
+            except Exception:
+                resolved_source = self.editor._segment_source_lines_for_display(segment)
+            if isinstance(resolved_source, list):
+                return resolved_source
+        return self.editor._segment_source_lines_for_display(segment)
+
+    @staticmethod
+    def _has_translatable_source_lines(lines: list[str]) -> bool:
+        source_text = "\n".join(lines)
+        return bool(source_text.strip())
+
     def _mode_has_pending_entries(self, mode: str) -> bool:
         include_dialogue, include_misc, include_speakers = self._content_mode_flags_for_mode(
             mode
@@ -265,6 +287,9 @@ class MassTranslateDialog(QDialog):
             return False
 
         speaker_keys: set[str] = set()
+        source_lines_resolver = getattr(
+            self.editor, "_segment_source_lines_for_translation", None
+        )
         for path, session in self._scoped_session_items():
             for segment in session.segments:
                 content_type = self._segment_content_type(path, session, segment)
@@ -278,6 +303,12 @@ class MassTranslateDialog(QDialog):
                     or (content_type == "speaker_segment" and include_speakers)
                 )
                 if not include_segment:
+                    continue
+                source_lines = self._segment_source_lines_for_mass_translate(
+                    segment,
+                    source_lines_resolver,
+                )
+                if not self._has_translatable_source_lines(source_lines):
                     continue
                 if not self._segment_has_translation(segment):
                     return True
@@ -415,20 +446,12 @@ class MassTranslateDialog(QDialog):
                 )
                 speaker_field_value = speaker_for_prompt if include_speaker_field else ""
 
-                if callable(source_lines_resolver):
-                    try:
-                        resolved_source = source_lines_resolver(segment)
-                    except Exception:
-                        resolved_source = self.editor._segment_source_lines_for_display(
-                            segment
-                        )
-                    source_lines = (
-                        resolved_source
-                        if isinstance(resolved_source, list)
-                        else self.editor._segment_source_lines_for_display(segment)
-                    )
-                else:
-                    source_lines = self.editor._segment_source_lines_for_display(segment)
+                source_lines = self._segment_source_lines_for_mass_translate(
+                    segment,
+                    source_lines_resolver,
+                )
+                if not self._has_translatable_source_lines(source_lines):
+                    continue
                 source_text = "\n".join(source_lines)
 
                 if content_type == "dialogue":
@@ -591,6 +614,9 @@ class MassTranslateDialog(QDialog):
         done = 0
         total = 0
         speaker_keys: set[str] = set()
+        source_lines_resolver = getattr(
+            self.editor, "_segment_source_lines_for_translation", None
+        )
         for path, session in self._scope_session_items_from_value(scope_value):
             for segment in session.segments:
                 content_type = self._segment_content_type(path, session, segment)
@@ -603,6 +629,12 @@ class MassTranslateDialog(QDialog):
                 if content_type == "misc" and not include_misc:
                     continue
                 if content_type == "speaker_segment" and not include_speakers:
+                    continue
+                source_lines = self._segment_source_lines_for_mass_translate(
+                    segment,
+                    source_lines_resolver,
+                )
+                if not self._has_translatable_source_lines(source_lines):
                     continue
                 translated = self._segment_has_translation(segment)
                 total += 1
@@ -762,22 +794,10 @@ class MassTranslateDialog(QDialog):
 
         for path, session in session_items:
             for idx, segment in enumerate(session.segments):
-                if callable(source_lines_resolver):
-                    try:
-                        resolved_source = source_lines_resolver(segment)
-                    except Exception:
-                        resolved_source = self.editor._segment_source_lines_for_display(
-                            segment
-                        )
-                    source_lines = (
-                        resolved_source
-                        if isinstance(resolved_source, list)
-                        else self.editor._segment_source_lines_for_display(segment)
-                    )
-                else:
-                    source_lines = self.editor._segment_source_lines_for_display(
-                        segment
-                    )
+                source_lines = self._segment_source_lines_for_mass_translate(
+                    segment,
+                    source_lines_resolver,
+                )
                 if callable(translation_lines_resolver):
                     try:
                         resolved_translation = translation_lines_resolver(segment)
@@ -814,6 +834,8 @@ class MassTranslateDialog(QDialog):
                 if not include_segment:
                     continue
                 if only_untranslated and existing_text:
+                    continue
+                if not self._has_translatable_source_lines(source_lines):
                     continue
 
                 tl_uid = self._ensure_segment_translation_uid(segment)
