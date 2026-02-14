@@ -1317,7 +1317,7 @@ class DialogueBlockWidget(QFrame):
             border = self._editor_border_thin if self.segment.has_face else self._editor_border_wide
             if has_warning:
                 border = self._editor_border_warn
-        if self._selected:
+        if self._selected and not has_warning:
             bg = "#0f2d22" if self._dark_theme else "#f0fdf4"
         if self._flash_level > 0 and not self._audit_pinned:
             bg = "#3b2a00" if self._dark_theme else "#fefce8"
