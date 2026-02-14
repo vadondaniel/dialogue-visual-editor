@@ -189,6 +189,12 @@ class SpeakerManagerHost(Protocol):
     def _collect_speaker_keys(self) -> list[str]: ...
     def _speaker_color_for_key(self, speaker_key: str) -> str: ...
     def _speaker_translation_for_key(self, speaker_key: str) -> str: ...
+    def _resolve_name_tokens_in_text(
+        self,
+        text: str,
+        prefer_translated: bool,
+        unresolved_placeholder: bool = False,
+    ) -> str: ...
     def _normalize_speaker_key(self, value: str) -> str: ...
 
     def _rename_speaker_everywhere(
@@ -500,10 +506,18 @@ class SpeakerManagerDialog(QDialog):
                 "#f8fafc" if color.lightness() < 128 else "#0f172a")
 
             is_custom = speaker_key in self.editor.speaker_custom_colors
+            speaker_key_display = self.editor._resolve_name_tokens_in_text(
+                speaker_key,
+                prefer_translated=False,
+            ).strip()
+            label = speaker_key_display or speaker_key
             speaker_en = self.editor._speaker_translation_for_key(speaker_key)
-            label = speaker_key
+            speaker_en_display = self.editor._resolve_name_tokens_in_text(
+                speaker_en,
+                prefer_translated=True,
+            ).strip()
             if speaker_en:
-                label += f" -> {speaker_en}"
+                label += f" -> {speaker_en_display or speaker_en}"
             if is_custom:
                 label += " [custom]"
             item = QListWidgetItem(label)
