@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 import html
 import re
-from typing import Any, Callable, Optional, Protocol, cast
+from typing import Any, Callable, Literal, Optional, Protocol, cast
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from ..core.models import NO_SPEAKER_KEY, DialogueSegment
 from ..core.text_utils import (
+    CONTROL_TOKEN_RE,
     collapse_lines_join_paragraphs,
     first_overflow_char_index,
     looks_like_name_line,
@@ -51,6 +53,108 @@ from ..core.text_utils import (
 
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
 VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
+ControlMismatchStatus = Literal["matched", "missing", "extra"]
+ControlMismatchSpan = tuple[int, int, ControlMismatchStatus]
+
+_CONTROL_MISMATCH_BG_DARK: dict[ControlMismatchStatus, str] = {
+    "matched": "#14532d",
+    "missing": "#7f1d1d",
+    "extra": "#1e3a8a",
+}
+_CONTROL_MISMATCH_BG_LIGHT: dict[ControlMismatchStatus, str] = {
+    "matched": "#dcfce7",
+    "missing": "#fee2e2",
+    "extra": "#dbeafe",
+}
+
+
+def _extract_control_token_matches(text: str) -> list[tuple[str, int, int]]:
+    if not text:
+        return []
+    return [
+        (match.group(0), match.start(), match.end())
+        for match in CONTROL_TOKEN_RE.finditer(text)
+    ]
+
+
+def control_mismatch_token_spans(
+    source_text: str,
+    translation_text: str,
+) -> tuple[list[ControlMismatchSpan], list[ControlMismatchSpan]]:
+    source_matches = _extract_control_token_matches(source_text or "")
+    translation_matches = _extract_control_token_matches(translation_text or "")
+    source_tokens = [token for token, _start, _end in source_matches]
+    translation_tokens = [
+        token for token, _start, _end in translation_matches]
+    source_statuses: list[ControlMismatchStatus] = [
+        "missing"] * len(source_matches)
+    translation_statuses: list[ControlMismatchStatus] = [
+        "extra"] * len(translation_matches)
+    matcher = SequenceMatcher(
+        a=source_tokens,
+        b=translation_tokens,
+        autojunk=False,
+    )
+    for tag, source_start, source_end, tl_start, tl_end in matcher.get_opcodes():
+        if tag != "equal":
+            continue
+        for source_idx in range(source_start, source_end):
+            source_statuses[source_idx] = "matched"
+        for tl_idx in range(tl_start, tl_end):
+            translation_statuses[tl_idx] = "matched"
+
+    source_spans: list[ControlMismatchSpan] = []
+    for idx, (_token, start, end) in enumerate(source_matches):
+        source_spans.append((start, end, source_statuses[idx]))
+    translation_spans: list[ControlMismatchSpan] = []
+    for idx, (_token, start, end) in enumerate(translation_matches):
+        translation_spans.append((start, end, translation_statuses[idx]))
+
+    return source_spans, translation_spans
+
+
+def build_control_mismatch_selections(
+    editor: QPlainTextEdit,
+    source_text: str,
+    translation_text: str,
+    *,
+    highlight_side: Literal["source", "translation"],
+    dark_theme: bool,
+) -> list[QTextEdit.ExtraSelection]:
+    source_spans, translation_spans = control_mismatch_token_spans(
+        source_text,
+        translation_text,
+    )
+    if highlight_side == "source":
+        spans = source_spans
+    else:
+        spans = translation_spans
+    if not spans:
+        return []
+
+    palette = _CONTROL_MISMATCH_BG_DARK if dark_theme else _CONTROL_MISMATCH_BG_LIGHT
+    alpha = 164 if dark_theme else 128
+    doc_len = len(editor.toPlainText())
+    selections: list[QTextEdit.ExtraSelection] = []
+    for start, end, status in spans:
+        if end <= start or start >= doc_len:
+            continue
+        color_hex = palette.get(status, "")
+        color = QColor(color_hex)
+        if not color.isValid():
+            continue
+        color.setAlpha(alpha)
+        cursor = QTextCursor(editor.document())
+        cursor.setPosition(max(0, start))
+        cursor.setPosition(min(end, doc_len), QTextCursor.MoveMode.KeepAnchor)
+        selection = QTextEdit.ExtraSelection()
+        fmt = QTextCharFormat()
+        fmt.setBackground(color)
+        selection_any = cast(Any, selection)
+        selection_any.format = fmt
+        selection_any.cursor = cursor
+        selections.append(selection)
+    return selections
 
 
 class SpeakerManagerHost(Protocol):
@@ -1041,6 +1145,7 @@ class DialogueBlockWidget(QFrame):
         variable_label_resolver: Optional[Callable[[int], str]],
         speaker_tint_color: str,
         translator_mode: bool,
+        highlight_control_mismatch: bool,
         actor_mode: bool,
         name_index_kind: str,
         name_index_label: str,
@@ -1065,6 +1170,9 @@ class DialogueBlockWidget(QFrame):
         self.variable_label_resolver = variable_label_resolver
         self.speaker_tint_color = speaker_tint_color
         self.translator_mode = translator_mode
+        self.control_mismatch_highlighting_enabled = bool(
+            highlight_control_mismatch
+        )
         self.actor_mode = actor_mode
         self.name_index_kind = name_index_kind.strip().lower()
         self.name_index_label = name_index_label.strip(
@@ -1793,6 +1901,43 @@ class DialogueBlockWidget(QFrame):
         self.hide_control_codes_when_unfocused = new_value
         self._sync_control_code_visibility(force=True)
 
+    def set_control_mismatch_highlighting_enabled(self, enabled: bool) -> None:
+        new_value = bool(enabled)
+        if self.control_mismatch_highlighting_enabled == new_value:
+            return
+        self.control_mismatch_highlighting_enabled = new_value
+        self._refresh_status()
+
+    def _source_lines_for_control_mismatch(self) -> list[str]:
+        source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
+            ""
+        ]
+        resolved = list(source_lines) if source_lines else [""]
+        if self._line1_inference_active():
+            if len(resolved) > 1:
+                return list(resolved[1:])
+            return [""]
+        return resolved
+
+    def _control_mismatch_selections(self) -> list[QTextEdit.ExtraSelection]:
+        if not self.translator_mode:
+            return []
+        if not self.control_mismatch_highlighting_enabled:
+            return []
+        if self._displaying_masked_text:
+            return []
+        translation_text = "\n".join(self._raw_lines or [""])
+        if not translation_text.strip():
+            return []
+        source_text = "\n".join(self._source_lines_for_control_mismatch())
+        return build_control_mismatch_selections(
+            self.editor,
+            source_text=source_text,
+            translation_text=translation_text,
+            highlight_side="translation",
+            dark_theme=self._dark_theme,
+        )
+
     def _sync_control_code_visibility(self, force: bool = False) -> None:
         show_raw = self._should_show_raw_codes()
         _set_hard_newline_markers(self.editor, self.editor.hasFocus())
@@ -1981,37 +2126,34 @@ class DialogueBlockWidget(QFrame):
         self.meta_label.setText(meta_html)
 
     def _apply_overflow_highlighting(self) -> None:
-        if self.actor_mode:
-            self.editor.setExtraSelections([])
-            return
-        if not self._is_standard_dialogue_block():
-            self.editor.setExtraSelections([])
-            return
-        if self._displaying_masked_text:
-            # Rich-text overlay renders masked preview styling.
-            self.editor.setExtraSelections([])
-            return
-        width_chars = self._width_chars()
         selections: list[QTextEdit.ExtraSelection] = []
-        block = self.editor.document().firstBlock()
-        while block.isValid():
-            line_text = block.text()
-            overflow_idx = first_overflow_char_index(line_text, width_chars)
-            if overflow_idx is not None and overflow_idx < len(line_text):
-                cursor = QTextCursor(block)
-                start = block.position() + overflow_idx
-                end = block.position() + len(line_text)
-                cursor.setPosition(start)
-                cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-                selection = QTextEdit.ExtraSelection()
-                fmt = QTextCharFormat()
-                fmt.setBackground(QColor(self._overflow_bg))
-                fmt.setForeground(QColor(self._overflow_fg))
-                selection_any = cast(Any, selection)
-                selection_any.format = fmt
-                selection_any.cursor = cursor
-                selections.append(selection)
-            block = block.next()
+        can_highlight_overflow = (
+            (not self.actor_mode)
+            and self._is_standard_dialogue_block()
+            and (not self._displaying_masked_text)
+        )
+        if can_highlight_overflow:
+            width_chars = self._width_chars()
+            block = self.editor.document().firstBlock()
+            while block.isValid():
+                line_text = block.text()
+                overflow_idx = first_overflow_char_index(line_text, width_chars)
+                if overflow_idx is not None and overflow_idx < len(line_text):
+                    cursor = QTextCursor(block)
+                    start = block.position() + overflow_idx
+                    end = block.position() + len(line_text)
+                    cursor.setPosition(start)
+                    cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+                    selection = QTextEdit.ExtraSelection()
+                    fmt = QTextCharFormat()
+                    fmt.setBackground(QColor(self._overflow_bg))
+                    fmt.setForeground(QColor(self._overflow_fg))
+                    selection_any = cast(Any, selection)
+                    selection_any.format = fmt
+                    selection_any.cursor = cursor
+                    selections.append(selection)
+                block = block.next()
+        selections.extend(self._control_mismatch_selections())
         self.editor.setExtraSelections(selections)
 
     def _refresh_status(self) -> None:

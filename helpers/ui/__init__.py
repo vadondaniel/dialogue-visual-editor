@@ -7,6 +7,7 @@ from .ui_components import (
     ItemNameDescriptionWidget,
     SpeakerManagerDialog,
     VariableLengthManagerDialog,
+    build_control_mismatch_selections,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "MassTranslateDialog",
     "SpeakerManagerDialog",
     "VariableLengthManagerDialog",
+    "build_control_mismatch_selections",
 ]

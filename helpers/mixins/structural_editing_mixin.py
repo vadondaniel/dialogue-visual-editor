@@ -386,6 +386,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             segment.lines = list(lines)
             segment.source_lines = list(segment.lines)
         self._refresh_dirty_state(session)
+        if self._is_translator_mode() and self.selected_segment_uid == uid:
+            self._refresh_translator_detail_panel()
 
     def _line1_inference_match_key(self, segment: DialogueSegment) -> str:
         if not segment.is_structural_dialogue:

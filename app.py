@@ -80,6 +80,7 @@ try:
         MassTranslateDialog,
         SpeakerManagerDialog,
         VariableLengthManagerDialog,
+        build_control_mismatch_selections,
     )
 except ImportError:
     from helpers import (
@@ -113,6 +114,7 @@ except ImportError:
         MassTranslateDialog,
         SpeakerManagerDialog,
         VariableLengthManagerDialog,
+        build_control_mismatch_selections,
     )
 
 try:
@@ -1487,10 +1489,46 @@ class DialogueVisualEditor(
                 return idx
         return None
 
+    def _refresh_block_control_mismatch_highlighting(self) -> None:
+        enabled = bool(self.problem_control_mismatch_check.isChecked())
+        for widget in self.block_widgets.values():
+            setter = getattr(widget, "set_control_mismatch_highlighting_enabled", None)
+            if callable(setter):
+                setter(enabled)
+
+    def _apply_translator_source_mismatch_highlighting(
+        self,
+        segment: Optional[DialogueSegment],
+        *,
+        actor_mode: bool,
+    ) -> None:
+        if segment is None or actor_mode:
+            self.translator_source_view.setExtraSelections([])
+            return
+        if not self.problem_control_mismatch_check.isChecked():
+            self.translator_source_view.setExtraSelections([])
+            return
+        source_lines = self._segment_source_lines_for_translation(segment)
+        tl_lines = self._segment_translation_lines_for_translation(segment)
+        source_text = "\n".join(source_lines)
+        tl_text = "\n".join(tl_lines)
+        if not tl_text.strip():
+            self.translator_source_view.setExtraSelections([])
+            return
+        selections = build_control_mismatch_selections(
+            self.translator_source_view,
+            source_text=source_text,
+            translation_text=tl_text,
+            highlight_side="source",
+            dark_theme=is_dark_palette(),
+        )
+        self.translator_source_view.setExtraSelections(selections)
+
     def _refresh_translator_detail_panel(self) -> None:
         translator_mode = self._is_translator_mode()
         self.translator_detail_panel.setVisible(translator_mode)
         if not translator_mode:
+            self.translator_source_view.setExtraSelections([])
             return
 
         current_session = (
@@ -1548,6 +1586,7 @@ class DialogueVisualEditor(
             self.translator_source_view.setPlainText("")
             self.translator_reference_exact_label.setText("")
             self.translator_reference_similar_label.setText("")
+            self.translator_source_view.setExtraSelections([])
             return
 
         block_number = self._block_number_for_uid(segment.uid)
@@ -1603,6 +1642,10 @@ class DialogueVisualEditor(
             )
             self.translator_reference_exact_label.setText(exact)
             self.translator_reference_similar_label.setText(similar)
+        self._apply_translator_source_mismatch_highlighting(
+            segment,
+            actor_mode=actor_mode,
+        )
 
     def _on_block_activated(self, uid: str) -> None:
         if uid not in self.current_segment_lookup:
@@ -3247,6 +3290,8 @@ class DialogueVisualEditor(
     def _on_problem_checks_changed(self, _checked: bool) -> None:
         self._refresh_all_file_item_text()
         self._update_problem_checks_ui()
+        self._refresh_block_control_mismatch_highlighting()
+        self._refresh_translator_detail_panel()
 
     def _jump_to_next_problem(self) -> None:
         if not self.sessions:

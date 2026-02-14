@@ -339,6 +339,9 @@ class RenderMixin(_RenderHostTypingFallback):
                 variable_label_resolver=self._variable_label_for_rpgm_index,
                 speaker_tint_color=self._speaker_color_for_segment(segment),
                 translator_mode=translator_mode,
+                highlight_control_mismatch=bool(
+                    self.problem_control_mismatch_check.isChecked()
+                ),
                 actor_mode=actor_mode,
                 name_index_kind=name_index_kind,
                 name_index_label=name_index_label,
@@ -461,6 +464,9 @@ class RenderMixin(_RenderHostTypingFallback):
         widget._apply_editor_width()
         widget.set_hide_control_codes_when_unfocused(
             self.hide_control_codes_check.isChecked())
+        widget.set_control_mismatch_highlighting_enabled(
+            bool(self.problem_control_mismatch_check.isChecked())
+        )
         widget._sync_control_code_visibility(force=True)
         widget.refresh_metadata()
 
