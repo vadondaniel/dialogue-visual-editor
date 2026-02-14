@@ -1002,7 +1002,7 @@ class DialogueVisualEditor(
         include_source_speaker: bool,
         include_translation_text: bool,
         include_translation_speaker: bool,
-    ) -> tuple[int, int, int, int, int, int]:
+    ) -> tuple[int, int, int, int, int, int, set[Path]]:
         source_text = 0
         source_speaker = 0
         translation_text = 0
@@ -1100,7 +1100,31 @@ class DialogueVisualEditor(
             translation_text,
             translation_speaker,
             changed_blocks,
+            changed_paths,
         )
+
+    def _persist_sessions_for_paths(self, paths: set[Path]) -> tuple[int, int]:
+        if not paths:
+            return 0, 0
+        saved = 0
+        failed = 0
+        ordered_paths = sorted(
+            paths,
+            key=lambda path: natural_sort_key(self._relative_path(path)),
+        )
+        for path in ordered_paths:
+            session = self.sessions.get(path)
+            if session is None:
+                failed += 1
+                continue
+            if self._save_session(
+                session,
+                refresh_current_view=(path == self.current_path),
+            ):
+                saved += 1
+            else:
+                failed += 1
+        return saved, failed
 
     def _open_normalize_codes_dialog(self) -> None:
         if not self.sessions:
@@ -1135,9 +1159,10 @@ class DialogueVisualEditor(
             )
             return
 
-        response = QMessageBox.question(
-            self,
-            "Normalize Codes",
+        prompt = QMessageBox(self)
+        prompt.setIcon(QMessageBox.Icon.Question)
+        prompt.setWindowTitle("Normalize Codes")
+        prompt.setText(
             (
                 "Normalize control-code casing across loaded files?\n\n"
                 "This makes control-code words uppercase for consistency.\n"
@@ -1147,14 +1172,22 @@ class DialogueVisualEditor(
                 f"Source text: {source_count}\n"
                 f"Source speaker: {source_speaker_count}\n"
                 f"Translation text: {tl_count}\n"
-                f"Translation speaker: {tl_speaker_count}\n\n"
-                "This updates editor state only. Save to persist."
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+                f"Translation speaker: {tl_speaker_count}\n"
+            )
         )
-        if response != QMessageBox.StandardButton.Yes:
+        persist_checkbox = QCheckBox(
+            "Persist immediately (save changed files)",
+            prompt,
+        )
+        persist_checkbox.setChecked(True)
+        prompt.setCheckBox(persist_checkbox)
+        prompt.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        prompt.setDefaultButton(QMessageBox.StandardButton.Yes)
+        if prompt.exec() != int(QMessageBox.StandardButton.Yes):
             return
+        persist_immediately = bool(persist_checkbox.isChecked())
 
         (
             applied_total,
@@ -1163,6 +1196,7 @@ class DialogueVisualEditor(
             applied_tl,
             applied_tl_speaker,
             changed_blocks,
+            changed_paths,
         ) = self._apply_control_code_normalization(
             include_source_text=include_source_text,
             include_source_speaker=include_source_speaker,
@@ -1174,12 +1208,24 @@ class DialogueVisualEditor(
             return
 
         block_label = "block" if changed_blocks == 1 else "blocks"
+        persist_suffix = ""
+        if persist_immediately:
+            saved_files, failed_files = self._persist_sessions_for_paths(changed_paths)
+            saved_label = "file" if saved_files == 1 else "files"
+            if failed_files > 0:
+                failed_label = "file" if failed_files == 1 else "files"
+                persist_suffix = (
+                    f" Persisted {saved_files} {saved_label}; "
+                    f"{failed_files} {failed_label} failed."
+                )
+            else:
+                persist_suffix = f" Persisted {saved_files} {saved_label}."
         self.statusBar().showMessage(
             (
                 f"Normalized {applied_total} control-code occurrences "
                 f"(source text {applied_source}, source speaker {applied_source_speaker}, "
                 f"TL text {applied_tl}, TL speaker {applied_tl_speaker}) "
-                f"across {changed_blocks} {block_label}."
+                f"across {changed_blocks} {block_label}.{persist_suffix}"
             )
         )
 
