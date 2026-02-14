@@ -4,12 +4,6 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-try:
-    import wrap_dialogs as _wrap_dialogs
-except Exception:
-    _wrap_dialogs = None
-
-
 NATURAL_KEY_RE = re.compile(r"(\d+)")
 CONTROL_TOKEN_RE = re.compile(
     r"""
@@ -23,6 +17,26 @@ CONTROL_TOKEN_RE = re.compile(
 SIMILARITY_PUNCT_RE = re.compile(
     r"[\s\.,!?\"'`~:;()\[\]{}<>\/\\\-_|\+\*&\^%$#@=。、，．？！：；「」『』（）［］｛｝【】〈〉《》…・～〜]+"
 )
+NAME_MACRO_LINE_RE = re.compile(
+    r"^\s*(?:\\[Cc]\[\d+\]\s*)*\\N\[\d+\](?:\s*(?:\\[Cc]\[\d+\])\s*)*(?:[:：])?\s*$"
+)
+NAME_CONNECTOR_WORDS = {
+    "of",
+    "the",
+    "and",
+    "to",
+    "for",
+    "in",
+    "on",
+    "at",
+    "de",
+    "la",
+    "da",
+    "di",
+    "van",
+    "von",
+    "der",
+}
 
 
 def visible_length(text: str) -> int:
@@ -37,14 +51,45 @@ def visible_length(text: str) -> int:
 
 
 def looks_like_name_line(line: str) -> bool:
-    if _wrap_dialogs is not None:
-        fn = getattr(_wrap_dialogs, "is_name_line", None)
-        if callable(fn):
-            try:
-                return bool(fn(line))
-            except Exception:
-                pass
-    return False
+    if not line:
+        return False
+    if NAME_MACRO_LINE_RE.match(line):
+        return True
+
+    cleaned = CONTROL_TOKEN_RE.sub("", line).replace("\u3000", " ").strip()
+    if not cleaned:
+        return False
+
+    cleaned = cleaned.rstrip("：:")
+    if not cleaned:
+        return False
+    if len(cleaned) > 40:
+        return False
+    if any(ch in cleaned for ch in ".!?！？。…"):
+        return False
+    if not any(ch.isalpha() for ch in cleaned):
+        return False
+
+    words = [part for part in cleaned.split() if part]
+    if not words or len(words) > 4:
+        return False
+
+    for word in words:
+        core = word.strip("'’.-")
+        if not core:
+            continue
+        if len(core) > 20:
+            return False
+        if core.lower() in NAME_CONNECTOR_WORDS:
+            continue
+        first = core[0]
+        if first.isalpha() and not first.isupper():
+            return False
+        for ch in core:
+            if ch.isalnum() or ch in "'’-.":
+                continue
+            return False
+    return True
 
 
 def parse_units_for_measure(text: str) -> list[dict[str, Any]]:
@@ -189,26 +234,115 @@ def chunk_lines(lines: list[str], size: int) -> list[list[str]]:
 
 def wrap_text_to_width(text: str, width: int) -> list[str]:
     safe_width = max(1, width)
-    if _wrap_dialogs is not None:
-        fn = getattr(_wrap_dialogs, "wrap_text", None)
-        if callable(fn):
-            try:
-                wrapped = fn(text, safe_width)
-                if isinstance(wrapped, list):
-                    normalized: list[str] = []
-                    for item in wrapped:
-                        if isinstance(item, str):
-                            normalized.append(item)
-                        else:
-                            normalized.append(str(item))
-                    if normalized:
-                        return normalized
-            except Exception:
-                pass
-    lines = split_lines_preserve_empty(text)
-    if not lines:
+    return _wrap_text_to_width_fallback(text, safe_width)
+
+
+def _unit_visible_value(unit: dict[str, Any]) -> int:
+    raw_visible = unit.get("visible", 0)
+    if isinstance(raw_visible, int):
+        return max(0, raw_visible)
+    try:
+        return max(0, int(raw_visible))
+    except Exception:
+        return 0
+
+
+def _unit_is_space(unit: dict[str, Any]) -> bool:
+    if _unit_visible_value(unit) <= 0:
+        return False
+    token_text = unit.get("text")
+    token = token_text if isinstance(token_text, str) else ""
+    return token in (" ", "\t", "\u3000")
+
+
+def _units_visible_length(units: list[dict[str, Any]]) -> int:
+    return sum(_unit_visible_value(unit) for unit in units)
+
+
+def _find_last_visible_space_idx(units: list[dict[str, Any]]) -> Optional[int]:
+    idx: Optional[int] = None
+    for pos, unit in enumerate(units, start=1):
+        if _unit_is_space(unit):
+            idx = pos
+    return idx
+
+
+def _units_to_text(units: list[dict[str, Any]]) -> str:
+    text_parts: list[str] = []
+    for unit in units:
+        token_text = unit.get("text")
+        text_parts.append(token_text if isinstance(token_text, str) else "")
+    return "".join(text_parts)
+
+
+def _wrap_text_to_width_fallback(text: str, width: int) -> list[str]:
+    units = parse_units_for_measure(text)
+    if not units:
         return [""]
-    return lines
+
+    lines: list[str] = []
+    current_units: list[dict[str, Any]] = []
+    current_visible = 0
+    last_space_idx: Optional[int] = None
+
+    def flush_current() -> None:
+        nonlocal current_units, current_visible, last_space_idx
+        line_text = _units_to_text(current_units).rstrip(" \t\u3000")
+        lines.append(line_text)
+        current_units = []
+        current_visible = 0
+        last_space_idx = None
+
+    for unit in units:
+        if unit.get("is_newline"):
+            flush_current()
+            continue
+
+        unit_visible = _unit_visible_value(unit)
+        unit_is_space = _unit_is_space(unit)
+        reprocess = True
+        while reprocess:
+            reprocess = False
+            if unit_visible == 0:
+                current_units.append(unit)
+                continue
+
+            if current_visible + unit_visible <= width:
+                current_units.append(unit)
+                current_visible += unit_visible
+                if unit_is_space:
+                    last_space_idx = len(current_units)
+                continue
+
+            if not current_units:
+                current_units.append(unit)
+                current_visible += unit_visible
+                if unit_is_space:
+                    last_space_idx = len(current_units)
+                continue
+
+            if last_space_idx is not None:
+                line_units = current_units[:last_space_idx]
+                remainder_units = current_units[last_space_idx:]
+                while remainder_units and _unit_is_space(remainder_units[0]):
+                    remainder_units.pop(0)
+                line_text = _units_to_text(line_units).rstrip(" \t\u3000")
+                lines.append(line_text)
+                current_units = remainder_units
+                current_visible = _units_visible_length(current_units)
+                last_space_idx = _find_last_visible_space_idx(current_units)
+            else:
+                line_text = _units_to_text(current_units).rstrip(" \t\u3000")
+                lines.append(line_text)
+                current_units = []
+                current_visible = 0
+                last_space_idx = None
+            reprocess = True
+
+    if current_units:
+        lines.append(_units_to_text(current_units).rstrip(" \t\u3000"))
+
+    return lines or [""]
 
 
 def wrap_lines_keep_breaks(lines: list[str], width: int) -> list[str]:
@@ -249,22 +383,6 @@ def collapse_lines_force(lines: list[str], width: int) -> list[str]:
 
 def smart_collapse_lines_space_efficient(lines: list[str], width: int) -> list[str]:
     safe_width = max(1, width)
-    if _wrap_dialogs is not None:
-        fn = getattr(_wrap_dialogs, "wrap_lines", None)
-        if callable(fn):
-            try:
-                wrapped_result = fn(lines, safe_width)
-                if isinstance(wrapped_result, list):
-                    normalized: list[str] = []
-                    for item in wrapped_result:
-                        if isinstance(item, str):
-                            normalized.append(item)
-                        else:
-                            normalized.append(str(item))
-                    if normalized:
-                        return normalized
-            except Exception:
-                pass
     return collapse_lines_force(lines, safe_width)
 
 
