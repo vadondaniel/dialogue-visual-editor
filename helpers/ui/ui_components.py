@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from difflib import SequenceMatcher
+from collections import Counter
 import html
 import re
 from typing import Any, Callable, Literal, Optional, Protocol, cast
@@ -105,32 +105,26 @@ def control_mismatch_token_spans(
 ) -> tuple[list[ControlMismatchSpan], list[ControlMismatchSpan]]:
     source_matches = _extract_control_token_matches(source_text or "")
     translation_matches = _extract_control_token_matches(translation_text or "")
-    source_tokens = [token for token, _start, _end in source_matches]
-    translation_tokens = [
-        token for token, _start, _end in translation_matches]
-    source_statuses: list[ControlMismatchStatus] = [
-        "missing"] * len(source_matches)
-    translation_statuses: list[ControlMismatchStatus] = [
-        "extra"] * len(translation_matches)
-    matcher = SequenceMatcher(
-        a=source_tokens,
-        b=translation_tokens,
-        autojunk=False,
-    )
-    for tag, source_start, source_end, tl_start, tl_end in matcher.get_opcodes():
-        if tag != "equal":
-            continue
-        for source_idx in range(source_start, source_end):
-            source_statuses[source_idx] = "matched"
-        for tl_idx in range(tl_start, tl_end):
-            translation_statuses[tl_idx] = "matched"
-
     source_spans: list[ControlMismatchSpan] = []
-    for idx, (_token, start, end) in enumerate(source_matches):
-        source_spans.append((start, end, source_statuses[idx]))
     translation_spans: list[ControlMismatchSpan] = []
-    for idx, (_token, start, end) in enumerate(translation_matches):
-        translation_spans.append((start, end, translation_statuses[idx]))
+    source_counts = Counter(token for token, _start, _end in source_matches)
+    translation_counts = Counter(
+        token for token, _start, _end in translation_matches)
+    shared_counts = source_counts & translation_counts
+
+    source_seen: Counter[str] = Counter()
+    for token, start, end in source_matches:
+        status: ControlMismatchStatus = (
+            "matched" if source_seen[token] < shared_counts[token] else "missing"
+        )
+        source_seen[token] += 1
+        source_spans.append((start, end, status))
+
+    translation_seen: Counter[str] = Counter()
+    for token, start, end in translation_matches:
+        status = "matched" if translation_seen[token] < shared_counts[token] else "extra"
+        translation_seen[token] += 1
+        translation_spans.append((start, end, status))
 
     return source_spans, translation_spans
 

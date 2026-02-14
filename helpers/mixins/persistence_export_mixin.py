@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import copy
 import html
 import json
@@ -100,7 +101,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         tl_tokens = [
             match.group(0) for match in CONTROL_TOKEN_RE.finditer("\n".join(tl_lines))
         ]
-        return source_tokens != tl_tokens
+        return Counter(source_tokens) != Counter(tl_tokens)
 
     def _segment_has_layout_problem(
         self,
