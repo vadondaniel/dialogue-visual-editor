@@ -129,6 +129,9 @@ class MassTranslateDialog(QDialog):
         options_row.addWidget(self.only_untranslated_check)
         self.scope_combo.currentIndexChanged.connect(
             lambda _idx: self._build_chunks())
+        self.scope_combo.currentIndexChanged.connect(
+            lambda _idx: self._apply_combo_current_text_color(self.scope_combo)
+        )
         self.content_scope_combo.currentIndexChanged.connect(
             lambda _idx: self._on_scope_or_filters_changed())
         self.only_untranslated_check.toggled.connect(
@@ -723,6 +726,7 @@ class MassTranslateDialog(QDialog):
                 break
         self.scope_combo.setCurrentIndex(index_to_select)
         self.scope_combo.blockSignals(False)
+        self._apply_combo_current_text_color(self.scope_combo)
 
     def _scoped_session_items(self) -> list[tuple[Path, FileSession]]:
         scope = str(self.scope_combo.currentData())
@@ -1022,6 +1026,20 @@ class MassTranslateDialog(QDialog):
             return QColor("#b45309")
         return QColor("#b91c1c")
 
+    @staticmethod
+    def _combo_current_color(combo: QComboBox) -> Optional[QColor]:
+        color_data = combo.currentData(Qt.ItemDataRole.ForegroundRole)
+        if isinstance(color_data, QColor) and color_data.isValid():
+            return color_data
+        return None
+
+    def _apply_combo_current_text_color(self, combo: QComboBox) -> None:
+        color = self._combo_current_color(combo)
+        if color is None:
+            combo.setStyleSheet("")
+            return
+        combo.setStyleSheet(f"QComboBox {{ color: {color.name()}; }}")
+
     def _set_paste_text(self, text: str) -> None:
         self._updating_paste_box = True
         self.paste_box.setPlainText(text)
@@ -1047,6 +1065,7 @@ class MassTranslateDialog(QDialog):
                 Qt.ItemDataRole.ForegroundRole,
             )
         self.chunk_combo.blockSignals(False)
+        self._apply_combo_current_text_color(self.chunk_combo)
 
     def _update_chunk_controls(self) -> None:
         idx = self.chunk_combo.currentIndex()
@@ -1069,6 +1088,7 @@ class MassTranslateDialog(QDialog):
                 del self.chunk_drafts[self._active_chunk_index]
 
         self._active_chunk_index = index
+        self._apply_combo_current_text_color(self.chunk_combo)
         if index < 0 or index >= len(self.chunk_payloads):
             self.chunk_preview.setPlainText("")
             self._set_paste_text("")
