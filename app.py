@@ -416,15 +416,6 @@ class DialogueVisualEditor(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         file_header_row.addWidget(self.file_header_label)
 
-        file_header_row.addStretch(1)
-        self.next_problem_btn = QPushButton("Next Problem")
-        self.next_problem_btn.setToolTip(
-            "Jump to the next block that exceeds width or max-lines in the current mode."
-        )
-        self.next_problem_btn.clicked.connect(self._jump_to_next_problem)
-        self.next_problem_btn.setEnabled(False)
-        file_header_row.addWidget(self.next_problem_btn)
-
         self.reset_json_btn = QPushButton("Reset JSON")
         self.reset_json_btn.setToolTip(
             "Discard unsaved edits in this JSON and reload it from saved snapshot data.")
@@ -433,6 +424,15 @@ class DialogueVisualEditor(
         self.reset_json_btn.setVisible(False)
         self.reset_json_btn.setEnabled(False)
         file_header_row.addWidget(self.reset_json_btn)
+
+        file_header_row.addStretch(1)
+        self.next_problem_btn = QPushButton("Next Problem")
+        self.next_problem_btn.setToolTip(
+            "Jump to the next block that exceeds width or max-lines in the current mode."
+        )
+        self.next_problem_btn.clicked.connect(self._jump_to_next_problem)
+        self.next_problem_btn.setEnabled(False)
+        file_header_row.addWidget(self.next_problem_btn)
         header_row_height = max(
             self.file_header_label.sizeHint().height(),
             self.next_problem_btn.sizeHint().height(),

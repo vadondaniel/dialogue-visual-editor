@@ -779,8 +779,14 @@ class ItemNameDescriptionWidget(QFrame):
             f"name: {name_chars} {name_label} | description: {desc_chars} {desc_label}")
         current = self._merge_combined_lines()
         if self.translator_mode:
+            current_tl = current if current else [""]
+            original_tl = (
+                self.segment.original_translation_lines
+                if self.segment.original_translation_lines
+                else [""]
+            )
             self.reset_button.setEnabled(
-                current != self.segment.original_translation_lines)
+                current_tl != original_tl)
         else:
             self.reset_button.setEnabled(
                 current != self.segment.original_lines)
@@ -1215,7 +1221,17 @@ class DialogueBlockWidget(QFrame):
         if self.translator_mode:
             speaker_changed = self.segment.translation_speaker.strip(
             ) != self.segment.original_translation_speaker.strip()
-            return self.segment.translation_lines != self.segment.original_translation_lines or speaker_changed
+            current_tl = (
+                self.segment.translation_lines
+                if self.segment.translation_lines
+                else [""]
+            )
+            original_tl = (
+                self.segment.original_translation_lines
+                if self.segment.original_translation_lines
+                else [""]
+            )
+            return current_tl != original_tl or speaker_changed
         return self.segment.inserted or self.segment.lines != self.segment.original_lines
 
     def _apply_editor_width(self) -> None:
@@ -1615,8 +1631,14 @@ class DialogueBlockWidget(QFrame):
             if self.translator_mode:
                 speaker_changed = self.segment.translation_speaker.strip(
                 ) != self.segment.original_translation_speaker.strip()
+                original_tl = (
+                    self.segment.original_translation_lines
+                    if self.segment.original_translation_lines
+                    else [""]
+                )
+                current_tl = lines if lines else [""]
                 self.reset_button.setEnabled(
-                    lines != self.segment.original_translation_lines or speaker_changed)
+                    current_tl != original_tl or speaker_changed)
             else:
                 self.reset_button.setEnabled(
                     lines != self.segment.original_lines or bool(self.segment.merged_segments))
@@ -1667,8 +1689,14 @@ class DialogueBlockWidget(QFrame):
         if self.translator_mode:
             speaker_changed = self.segment.translation_speaker.strip(
             ) != self.segment.original_translation_speaker.strip()
+            original_tl = (
+                self.segment.original_translation_lines
+                if self.segment.original_translation_lines
+                else [""]
+            )
+            current_tl = lines if lines else [""]
             self.reset_button.setEnabled(
-                lines != self.segment.original_translation_lines or speaker_changed)
+                current_tl != original_tl or speaker_changed)
         else:
             self.reset_button.setEnabled(
                 lines != self.segment.original_lines or bool(self.segment.merged_segments))

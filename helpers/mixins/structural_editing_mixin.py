@@ -638,10 +638,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         left_translation_before = self._normalize_translation_lines(
             left_segment.translation_lines)
         left_speaker_translation_before = left_segment.translation_speaker
-        merged_lines = smart_collapse_lines(
-            list(left_segment.lines) + list(right_segment.lines),
-            self._segment_line_width(left_segment),
-            infer_name_from_first_line=self.infer_speaker_check.isChecked(),
+        source_affected = not translator_mode
+        merged_lines = (
+            smart_collapse_lines(
+                list(left_segment.lines) + list(right_segment.lines),
+                self._segment_line_width(left_segment),
+                infer_name_from_first_line=self.infer_speaker_check.isChecked(),
+            )
+            if source_affected
+            else list(left_segment.lines)
         )
         merged_tl_lines = smart_collapse_lines(
             self._normalize_translation_lines(left_segment.translation_lines)
@@ -652,13 +657,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         merged_speaker_translation = (
             left_segment.translation_speaker.strip() or right_segment.translation_speaker.strip()
         )
-        left_segment.lines = merged_lines
-        left_segment.source_lines = list(left_segment.lines)
+        if source_affected:
+            left_segment.lines = merged_lines
+            left_segment.source_lines = list(left_segment.lines)
         left_segment.translation_lines = list(merged_tl_lines)
         left_segment.translation_speaker = merged_speaker_translation
         if merged_speaker_translation:
             self.speaker_translation_map[left_segment.speaker_name] = merged_speaker_translation
-        left_segment.merged_segments.append(right_segment)
+        if source_affected:
+            left_segment.merged_segments.append(right_segment)
         del left_bundle.tokens[right_token_index]
         del session.segments[right_index]
 
@@ -674,6 +681,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             left_translation_after=list(merged_tl_lines),
             left_speaker_translation_before=left_speaker_translation_before,
             left_speaker_translation_after=merged_speaker_translation,
+            source_affected=source_affected,
         )
         self.structural_undo_stack.append(
             StructuralAction(kind="merge", path=session.path,
@@ -1120,8 +1128,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             session, action.left_uid, [action.right_segment])
         if restored <= 0:
             return False
-        left_segment.lines = list(action.left_lines_before)
-        left_segment.source_lines = list(left_segment.lines)
+        if action.source_affected:
+            left_segment.lines = list(action.left_lines_before)
+            left_segment.source_lines = list(left_segment.lines)
         if action.left_translation_before:
             left_segment.translation_lines = self._normalize_translation_lines(
                 action.left_translation_before)
@@ -1170,16 +1179,20 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if right_token_index != left_token_index + 1:
             return False
 
-        left_segment.lines = list(action.left_lines_after)
-        left_segment.source_lines = list(left_segment.lines)
+        if action.source_affected:
+            left_segment.lines = list(action.left_lines_after)
+            left_segment.source_lines = list(left_segment.lines)
         if action.left_translation_after:
             left_segment.translation_lines = self._normalize_translation_lines(
                 action.left_translation_after)
         left_segment.translation_speaker = action.left_speaker_translation_after
         if left_segment.translation_speaker:
             self.speaker_translation_map[left_segment.speaker_name] = left_segment.translation_speaker
-        left_segment.merged_segments = list(
-            action.left_merged_before) + [right_segment]
+        if action.source_affected:
+            left_segment.merged_segments = list(
+                action.left_merged_before) + [right_segment]
+        else:
+            left_segment.merged_segments = list(action.left_merged_before)
         del left_bundle.tokens[right_token_index]
         del session.segments[right_index]
 

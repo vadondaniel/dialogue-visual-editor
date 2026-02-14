@@ -130,6 +130,7 @@ class MergeBlocksAction:
     left_translation_after: list[str] = field(default_factory=list)
     left_speaker_translation_before: str = ""
     left_speaker_translation_after: str = ""
+    source_affected: bool = True
 
 
 @dataclass
