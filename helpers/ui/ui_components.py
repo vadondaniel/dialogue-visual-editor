@@ -77,6 +77,25 @@ def _extract_control_token_matches(text: str) -> list[tuple[str, int, int]]:
     ]
 
 
+def _html_escape_line_preserve_indent(line: str) -> str:
+    if not line:
+        return "&nbsp;"
+    idx = 0
+    indent_parts: list[str] = []
+    while idx < len(line):
+        ch = line[idx]
+        if ch == " ":
+            indent_parts.append("&nbsp;")
+            idx += 1
+            continue
+        if ch == "\t":
+            indent_parts.append("&nbsp;&nbsp;&nbsp;&nbsp;")
+            idx += 1
+            continue
+        break
+    return "".join(indent_parts) + html.escape(line[idx:])
+
+
 def control_mismatch_token_spans(
     source_text: str,
     translation_text: str,
@@ -1822,7 +1841,7 @@ class DialogueBlockWidget(QFrame):
 
         rows: list[str] = []
         for line in self._source_hint_lines:
-            rows.append(html.escape(line) if line else "&nbsp;")
+            rows.append(_html_escape_line_preserve_indent(line))
         return "<br/>".join(rows)
 
     def _should_show_masked_preview_overlay(self) -> bool:
@@ -1840,7 +1859,7 @@ class DialogueBlockWidget(QFrame):
                 return rendered
         rows: list[str] = []
         for line in lines:
-            rows.append(html.escape(line) if line else "&nbsp;")
+            rows.append(_html_escape_line_preserve_indent(line))
         return "<br/>".join(rows)
 
     def _refresh_source_hint_overlay(self) -> None:

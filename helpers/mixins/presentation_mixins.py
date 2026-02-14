@@ -510,11 +510,46 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
         active_color = ""
         active_font_size = message_default_font_size()
         default_color = self._muted_base_text_color() if muted else ""
+        at_line_start = True
+
+        def escape_with_preserved_indent(chunk: str) -> tuple[str, bool]:
+            if not chunk:
+                return "", at_line_start
+            local_line_start = at_line_start
+            html_parts: list[str] = []
+            line_parts = chunk.split("\n")
+            for idx, line in enumerate(line_parts):
+                if idx > 0:
+                    html_parts.append("<br/>")
+                    local_line_start = True
+                if not line:
+                    continue
+                if local_line_start:
+                    lead_idx = 0
+                    indent_parts: list[str] = []
+                    while lead_idx < len(line):
+                        ch = line[lead_idx]
+                        if ch == " ":
+                            indent_parts.append("&nbsp;")
+                            lead_idx += 1
+                            continue
+                        if ch == "\t":
+                            indent_parts.append("&nbsp;&nbsp;&nbsp;&nbsp;")
+                            lead_idx += 1
+                            continue
+                        break
+                    escaped = "".join(indent_parts) + html.escape(line[lead_idx:])
+                else:
+                    escaped = html.escape(line)
+                html_parts.append(escaped)
+                local_line_start = False
+            return "".join(html_parts), local_line_start
 
         def append_chunk(chunk: str, color_hex: str, font_scale: float) -> None:
+            nonlocal at_line_start
             if not chunk:
                 return
-            escaped = html.escape(chunk).replace("\n", "<br/>")
+            escaped, at_line_start = escape_with_preserved_indent(chunk)
             effective_color = color_hex or default_color
             style_parts: list[str] = []
             if effective_color:
