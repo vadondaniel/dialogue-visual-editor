@@ -53,6 +53,7 @@ try:
         StructuralAction,
         looks_like_name_line,
         natural_sort_key,
+        normalize_control_code_word_case,
         parse_dialogue_data,
         parse_dialogue_file,
     )
@@ -82,6 +83,7 @@ except ImportError:
         StructuralAction,
         looks_like_name_line,
         natural_sort_key,
+        normalize_control_code_word_case,
         parse_dialogue_data,
         parse_dialogue_file,
     )
@@ -691,6 +693,10 @@ class DialogueVisualEditor(
         mass_translate_action.triggered.connect(self._open_mass_translate_dialog)
         tools_menu.addAction(mass_translate_action)
 
+        normalize_codes_action = QAction("Normalize Codes...", self)
+        normalize_codes_action.triggered.connect(self._open_normalize_codes_dialog)
+        tools_menu.addAction(normalize_codes_action)
+
         audit_action = QAction("Audit...", self)
         audit_action.triggered.connect(self._open_audit_window)
         tools_menu.addAction(audit_action)
@@ -882,6 +888,158 @@ class DialogueVisualEditor(
             self.max_lines_spin,
             "Max Lines",
             "Maximum dialogue lines per block:",
+        )
+
+    def _normalize_control_codes_in_lines(self, lines: list[str]) -> tuple[list[str], int]:
+        if not lines:
+            return [], 0
+        normalized_lines: list[str] = []
+        replacements = 0
+        for line in lines:
+            normalized_line, count = normalize_control_code_word_case(line)
+            normalized_lines.append(normalized_line)
+            replacements += count
+        return normalized_lines, replacements
+
+    def _count_possible_control_code_normalizations(self) -> tuple[int, int, int]:
+        source_text = 0
+        translation_text = 0
+        translation_speaker = 0
+        for session in self.sessions.values():
+            for segment in session.segments:
+                _, source_count = self._normalize_control_codes_in_lines(segment.lines)
+                source_text += source_count
+                _, tl_count = self._normalize_control_codes_in_lines(
+                    segment.translation_lines
+                )
+                translation_text += tl_count
+                _, speaker_count = normalize_control_code_word_case(
+                    segment.translation_speaker
+                )
+                translation_speaker += speaker_count
+        return source_text, translation_text, translation_speaker
+
+    def _apply_control_code_normalization(self) -> tuple[int, int, int, int, int]:
+        source_text = 0
+        translation_text = 0
+        translation_speaker = 0
+        changed_paths: set[Path] = set()
+        changed_blocks = 0
+
+        for path, session in self.sessions.items():
+            session_changed = False
+            for segment in session.segments:
+                segment_changed = False
+
+                normalized_source_lines, source_count = self._normalize_control_codes_in_lines(
+                    segment.lines
+                )
+                if source_count > 0 and normalized_source_lines != segment.lines:
+                    segment.lines = list(normalized_source_lines)
+                    segment.source_lines = list(normalized_source_lines)
+                    source_text += source_count
+                    segment_changed = True
+
+                normalized_tl_lines, tl_count = self._normalize_control_codes_in_lines(
+                    segment.translation_lines
+                )
+                if tl_count > 0 and normalized_tl_lines != segment.translation_lines:
+                    segment.translation_lines = list(normalized_tl_lines)
+                    translation_text += tl_count
+                    segment_changed = True
+
+                normalized_tl_speaker, speaker_count = normalize_control_code_word_case(
+                    segment.translation_speaker
+                )
+                if (
+                    speaker_count > 0
+                    and normalized_tl_speaker != segment.translation_speaker
+                ):
+                    segment.translation_speaker = normalized_tl_speaker
+                    cleaned_speaker = normalized_tl_speaker.strip()
+                    if cleaned_speaker:
+                        speaker_key = self._speaker_key_for_segment(segment)
+                        self.speaker_translation_map[speaker_key] = cleaned_speaker
+                    translation_speaker += speaker_count
+                    segment_changed = True
+
+                if segment_changed:
+                    changed_blocks += 1
+                    session_changed = True
+
+            if session_changed:
+                changed_paths.add(path)
+                self._refresh_dirty_state(session)
+
+        if self.current_path is not None and self.current_path in changed_paths:
+            current_session = self.sessions.get(self.current_path)
+            if current_session is not None:
+                self._render_session(current_session, preserve_scroll=True)
+
+        total = source_text + translation_text + translation_speaker
+        return total, source_text, translation_text, translation_speaker, changed_blocks
+
+    def _open_normalize_codes_dialog(self) -> None:
+        if not self.sessions:
+            QMessageBox.information(
+                self,
+                "Normalize Codes",
+                "Load files first.",
+            )
+            return
+
+        source_count, tl_count, speaker_count = (
+            self._count_possible_control_code_normalizations()
+        )
+        total_count = source_count + tl_count + speaker_count
+        if total_count <= 0:
+            QMessageBox.information(
+                self,
+                "Normalize Codes",
+                (
+                    "No control-code casing normalizations found.\n\n"
+                    "Example normalization: \\c[0] -> \\C[0]"
+                ),
+            )
+            return
+
+        response = QMessageBox.question(
+            self,
+            "Normalize Codes",
+            (
+                "Normalize control-code casing across loaded files?\n\n"
+                "This makes control-code words uppercase for consistency.\n"
+                "Example: \\c[0] -> \\C[0]\n\n"
+                f"Possible normalizations: {total_count}\n"
+                f"Source text: {source_count}\n"
+                f"Translation text: {tl_count}\n"
+                f"Translation speaker: {speaker_count}\n\n"
+                "This updates editor state only. Save to persist."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+
+        (
+            applied_total,
+            applied_source,
+            applied_tl,
+            applied_speaker,
+            changed_blocks,
+        ) = self._apply_control_code_normalization()
+        if applied_total <= 0:
+            self.statusBar().showMessage("Normalize Codes: no changes applied.")
+            return
+
+        block_label = "block" if changed_blocks == 1 else "blocks"
+        self.statusBar().showMessage(
+            (
+                f"Normalized {applied_total} control-code occurrences "
+                f"(source {applied_source}, TL {applied_tl}, speaker {applied_speaker}) "
+                f"across {changed_blocks} {block_label}."
+            )
         )
 
     def _focused_text_editor(self) -> Optional[QPlainTextEdit]:

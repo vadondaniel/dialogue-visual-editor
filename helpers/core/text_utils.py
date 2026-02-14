@@ -14,6 +14,7 @@ CONTROL_TOKEN_RE = re.compile(
     """,
     re.VERBOSE,
 )
+CONTROL_CODE_WORD_CASE_RE = re.compile(r"\\([A-Za-z]+)(?=[\[<])")
 SIMILARITY_PUNCT_RE = re.compile(
     r"[\s\.,!?\"'`~:;()\[\]{}<>\/\\\-_|\+\*&\^%$#@=。、，．？！：；「」『』（）［］｛｝【】〈〉《》…・～〜]+"
 )
@@ -179,6 +180,25 @@ def strip_control_tokens(text: str) -> str:
     if not text:
         return ""
     return CONTROL_TOKEN_RE.sub("", text)
+
+
+def normalize_control_code_word_case(text: str) -> tuple[str, int]:
+    if not text:
+        return "", 0
+
+    replacements = 0
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal replacements
+        word = match.group(1)
+        upper_word = word.upper()
+        if word == upper_word:
+            return match.group(0)
+        replacements += 1
+        return f"\\{upper_word}"
+
+    normalized = CONTROL_CODE_WORD_CASE_RE.sub(_replace, text)
+    return normalized, replacements
 
 
 def similarity_signature(text: str) -> str:
