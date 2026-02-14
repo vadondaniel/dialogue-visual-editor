@@ -77,13 +77,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             return False
         if self.rendered_blocks_path != session.path:
             return False
-        if self._is_translator_mode():
-            return False
         actor_mode = self._is_name_index_session(session)
         if actor_mode:
             return False
 
-        translator_mode = False
+        translator_mode = self._is_translator_mode()
         name_index_kind = ""
         name_index_label = self._name_index_label(session)
         target_view_meta = self._block_view_meta(
@@ -94,6 +92,19 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         )
         if self.rendered_block_view_meta != target_view_meta:
             return False
+
+        if translator_mode:
+            cached_reference_map = self.reference_summary_cache_by_path.get(
+                session.path
+            )
+            if cached_reference_map is None:
+                cached_reference_map = self._build_reference_summary_for_session(
+                    session
+                )
+                self.reference_summary_cache_by_path[session.path] = cached_reference_map
+            self.current_reference_map = cached_reference_map
+        else:
+            self.current_reference_map = {}
 
         previous_scroll_value = (
             self.scroll_area.verticalScrollBar().value() if preserve_scroll else None
@@ -127,7 +138,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         merge_pairs = self._precompute_merge_pairs(
             session,
-            translator_mode=False,
+            translator_mode=translator_mode,
         )
         segment_count = len(session.segments)
         for idx, segment in enumerate(session.segments):
@@ -566,8 +577,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
-        self._render_session(
-            session, focus_uid=new_segment.uid, preserve_scroll=True)
+        if not self._refresh_after_structure_change_without_full_rerender(
+            session,
+            focus_uid=new_segment.uid,
+            preserve_scroll=True,
+        ):
+            self._render_session(
+                session, focus_uid=new_segment.uid, preserve_scroll=True)
         line_label = "line" if len(moved_active_lines) == 1 else "lines"
         self.statusBar().showMessage(
             f"Moved {len(moved_active_lines)} overflow {line_label} to a new block below."
@@ -1028,8 +1044,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(
-                session, focus_uid=action.source_uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=action.source_uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(
+                    session, focus_uid=action.source_uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
@@ -1064,8 +1085,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         self._refresh_dirty_state(session)
         if self.current_path == action.path:
-            self._render_session(
-                session, focus_uid=action.moved_uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=action.moved_uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(
+                    session, focus_uid=action.moved_uid, preserve_scroll=True)
         else:
             self._update_file_item_text(action.path)
         self.statusBar().showMessage(
