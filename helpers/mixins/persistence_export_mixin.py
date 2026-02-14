@@ -13,7 +13,11 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 from ..core.models import NO_SPEAKER_KEY, CommandToken, DialogueSegment, FileSession
 from ..core.parser import is_plugins_js_path, plugins_js_source_from_data
 from ..core.script_message_utils import build_game_message_call
-from ..core.text_utils import chunk_lines, visible_length
+from ..core.text_utils import (
+    chunk_lines_by_row_budget,
+    total_display_rows,
+    visible_length,
+)
 
 ApplyVersionKind = Literal["original", "working", "translated"]
 _HTML_TITLE_TAG_RE = re.compile(
@@ -54,7 +58,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         )
         if any(visible_length(line) > width_chars for line in lines):
             return True
-        return len(lines) > self.max_lines_spin.value()
+        max_rows = float(max(1, self.max_lines_spin.value()))
+        return total_display_rows(lines) > max_rows
 
     def _problem_count_for_session(self, session: FileSession) -> int:
         translator_mode = self._is_translator_mode()
@@ -300,7 +305,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
     ) -> list[dict[str, Any]]:
         lines = list(lines_source) if lines_source else [""]
         if self.auto_split_check.isChecked():
-            chunks = chunk_lines(lines, self.max_lines_spin.value())
+            chunks = chunk_lines_by_row_budget(
+                lines,
+                float(max(1, self.max_lines_spin.value())),
+            )
         else:
             chunks = [lines]
 

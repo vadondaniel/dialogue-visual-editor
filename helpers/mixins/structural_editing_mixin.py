@@ -21,7 +21,11 @@ from ..core.models import (
     SplitOverflowAction,
     StructuralAction,
 )
-from ..core.text_utils import smart_collapse_lines
+from ..core.text_utils import (
+    smart_collapse_lines,
+    split_lines_by_row_budget,
+    total_display_rows,
+)
 
 class _EditorHostTypingFallback:
     # DialogueVisualEditor provides many attributes/methods consumed by mixins.
@@ -747,7 +751,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 "Overflow split is only available for standard dialogue blocks.")
             return
 
-        max_lines = self.max_lines_spin.value()
+        max_rows_budget = float(max(1, self.max_lines_spin.value()))
         source_lines_before = list(source_segment.lines)
         source_tl_before = self._normalize_translation_lines(
             source_segment.translation_lines
@@ -755,7 +759,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         active_lines_before = (
             source_tl_before if translator_mode else source_lines_before
         )
-        if len(active_lines_before) <= max_lines:
+        if total_display_rows(active_lines_before) <= max_rows_budget:
             self.statusBar().showMessage("No overflow lines to move.")
             return
 
@@ -769,8 +773,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if source_index < 0:
             return
 
-        kept_active_lines = active_lines_before[:max_lines]
-        moved_active_lines = active_lines_before[max_lines:]
+        kept_active_lines, moved_active_lines = split_lines_by_row_budget(
+            active_lines_before,
+            max_rows_budget,
+        )
+        if not moved_active_lines:
+            self.statusBar().showMessage("No overflow lines to move.")
+            return
         kept_active_lines, moved_active_lines = self._apply_split_overflow_color_continuity(
             list(kept_active_lines),
             list(moved_active_lines),
@@ -784,11 +793,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         else:
             kept_source_lines = list(kept_active_lines)
             moved_source_lines = list(moved_active_lines)
+            split_index = len(kept_source_lines)
             kept_tl_lines = self._normalize_translation_lines(
-                source_segment.translation_lines[:max_lines]
+                source_segment.translation_lines[:split_index]
             )
             moved_tl_lines = self._normalize_translation_lines(
-                source_segment.translation_lines[max_lines:]
+                source_segment.translation_lines[split_index:]
             )
 
         inferred_marker = self._inferred_line1_speaker_marker(source_segment)

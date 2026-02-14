@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -47,17 +48,53 @@ NAME_CONNECTOR_WORDS = {
     "von",
     "der",
 }
+_FONT_SIZE_SET_TOKEN_RE = re.compile(r"^\\[Ff][Ss]\[(\d+)\]$")
+_DEFAULT_FONT_SIZE = 28
+_MIN_FONT_SIZE = 24
+_MAX_FONT_SIZE = 96
+_FONT_SIZE_STEP = 12
+_BASE_LINE_HEIGHT = 36.0
+_LINE_HEIGHT_PADDING = 8.0
+_FLOAT_EPSILON = 1e-6
+
+
+def _clamp_font_size(value: int) -> int:
+    return max(_MIN_FONT_SIZE, min(_MAX_FONT_SIZE, value))
+
+
+def _next_font_size_for_token(token: str, current_font_size: int) -> int:
+    if token == r"\{":
+        return _clamp_font_size(current_font_size + _FONT_SIZE_STEP)
+    if token == r"\}":
+        return _clamp_font_size(current_font_size - _FONT_SIZE_STEP)
+    fs_match = _FONT_SIZE_SET_TOKEN_RE.match(token)
+    if fs_match is not None:
+        try:
+            parsed = int(fs_match.group(1))
+        except Exception:
+            return current_font_size
+        return _clamp_font_size(parsed)
+    return current_font_size
+
+
+def _font_scale_for_size(font_size: int) -> float:
+    if _DEFAULT_FONT_SIZE <= 0:
+        return 1.0
+    scale = float(font_size) / float(_DEFAULT_FONT_SIZE)
+    return max(0.5, scale)
 
 
 def visible_length(text: str) -> int:
-    visible = 0
+    visible = 0.0
     for unit in parse_units_for_measure(text):
         if unit.get("is_newline"):
             continue
-        raw_visible = unit.get("visible", 0)
-        if isinstance(raw_visible, int) and raw_visible > 0:
-            visible += raw_visible
-    return visible
+        raw_visible = unit.get("visible", 0.0)
+        if isinstance(raw_visible, (int, float)) and raw_visible > 0:
+            visible += float(raw_visible)
+    if visible <= _FLOAT_EPSILON:
+        return 0
+    return int(math.ceil(visible - _FLOAT_EPSILON))
 
 
 def looks_like_name_line(line: str) -> bool:
@@ -104,27 +141,33 @@ def looks_like_name_line(line: str) -> bool:
 
 def parse_units_for_measure(text: str) -> list[dict[str, Any]]:
     units: list[dict[str, Any]] = []
+    current_font_size = _DEFAULT_FONT_SIZE
     cursor = 0
     for match in CONTROL_TOKEN_RE.finditer(text):
         if match.start() > cursor:
             for ch in text[cursor:match.start()]:
+                is_newline = ch == "\n"
+                visible = 0.0 if is_newline else _font_scale_for_size(current_font_size)
                 units.append(
                     {
                         "text": ch,
-                        "visible": 0 if ch == "\n" else 1,
-                        "is_newline": ch == "\n",
+                        "visible": visible,
+                        "is_newline": is_newline,
                     }
                 )
         token = match.group(0)
-        units.append({"text": token, "visible": 0, "is_newline": False})
+        units.append({"text": token, "visible": 0.0, "is_newline": False})
+        current_font_size = _next_font_size_for_token(token, current_font_size)
         cursor = match.end()
     if cursor < len(text):
         for ch in text[cursor:]:
+            is_newline = ch == "\n"
+            visible = 0.0 if is_newline else _font_scale_for_size(current_font_size)
             units.append(
                 {
                     "text": ch,
-                    "visible": 0 if ch == "\n" else 1,
-                    "is_newline": ch == "\n",
+                    "visible": visible,
+                    "is_newline": is_newline,
                 }
             )
     return units
@@ -134,7 +177,8 @@ def first_overflow_char_index(text: str, width: int) -> Optional[int]:
     if width <= 0:
         return 0 if text else None
 
-    visible = 0
+    visible = 0.0
+    safe_width = float(width)
     char_index = 0
     for unit in parse_units_for_measure(text):
         token_text = unit.get("text")
@@ -144,19 +188,19 @@ def first_overflow_char_index(text: str, width: int) -> Optional[int]:
         if unit.get("is_newline"):
             continue
 
-        raw_visible = unit.get("visible", 0)
-        if not isinstance(raw_visible, int):
+        raw_visible = unit.get("visible", 0.0)
+        if not isinstance(raw_visible, (int, float)):
             try:
-                raw_visible = int(raw_visible)
+                raw_visible = float(raw_visible)
             except Exception:
-                raw_visible = 0
-        unit_visible = max(0, raw_visible)
+                raw_visible = 0.0
+        unit_visible = max(0.0, float(raw_visible))
 
-        if unit_visible == 0:
+        if unit_visible <= _FLOAT_EPSILON:
             char_index += token_len
             continue
 
-        if visible + unit_visible > width:
+        if visible + unit_visible > (safe_width + _FLOAT_EPSILON):
             return char_index
 
         visible += unit_visible
@@ -261,19 +305,84 @@ def chunk_lines(lines: list[str], size: int) -> list[list[str]]:
     return chunks or [[""]]
 
 
+def line_display_row_costs(lines: list[str]) -> list[float]:
+    normalized = list(lines) if lines else [""]
+    costs: list[float] = []
+    current_font_size = _DEFAULT_FONT_SIZE
+    for line in normalized:
+        max_font_size = current_font_size
+        for match in CONTROL_TOKEN_RE.finditer(line):
+            token = match.group(0)
+            current_font_size = _next_font_size_for_token(token, current_font_size)
+            if current_font_size > max_font_size:
+                max_font_size = current_font_size
+        row_cost = (float(max_font_size) + _LINE_HEIGHT_PADDING) / _BASE_LINE_HEIGHT
+        costs.append(max(1.0, row_cost))
+    return costs
+
+
+def total_display_rows(lines: list[str]) -> float:
+    return sum(line_display_row_costs(lines))
+
+
+def split_lines_by_row_budget(lines: list[str], max_rows: float) -> tuple[list[str], list[str]]:
+    normalized = list(lines) if lines else [""]
+    if not normalized:
+        return [""], []
+
+    if max_rows <= _FLOAT_EPSILON:
+        return [normalized[0]], normalized[1:]
+
+    costs = line_display_row_costs(normalized)
+    used_rows = 0.0
+    keep_count = 0
+    for idx, row_cost in enumerate(costs):
+        next_rows = used_rows + row_cost
+        if idx == 0:
+            keep_count = 1
+            used_rows = next_rows
+            if next_rows > (max_rows + _FLOAT_EPSILON):
+                break
+            continue
+        if next_rows <= (max_rows + _FLOAT_EPSILON):
+            keep_count = idx + 1
+            used_rows = next_rows
+            continue
+        break
+
+    if keep_count <= 0:
+        keep_count = 1
+    if keep_count >= len(normalized):
+        return normalized, []
+    return normalized[:keep_count], normalized[keep_count:]
+
+
+def chunk_lines_by_row_budget(lines: list[str], max_rows: float) -> list[list[str]]:
+    normalized = list(lines) if lines else [""]
+    chunks: list[list[str]] = []
+    remaining = list(normalized)
+    while remaining:
+        kept, moved = split_lines_by_row_budget(remaining, max_rows)
+        chunks.append(kept if kept else [""])
+        if not moved:
+            break
+        remaining = moved
+    return chunks or [[""]]
+
+
 def wrap_text_word_aware(text: str, width: int) -> list[str]:
     safe_width = max(1, width)
     return _wrap_text_word_aware_fallback(text, safe_width)
 
 
-def _unit_visible_value(unit: dict[str, Any]) -> int:
-    raw_visible = unit.get("visible", 0)
-    if isinstance(raw_visible, int):
-        return max(0, raw_visible)
+def _unit_visible_value(unit: dict[str, Any]) -> float:
+    raw_visible = unit.get("visible", 0.0)
+    if isinstance(raw_visible, (int, float)):
+        return max(0.0, float(raw_visible))
     try:
-        return max(0, int(raw_visible))
+        return max(0.0, float(raw_visible))
     except Exception:
-        return 0
+        return 0.0
 
 
 def _unit_is_space(unit: dict[str, Any]) -> bool:
@@ -284,7 +393,7 @@ def _unit_is_space(unit: dict[str, Any]) -> bool:
     return token in (" ", "\t", "\u3000")
 
 
-def _units_visible_length(units: list[dict[str, Any]]) -> int:
+def _units_visible_length(units: list[dict[str, Any]]) -> float:
     return sum(_unit_visible_value(unit) for unit in units)
 
 
@@ -387,7 +496,8 @@ def _wrap_text_word_aware_fallback(text: str, width: int) -> list[str]:
 
     lines: list[str] = []
     current_units: list[dict[str, Any]] = []
-    current_visible = 0
+    current_visible = 0.0
+    safe_width = float(max(1, width))
     last_space_idx: Optional[int] = None
 
     def flush_current() -> None:
@@ -395,7 +505,7 @@ def _wrap_text_word_aware_fallback(text: str, width: int) -> list[str]:
         line_text = _units_to_text(current_units).rstrip(" \t\u3000")
         lines.append(line_text)
         current_units = []
-        current_visible = 0
+        current_visible = 0.0
         last_space_idx = None
 
     for unit in units:
@@ -408,11 +518,11 @@ def _wrap_text_word_aware_fallback(text: str, width: int) -> list[str]:
         reprocess = True
         while reprocess:
             reprocess = False
-            if unit_visible == 0:
+            if unit_visible <= _FLOAT_EPSILON:
                 current_units.append(unit)
                 continue
 
-            if current_visible + unit_visible <= width:
+            if current_visible + unit_visible <= (safe_width + _FLOAT_EPSILON):
                 current_units.append(unit)
                 current_visible += unit_visible
                 if unit_is_space:
@@ -440,7 +550,7 @@ def _wrap_text_word_aware_fallback(text: str, width: int) -> list[str]:
                 line_text = _units_to_text(current_units).rstrip(" \t\u3000")
                 lines.append(line_text)
                 current_units = []
-                current_visible = 0
+                current_visible = 0.0
                 last_space_idx = None
             reprocess = True
 
@@ -462,19 +572,20 @@ def wrap_lines_hard_break(lines: list[str], width: int) -> list[str]:
 
 def _wrap_text_hard_break(text: str, width: int) -> list[str]:
     safe_width = max(1, width)
+    safe_width_float = float(safe_width)
     units = parse_units_for_measure(text)
     if not units:
         return [""]
 
     lines: list[str] = []
     current_units: list[dict[str, Any]] = []
-    current_visible = 0
+    current_visible = 0.0
 
     def flush_current() -> None:
         nonlocal current_units, current_visible
         lines.append(_units_to_text(current_units).rstrip(" \t\u3000"))
         current_units = []
-        current_visible = 0
+        current_visible = 0.0
 
     for unit in units:
         if unit.get("is_newline"):
@@ -482,17 +593,17 @@ def _wrap_text_hard_break(text: str, width: int) -> list[str]:
             continue
 
         unit_visible = _unit_visible_value(unit)
-        if unit_visible == 0:
+        if unit_visible <= _FLOAT_EPSILON:
             current_units.append(unit)
             continue
 
         if _unit_is_space(unit):
-            if current_visible == 0:
+            if current_visible <= _FLOAT_EPSILON:
                 continue
-            if current_visible + unit_visible >= safe_width:
+            if current_visible + unit_visible >= (safe_width_float - _FLOAT_EPSILON):
                 continue
 
-        if current_visible + unit_visible > safe_width and current_units:
+        if current_visible + unit_visible > (safe_width_float + _FLOAT_EPSILON) and current_units:
             flush_current()
             if _unit_is_space(unit):
                 continue

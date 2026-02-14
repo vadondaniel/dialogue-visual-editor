@@ -40,9 +40,11 @@ from ..core.text_utils import (
     collapse_lines_join_paragraphs,
     first_overflow_char_index,
     looks_like_name_line,
+    split_lines_by_row_budget,
     smart_collapse_lines,
     split_lines_preserve_empty,
     strip_control_tokens,
+    total_display_rows,
     visible_length,
     wrap_lines_hard_break,
 )
@@ -1818,10 +1820,7 @@ class DialogueBlockWidget(QFrame):
     def _refresh_status(self) -> None:
         lines = self._current_lines()
         storage_lines = self._storage_lines_from_editor_lines(lines)
-        effective_max_lines = max(
-            1,
-            self.max_lines - 1 if self._line1_inference_active() else self.max_lines,
-        )
+        max_rows_budget = float(max(1, self.max_lines))
         line1_override_changed = (
             bool(self.segment.disable_line1_speaker_inference)
             != bool(self.segment.original_disable_line1_speaker_inference)
@@ -1923,12 +1922,21 @@ class DialogueBlockWidget(QFrame):
             text += f", over width on {over_width_label}: {', '.join(str(i) for i in over_width[:6])}"
             if len(over_width) > 6:
                 text += "..."
-        overflow_count = max(0, len(lines) - effective_max_lines)
+        kept_storage_lines, moved_storage_lines = split_lines_by_row_budget(
+            storage_lines,
+            max_rows_budget,
+        )
+        if self._line1_inference_active():
+            kept_visible_count = max(0, len(kept_storage_lines) - 1)
+        else:
+            kept_visible_count = len(kept_storage_lines)
+        overflow_count = max(0, len(lines) - kept_visible_count)
         max_lines_over = overflow_count > 0
         if max_lines_over:
-            text += f", exceeds max lines ({effective_max_lines})"
-            if self._line1_inference_active() and self.max_lines > effective_max_lines:
-                text += " incl. inferred speaker line"
+            used_rows = total_display_rows(storage_lines)
+            text += f", exceeds max lines ({int(max_rows_budget)}, row-aware {used_rows:.2f} rows)"
+            if self._line1_inference_active() and moved_storage_lines:
+                text += " incl. inferred speaker line budget"
             if self.allow_structural_actions:
                 overflow_line_label = "line" if overflow_count == 1 else "lines"
                 text += f" -> move {overflow_count} {overflow_line_label} below"
