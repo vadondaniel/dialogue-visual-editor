@@ -1304,17 +1304,12 @@ class DialogueBlockWidget(QFrame):
         )
 
     def _line1_inference_override_available(self) -> bool:
-        base_available = (
+        return (
             (not self.actor_mode)
             and self._is_standard_dialogue_block()
             and self.infer_name_from_first_line
             and self.segment.speaker_name == NO_SPEAKER_KEY
         )
-        if not base_available:
-            return False
-        if self._line1_inference_is_disabled():
-            return len(self._segment_storage_lines()) > 1
-        return self._line1_inference_active()
 
     def _refresh_line1_inference_override_button(self) -> None:
         available = self._line1_inference_override_available()
