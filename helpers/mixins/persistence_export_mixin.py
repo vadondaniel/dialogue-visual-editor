@@ -816,14 +816,42 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             source_segment = source_lookup.get(export_segment.uid)
             if source_segment is None:
                 continue
-            tl_lines = self._normalize_translation_lines(
+            visible_tl_lines = self._normalize_translation_lines(
                 source_segment.translation_lines)
-            has_tl = any(line.strip() for line in tl_lines)
-            export_segment.lines = tl_lines if has_tl else list(
-                source_segment.lines or [""])
+            visible_lines_resolver = getattr(
+                self, "_segment_translation_lines_for_translation", None
+            )
+            if callable(visible_lines_resolver):
+                try:
+                    resolved_lines = visible_lines_resolver(source_segment)
+                    if isinstance(resolved_lines, list):
+                        visible_tl_lines = self._normalize_translation_lines(
+                            resolved_lines
+                        )
+                except Exception:
+                    pass
+            has_tl = any(line.strip() for line in visible_tl_lines)
+            if has_tl:
+                compose_lines_resolver = getattr(
+                    self, "_compose_translation_lines_for_segment", None
+                )
+                if callable(compose_lines_resolver):
+                    try:
+                        composed_lines = compose_lines_resolver(
+                            source_segment, visible_tl_lines
+                        )
+                        export_segment.lines = self._normalize_translation_lines(
+                            composed_lines
+                        )
+                    except Exception:
+                        export_segment.lines = list(visible_tl_lines)
+                else:
+                    export_segment.lines = list(visible_tl_lines)
+            else:
+                export_segment.lines = list(source_segment.lines or [""])
 
             speaker_en = source_segment.translation_speaker.strip()
-            if speaker_en:
+            if speaker_en and source_segment.speaker_name != NO_SPEAKER_KEY:
                 params = export_segment.params
                 while len(params) <= 4:
                     params.append("")

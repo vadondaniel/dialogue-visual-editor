@@ -866,6 +866,7 @@ class DialogueBlockWidget(QFrame):
         name_index_kind: str,
         name_index_label: str,
         allow_structural_actions: bool,
+        inferred_speaker_name_resolver: Optional[Callable[[DialogueSegment], str]],
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -890,6 +891,7 @@ class DialogueBlockWidget(QFrame):
         self.name_index_label = name_index_label.strip(
         ) if name_index_label.strip() else "Entry"
         self.allow_structural_actions = allow_structural_actions
+        self.inferred_speaker_name_resolver = inferred_speaker_name_resolver
         self._actor_id = self._actor_id_from_uid()
         self._name_index_field = self._name_index_field_from_uid()
         self._suppress_text_changed = False
@@ -1034,10 +1036,8 @@ class DialogueBlockWidget(QFrame):
         self.editor = QPlainTextEdit()
         self.editor.setFont(mono)
         _set_hard_newline_markers(self.editor, False)
-        edited_lines = self.segment.translation_lines if self.translator_mode else self.segment.lines
-        if not edited_lines:
-            edited_lines = [""]
-        self._raw_lines = list(edited_lines)
+        self._raw_lines = [""]
+        self._load_editor_lines_from_segment()
         self._set_editor_text_lines(self._raw_lines)
         if self.translator_mode:
             source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
@@ -1250,13 +1250,71 @@ class DialogueBlockWidget(QFrame):
     def _line1_inference_is_disabled(self) -> bool:
         return bool(getattr(self.segment, "disable_line1_speaker_inference", False))
 
+    def _segment_storage_lines(self) -> list[str]:
+        lines = self.segment.translation_lines if self.translator_mode else self.segment.lines
+        if lines:
+            return list(lines)
+        return [""]
+
+    def _line1_inference_active(self) -> bool:
+        if self._line1_inference_is_disabled():
+            return False
+        if not self._is_standard_dialogue_block():
+            return False
+        if not self.infer_name_from_first_line:
+            return False
+        if self.segment.speaker_name != NO_SPEAKER_KEY:
+            return False
+        lines = self._segment_storage_lines()
+        if len(lines) <= 1:
+            return False
+        if self.inferred_speaker_name_resolver is None:
+            return False
+        try:
+            inferred = self.inferred_speaker_name_resolver(self.segment)
+        except Exception:
+            return False
+        return bool(inferred.strip())
+
+    def _line1_inference_prefix_text(self) -> str:
+        if self.translator_mode:
+            source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
+                ""]
+            return source_lines[0] if source_lines else ""
+        source_lines = self.segment.lines or [""]
+        return source_lines[0] if source_lines else ""
+
+    def _editor_lines_from_storage_lines(self, storage_lines: list[str]) -> list[str]:
+        lines = list(storage_lines) if storage_lines else [""]
+        if self._line1_inference_active():
+            if len(lines) > 1:
+                return list(lines[1:])
+            return [""]
+        return lines
+
+    def _storage_lines_from_editor_lines(self, editor_lines: list[str]) -> list[str]:
+        lines = list(editor_lines) if editor_lines else [""]
+        if not self._line1_inference_active():
+            return lines
+        return [self._line1_inference_prefix_text()] + lines
+
+    def _load_editor_lines_from_segment(self) -> None:
+        self._raw_lines = self._editor_lines_from_storage_lines(
+            self._segment_storage_lines()
+        )
+
     def _line1_inference_override_available(self) -> bool:
-        return (
+        base_available = (
             (not self.actor_mode)
             and self._is_standard_dialogue_block()
             and self.infer_name_from_first_line
             and self.segment.speaker_name == NO_SPEAKER_KEY
         )
+        if not base_available:
+            return False
+        if self._line1_inference_is_disabled():
+            return len(self._segment_storage_lines()) > 1
+        return self._line1_inference_active()
 
     def _refresh_line1_inference_override_button(self) -> None:
         available = self._line1_inference_override_available()
@@ -1276,6 +1334,8 @@ class DialogueBlockWidget(QFrame):
         if self._line1_inference_is_disabled() == disabled:
             return
         self.segment.disable_line1_speaker_inference = disabled
+        self._load_editor_lines_from_segment()
+        self._sync_control_code_visibility(force=True)
         self.line1_inference_override_changed.emit(self.segment.uid, disabled)
         self.refresh_metadata()
 
@@ -1563,14 +1623,12 @@ class DialogueBlockWidget(QFrame):
                 if resolved.strip():
                     return resolved
             return explicit
-        if self._line1_inference_is_disabled():
-            return NO_SPEAKER_KEY
-        if not self.infer_name_from_first_line:
+        if not self._line1_inference_active():
             return NO_SPEAKER_KEY
         if self.translator_mode:
-            lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines
+            lines = self._segment_storage_lines()
         else:
-            lines = self._current_lines()
+            lines = self._segment_storage_lines()
         if not lines:
             return NO_SPEAKER_KEY
         first_line = lines[0].strip()
@@ -1605,14 +1663,9 @@ class DialogueBlockWidget(QFrame):
                     return html.escape(resolved)
             return html.escape(explicit)
 
-        if self._line1_inference_is_disabled():
+        if not self._line1_inference_active():
             return html.escape(NO_SPEAKER_KEY)
-        if not self.infer_name_from_first_line:
-            return html.escape(NO_SPEAKER_KEY)
-        if self.translator_mode:
-            lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines
-        else:
-            lines = self._current_lines()
+        lines = self._segment_storage_lines()
         if not lines:
             return html.escape(NO_SPEAKER_KEY)
         first_line = lines[0].strip()
@@ -1719,6 +1772,11 @@ class DialogueBlockWidget(QFrame):
 
     def _refresh_status(self) -> None:
         lines = self._current_lines()
+        storage_lines = self._storage_lines_from_editor_lines(lines)
+        effective_max_lines = max(
+            1,
+            self.max_lines - 1 if self._line1_inference_active() else self.max_lines,
+        )
         line1_override_changed = (
             bool(self.segment.disable_line1_speaker_inference)
             != bool(self.segment.original_disable_line1_speaker_inference)
@@ -1741,7 +1799,7 @@ class DialogueBlockWidget(QFrame):
                     if self.segment.original_translation_lines
                     else [""]
                 )
-                current_tl = lines if lines else [""]
+                current_tl = storage_lines if storage_lines else [""]
                 self.reset_button.setEnabled(
                     current_tl != original_tl
                     or speaker_changed
@@ -1749,7 +1807,7 @@ class DialogueBlockWidget(QFrame):
                 )
             else:
                 self.reset_button.setEnabled(
-                    lines != self.segment.original_lines
+                    storage_lines != self.segment.original_lines
                     or bool(self.segment.merged_segments)
                     or line1_override_changed
                 )
@@ -1783,7 +1841,7 @@ class DialogueBlockWidget(QFrame):
                     if self.segment.original_translation_lines
                     else [""]
                 )
-                current_tl = lines if lines else [""]
+                current_tl = storage_lines if storage_lines else [""]
                 self.reset_button.setEnabled(
                     current_tl != original_tl
                     or speaker_changed
@@ -1791,7 +1849,7 @@ class DialogueBlockWidget(QFrame):
                 )
             else:
                 self.reset_button.setEnabled(
-                    lines != self.segment.original_lines
+                    storage_lines != self.segment.original_lines
                     or bool(self.segment.merged_segments)
                     or line1_override_changed
                 )
@@ -1818,10 +1876,12 @@ class DialogueBlockWidget(QFrame):
             text += f", over width on {over_width_label}: {', '.join(str(i) for i in over_width[:6])}"
             if len(over_width) > 6:
                 text += "..."
-        overflow_count = max(0, len(lines) - self.max_lines)
+        overflow_count = max(0, len(lines) - effective_max_lines)
         max_lines_over = overflow_count > 0
         if max_lines_over:
-            text += f", exceeds max lines ({self.max_lines})"
+            text += f", exceeds max lines ({effective_max_lines})"
+            if self._line1_inference_active() and self.max_lines > effective_max_lines:
+                text += " incl. inferred speaker line"
             if self.allow_structural_actions:
                 overflow_line_label = "line" if overflow_count == 1 else "lines"
                 text += f" -> move {overflow_count} {overflow_line_label} below"
@@ -1848,7 +1908,7 @@ class DialogueBlockWidget(QFrame):
                 if self.segment.original_translation_lines
                 else [""]
             )
-            current_tl = lines if lines else [""]
+            current_tl = storage_lines if storage_lines else [""]
             self.reset_button.setEnabled(
                 current_tl != original_tl
                 or speaker_changed
@@ -1856,7 +1916,7 @@ class DialogueBlockWidget(QFrame):
             )
         else:
             self.reset_button.setEnabled(
-                lines != self.segment.original_lines
+                storage_lines != self.segment.original_lines
                 or bool(self.segment.merged_segments)
                 or line1_override_changed
             )
@@ -1884,10 +1944,13 @@ class DialogueBlockWidget(QFrame):
             return
 
         can_collapse = collapse_lines_join_paragraphs(lines, width_chars) != lines
+        infer_name_in_editor_lines = (
+            self.infer_name_from_first_line and (not self._line1_inference_active())
+        )
         can_smart_collapse = smart_collapse_lines(
             lines,
             width_chars,
-            infer_name_from_first_line=self.infer_name_from_first_line,
+            infer_name_from_first_line=infer_name_in_editor_lines,
         ) != lines
         can_wrap = wrap_lines_hard_break(lines, width_chars) != lines
         can_insert = self.allow_structural_actions
@@ -1915,13 +1978,15 @@ class DialogueBlockWidget(QFrame):
         display_lines = self._raw_lines if self._should_show_raw_codes(
         ) else self._masked_lines_from_raw(self._raw_lines)
         self._set_editor_text_lines(display_lines)
+        storage_lines = self._storage_lines_from_editor_lines(self._raw_lines)
         if self.translator_mode:
-            self.segment.translation_lines = list(self._raw_lines)
+            self.segment.translation_lines = list(storage_lines)
         else:
-            self.segment.lines = list(self._raw_lines)
+            self.segment.lines = list(storage_lines)
+            self.segment.source_lines = list(storage_lines)
         self._refresh_meta_label()
         self._refresh_status()
-        self.text_changed.emit(self.segment.uid, list(self._raw_lines))
+        self.text_changed.emit(self.segment.uid, list(storage_lines))
 
     def _on_collapse_clicked(self) -> None:
         collapsed = collapse_lines_join_paragraphs(
@@ -1929,10 +1994,13 @@ class DialogueBlockWidget(QFrame):
         self._set_editor_lines(collapsed)
 
     def _on_smart_collapse_clicked(self) -> None:
+        infer_name_in_editor_lines = (
+            self.infer_name_from_first_line and (not self._line1_inference_active())
+        )
         collapsed = smart_collapse_lines(
             self._current_lines(),
             self._width_chars(),
-            infer_name_from_first_line=self.infer_name_from_first_line,
+            infer_name_from_first_line=infer_name_in_editor_lines,
         )
         self._set_editor_lines(collapsed)
 
@@ -1954,10 +2022,12 @@ class DialogueBlockWidget(QFrame):
             return
         lines = self._current_lines()
         self._raw_lines = list(lines)
+        storage_lines = self._storage_lines_from_editor_lines(lines)
         if self.translator_mode:
-            self.segment.translation_lines = list(lines)
+            self.segment.translation_lines = list(storage_lines)
         else:
-            self.segment.lines = list(lines)
+            self.segment.lines = list(storage_lines)
+            self.segment.source_lines = list(storage_lines)
         self._refresh_meta_label()
         self._refresh_status()
-        self.text_changed.emit(self.segment.uid, lines)
+        self.text_changed.emit(self.segment.uid, list(storage_lines))

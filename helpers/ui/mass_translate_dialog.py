@@ -496,13 +496,50 @@ class MassTranslateDialog(QDialog):
         entries: list[dict[str, Any]] = []
         session_items = self._scoped_session_items()
         speaker_keys: set[str] = set()
+        source_lines_resolver = getattr(
+            self.editor, "_segment_source_lines_for_translation", None
+        )
+        translation_lines_resolver = getattr(
+            self.editor, "_segment_translation_lines_for_translation", None
+        )
 
         for path, session in session_items:
             for idx, segment in enumerate(session.segments):
-                source_lines = self.editor._segment_source_lines_for_display(
-                    segment)
-                existing_lines = self.editor._normalize_translation_lines(
-                    segment.translation_lines)
+                if callable(source_lines_resolver):
+                    try:
+                        resolved_source = source_lines_resolver(segment)
+                    except Exception:
+                        resolved_source = self.editor._segment_source_lines_for_display(
+                            segment
+                        )
+                    source_lines = (
+                        resolved_source
+                        if isinstance(resolved_source, list)
+                        else self.editor._segment_source_lines_for_display(segment)
+                    )
+                else:
+                    source_lines = self.editor._segment_source_lines_for_display(
+                        segment
+                    )
+                if callable(translation_lines_resolver):
+                    try:
+                        resolved_translation = translation_lines_resolver(segment)
+                    except Exception:
+                        resolved_translation = self.editor._normalize_translation_lines(
+                            segment.translation_lines
+                        )
+                    if isinstance(resolved_translation, list):
+                        existing_lines = self.editor._normalize_translation_lines(
+                            resolved_translation
+                        )
+                    else:
+                        existing_lines = self.editor._normalize_translation_lines(
+                            segment.translation_lines
+                        )
+                else:
+                    existing_lines = self.editor._normalize_translation_lines(
+                        segment.translation_lines
+                    )
                 existing_text = "\n".join(existing_lines).strip()
                 speaker_key = self.editor._speaker_key_for_segment(segment)
                 content_type = self._segment_content_type(path, session, segment)
@@ -1019,17 +1056,48 @@ class MassTranslateDialog(QDialog):
                     missing_translation_field_ids.append(entry_id)
                     continue
                 path, segment = target
-                expected_line_count = len(
-                    self.editor._segment_source_lines_for_display(segment))
+                source_lines_resolver = getattr(
+                    self.editor, "_segment_source_lines_for_translation", None
+                )
+                if callable(source_lines_resolver):
+                    try:
+                        resolved_source = source_lines_resolver(segment)
+                    except Exception:
+                        resolved_source = self.editor._segment_source_lines_for_display(
+                            segment
+                        )
+                    if isinstance(resolved_source, list):
+                        expected_line_count = len(resolved_source)
+                    else:
+                        expected_line_count = len(
+                            self.editor._segment_source_lines_for_display(segment)
+                        )
+                else:
+                    expected_line_count = len(
+                        self.editor._segment_source_lines_for_display(segment)
+                    )
                 if len(lines) != expected_line_count:
                     line_label = "line" if len(lines) == 1 else "lines"
                     line_count_mismatches.append(
                         f"{entry_id} ({len(lines)} {line_label}, expected {expected_line_count})"
                     )
+                stored_lines = list(lines)
+                compose_resolver = getattr(
+                    self.editor, "_compose_translation_lines_for_segment", None
+                )
+                if callable(compose_resolver):
+                    try:
+                        resolved_stored = compose_resolver(segment, lines)
+                        if isinstance(resolved_stored, list):
+                            stored_lines = self.editor._normalize_translation_lines(
+                                resolved_stored
+                            )
+                    except Exception:
+                        pass
                 current_lines = self.editor._normalize_translation_lines(
                     segment.translation_lines)
-                if current_lines != lines:
-                    segment.translation_lines = list(lines)
+                if current_lines != stored_lines:
+                    segment.translation_lines = list(stored_lines)
                     touched_paths.add(path)
                     dialogue_applied += 1
                 continue

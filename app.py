@@ -1427,14 +1427,22 @@ class DialogueVisualEditor(
                 f"Context: {segment.context}")
 
             speaker_key = self._speaker_key_for_segment(segment)
-            self.translator_speaker_jp_edit.setText(speaker_key)
+            explicit_speaker_raw = self._resolve_name_tokens_in_text(
+                segment.speaker_name,
+                prefer_translated=False,
+            )
+            explicit_speaker_key = self._normalize_speaker_key(explicit_speaker_raw)
+            if explicit_speaker_key == NO_SPEAKER_KEY:
+                self.translator_speaker_jp_edit.setText("")
+            else:
+                self.translator_speaker_jp_edit.setText(explicit_speaker_key)
             speaker_en = self._speaker_translation_for_key(speaker_key)
             if not speaker_en:
                 speaker_en = segment.translation_speaker.strip()
             self.translator_speaker_en_edit.setText(speaker_en)
 
         self.translator_source_view.setPlainText(
-            "\n".join(self._segment_source_lines_for_display(segment)))
+            "\n".join(self._segment_source_lines_for_translation(segment)))
         if actor_mode:
             self.translator_reference_exact_label.setText("")
             self.translator_reference_similar_label.setText("")
@@ -1559,6 +1567,8 @@ class DialogueVisualEditor(
         lines = self._segment_source_lines_for_display(segment)
         if not lines:
             return ""
+        if len(lines) <= 1:
+            return ""
         first_line = lines[0].strip()
         if not first_line:
             return ""
@@ -1573,6 +1583,37 @@ class DialogueVisualEditor(
         if self._matches_name_token(first_line):
             return resolved_first or first_line
         return ""
+
+    def _segment_has_inferred_line1_speaker(self, segment: DialogueSegment) -> bool:
+        return bool(self._inferred_speaker_from_segment_line1(segment))
+
+    def _segment_source_lines_for_translation(self, segment: DialogueSegment) -> list[str]:
+        lines = self._segment_source_lines_for_display(segment)
+        if self._segment_has_inferred_line1_speaker(segment):
+            if len(lines) > 1:
+                return list(lines[1:])
+            return [""]
+        return list(lines) if lines else [""]
+
+    def _segment_translation_lines_for_translation(self, segment: DialogueSegment) -> list[str]:
+        lines = self._normalize_translation_lines(segment.translation_lines)
+        if self._segment_has_inferred_line1_speaker(segment):
+            if len(lines) > 1:
+                return list(lines[1:])
+            return [""]
+        return list(lines) if lines else [""]
+
+    def _compose_translation_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        visible_lines: list[str],
+    ) -> list[str]:
+        normalized_visible = list(visible_lines) if visible_lines else [""]
+        if not self._segment_has_inferred_line1_speaker(segment):
+            return normalized_visible
+        source_lines = self._segment_source_lines_for_display(segment)
+        speaker_line = source_lines[0] if source_lines else ""
+        return [speaker_line] + normalized_visible
 
     def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
         if not segment.is_structural_dialogue:

@@ -343,6 +343,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 name_index_kind=name_index_kind,
                 name_index_label=name_index_label,
                 allow_structural_actions=allow_structural,
+                inferred_speaker_name_resolver=self._inferred_speaker_from_segment_line1,
             )
         self._bind_block_widget_signals(widget)
         return widget
@@ -430,6 +431,7 @@ class RenderMixin(_RenderHostTypingFallback):
         widget.wide_width = max(1, self.wide_width_spin.value())
         widget.max_lines = max(1, self.max_lines_spin.value())
         widget.infer_name_from_first_line = self.infer_speaker_check.isChecked()
+        widget.inferred_speaker_name_resolver = self._inferred_speaker_from_segment_line1
         widget.speaker_tint_color = self._speaker_color_for_segment(segment)
         widget.allow_structural_actions = self._segment_allows_structural_actions(
             segment,
@@ -450,10 +452,7 @@ class RenderMixin(_RenderHostTypingFallback):
             widget.delete_button.setVisible(widget.allow_structural_actions)
         widget._actor_id = widget._actor_id_from_uid()
         widget._name_index_field = widget._name_index_field_from_uid()
-        edited_lines = segment.translation_lines if widget.translator_mode else segment.lines
-        if not edited_lines:
-            edited_lines = [""]
-        widget._raw_lines = list(edited_lines)
+        widget._load_editor_lines_from_segment()
         if widget.translator_mode:
             source_lines = segment.source_lines or segment.original_lines or segment.lines or [
                 ""]
