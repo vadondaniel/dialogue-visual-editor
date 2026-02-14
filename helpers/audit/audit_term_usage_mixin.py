@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from html import escape
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QListWidgetItem
@@ -75,6 +75,16 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         base = strip_control_tokens(value or "").replace("\u3000", " ")
         squashed = re.sub(r"\s+", "", base)
         return squashed.casefold()
+
+    def _term_request_key(self, request: Optional[dict[str, Any]]) -> tuple[Any, ...]:
+        if not isinstance(request, dict):
+            return ()
+        return (
+            request.get("generation"),
+            request.get("term"),
+            request.get("candidates_text"),
+            request.get("dialogue_only"),
+        )
 
     def _plain_text_for_suggestions(self, value: str) -> str:
         base = strip_control_tokens(value or "").replace("\u3000", " ")
@@ -373,14 +383,13 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         self,
         term: str,
         dialogue_only: bool,
+        path_sessions: Optional[list[tuple[Path, FileSession]]] = None,
     ) -> list[dict[str, Any]]:
         source_resolver = getattr(self, "_segment_source_lines_for_translation", None)
         tl_resolver = getattr(self, "_segment_translation_lines_for_translation", None)
         hits: list[dict[str, Any]] = []
-        for path in self.file_paths:
-            session = self.sessions.get(path)
-            if session is None:
-                continue
+        rows = path_sessions if isinstance(path_sessions, list) else self._audit_path_sessions_snapshot()
+        for path, session in rows:
             for block_index, segment in enumerate(session.segments, start=1):
                 if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
                     continue
@@ -463,6 +472,133 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             )
         return groups
 
+    def _compute_audit_term_groups_worker(
+        self,
+        path_sessions: list[tuple[Path, FileSession]],
+        term: str,
+        candidates_text: str,
+        dialogue_only: bool,
+    ) -> list[dict[str, Any]]:
+        candidates = self._parse_audit_term_candidates(candidates_text)
+        hits = self._collect_audit_term_hits(
+            term,
+            dialogue_only,
+            path_sessions=path_sessions,
+        )
+        return self._build_term_groups(hits, candidates)
+
+    def _queue_audit_term_worker(self, request: dict[str, Any]) -> None:
+        request_key = self._term_request_key(request)
+        if request_key == self._term_request_key(self.audit_term_worker_running_request):
+            return
+        if request_key == self._term_request_key(self.audit_term_worker_pending_request):
+            return
+        self.audit_term_worker_pending_request = request
+        if self.audit_term_worker_future is None:
+            self._start_next_audit_term_worker()
+
+    def _start_next_audit_term_worker(self) -> None:
+        request = self.audit_term_worker_pending_request
+        if request is None:
+            return
+        self.audit_term_worker_pending_request = None
+        self.audit_term_worker_running_request = request
+        try:
+            self.audit_term_worker_future = self.audit_worker_executor.submit(
+                self._compute_audit_term_groups_worker,
+                cast(list[tuple[Path, FileSession]], request["path_sessions"]),
+                str(request["term"]),
+                str(request["candidates_text"]),
+                bool(request["dialogue_only"]),
+            )
+        except Exception as exc:
+            self.audit_term_worker_future = None
+            self.audit_term_worker_running_request = None
+            self._hide_audit_progress_overlay(self.audit_term_variants_progress_overlay)
+            if self.audit_term_status_label is not None:
+                self.audit_term_status_label.setText(
+                    f"Term scan failed: {exc}"
+                )
+            return
+        self.audit_term_worker_timer.start(18)
+
+    def _poll_audit_term_worker(self) -> None:
+        future = self.audit_term_worker_future
+        if future is None:
+            if self.audit_term_worker_pending_request is not None:
+                self._start_next_audit_term_worker()
+            return
+        if not future.done():
+            self.audit_term_worker_timer.start(18)
+            return
+
+        running_request = self.audit_term_worker_running_request
+        self.audit_term_worker_future = None
+        self.audit_term_worker_running_request = None
+        try:
+            groups = cast(list[dict[str, Any]], future.result())
+        except Exception as exc:
+            if self.audit_term_worker_pending_request is not None:
+                self._start_next_audit_term_worker()
+                return
+            self._hide_audit_progress_overlay(self.audit_term_variants_progress_overlay)
+            if self.audit_term_status_label is not None:
+                self.audit_term_status_label.setText(
+                    f"Term scan failed: {exc}"
+                )
+            return
+
+        if self.audit_term_worker_pending_request is not None:
+            self._start_next_audit_term_worker()
+            return
+        if not isinstance(running_request, dict):
+            return
+        generation = int(running_request.get("generation", -1))
+        term = str(running_request.get("term", ""))
+        candidates_text = str(running_request.get("candidates_text", ""))
+        dialogue_only = bool(running_request.get("dialogue_only", True))
+        if generation != self.audit_cache_generation:
+            return
+        if (
+            self.audit_term_query_edit is None
+            or self.audit_term_candidates_edit is None
+            or self.audit_term_dialogue_only_check is None
+            or self.audit_term_variants_list is None
+            or self.audit_term_status_label is None
+        ):
+            return
+        if (
+            self.audit_term_query_edit.text().strip() != term
+            or self.audit_term_candidates_edit.text() != candidates_text
+            or self.audit_term_dialogue_only_check.isChecked() != dialogue_only
+        ):
+            return
+        cache_key = (generation, term, candidates_text, dialogue_only)
+        self.audit_term_cache_key = cache_key
+        self.audit_term_cache_groups = list(groups)
+
+        self._stop_audit_term_render()
+        self.audit_term_variants_list.clear()
+        self.audit_term_display_complete = False
+        self.audit_term_displayed_key = None
+        self.audit_term_render_groups = list(groups)
+        self.audit_term_render_index = 0
+        self.audit_term_render_generation = generation
+        self.audit_term_render_term = term
+        self.audit_term_render_candidates = candidates_text
+        self.audit_term_render_dialogue_only = dialogue_only
+        if not groups:
+            self.audit_term_status_label.setText("No matching term hits.")
+            self.audit_term_displayed_key = cache_key
+            self.audit_term_display_complete = True
+            return
+        self._set_audit_progress_overlay(
+            self.audit_term_variants_list,
+            self.audit_term_variants_progress_overlay,
+            f"Rendering 0/{len(groups)}",
+        )
+        self.audit_term_render_timer.start(self.audit_render_batch_interval_ms)
+
     def _refresh_audit_term_hits(self) -> None:
         if (
             self.audit_term_variants_list is None
@@ -479,59 +615,191 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         )
         group_key_raw = payload.get("group_key") if payload is not None else ""
         group_key = group_key_raw if isinstance(group_key_raw, str) else ""
+        self.audit_term_hits_render_timer.stop()
         self.audit_term_hits_list.clear()
         self.audit_term_goto_btn.setEnabled(False)
         if payload is None:
+            self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
             return
         entries = payload.get("entries")
         if not isinstance(entries, list):
+            self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
             return
+        prepared: list[dict[str, Any]] = []
         for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            path_raw = entry.get("path")
-            uid_raw = entry.get("uid")
-            entry_label = entry.get("entry")
-            source_line = entry.get("source_line")
-            translation_line = entry.get("translation_line")
-            translation_block_text = entry.get("translation_block_text")
-            line_index = entry.get("line_index")
-            if not isinstance(path_raw, str) or not path_raw:
-                continue
-            if not isinstance(uid_raw, str) or not uid_raw:
-                continue
-            if not isinstance(entry_label, str):
-                entry_label = "Entry"
-            if not isinstance(source_line, str):
-                source_line = ""
-            if not isinstance(translation_line, str):
-                translation_line = ""
-            if not isinstance(translation_block_text, str):
-                translation_block_text = ""
-            line_label = int(line_index) if isinstance(line_index, int) else 0
-            relative = self._relative_path(Path(path_raw))
-            display_en = preview_text(translation_line if translation_line else "(empty)", 170)
-            if candidates and group_key not in ("", "__all__", "__unmatched__"):
-                display_en = self._candidate_context_snippet(
-                    translation_block_text,
-                    group_key,
+            if isinstance(entry, dict):
+                prepared.append(entry)
+        self.audit_term_hits_render_entries = prepared
+        self.audit_term_hits_render_index = 0
+        self.audit_term_hits_render_group_key = group_key
+        if not prepared:
+            self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
+            self._refresh_audit_term_apply_state()
+            return
+        self._set_audit_progress_overlay(
+            self.audit_term_hits_list,
+            self.audit_term_hits_progress_overlay,
+            f"Rendering 0/{len(prepared)}",
+        )
+        # Keep these on self for render batches.
+        self._audit_term_hits_render_candidates = candidates
+        self.audit_term_hits_render_timer.start(self.audit_render_batch_interval_ms)
+
+    def _render_next_audit_term_hits_batch(self) -> None:
+        if (
+            self.audit_term_hits_list is None
+            or self.audit_term_goto_btn is None
+        ):
+            self.audit_term_hits_render_timer.stop()
+            self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
+            return
+        entries = self.audit_term_hits_render_entries
+        total = len(entries)
+        if total <= 0:
+            self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
+            return
+        start = self.audit_term_hits_render_index
+        end = min(start + self.audit_result_batch_size, total)
+        group_key = self.audit_term_hits_render_group_key
+        candidates_raw = getattr(self, "_audit_term_hits_render_candidates", [])
+        candidates = candidates_raw if isinstance(candidates_raw, list) else []
+
+        prev_updates = self.audit_term_hits_list.updatesEnabled()
+        self.audit_term_hits_list.setUpdatesEnabled(False)
+        try:
+            for entry in entries[start:end]:
+                path_raw = entry.get("path")
+                uid_raw = entry.get("uid")
+                entry_label = entry.get("entry")
+                source_line = entry.get("source_line")
+                translation_line = entry.get("translation_line")
+                translation_block_text = entry.get("translation_block_text")
+                line_index = entry.get("line_index")
+                if not isinstance(path_raw, str) or not path_raw:
+                    continue
+                if not isinstance(uid_raw, str) or not uid_raw:
+                    continue
+                if not isinstance(entry_label, str):
+                    entry_label = "Entry"
+                if not isinstance(source_line, str):
+                    source_line = ""
+                if not isinstance(translation_line, str):
+                    translation_line = ""
+                if not isinstance(translation_block_text, str):
+                    translation_block_text = ""
+                line_label = int(line_index) if isinstance(line_index, int) else 0
+                relative = self._relative_path(Path(path_raw))
+                display_en = preview_text(
+                    translation_line if translation_line else "(empty)",
+                    170,
                 )
-            label = (
-                f"{relative} | {entry_label} | line {line_label}\n"
-                f"JP: {preview_text(source_line, 170)}\n"
-                f"EN: {display_en}"
+                if candidates and group_key not in ("", "__all__", "__unmatched__"):
+                    display_en = self._candidate_context_snippet(
+                        translation_block_text,
+                        group_key,
+                    )
+                label = (
+                    f"{relative} | {entry_label} | line {line_label}\n"
+                    f"JP: {preview_text(source_line, 170)}\n"
+                    f"EN: {display_en}"
+                )
+                self._add_audit_term_hit_item(
+                    label,
+                    {
+                        "path": path_raw,
+                        "uid": uid_raw,
+                    },
+                )
+        finally:
+            self.audit_term_hits_list.setUpdatesEnabled(prev_updates)
+        self.audit_term_hits_render_index = end
+        if end < total:
+            self._set_audit_progress_overlay(
+                self.audit_term_hits_list,
+                self.audit_term_hits_progress_overlay,
+                f"Rendering {end}/{total}",
             )
-            self._add_audit_term_hit_item(
-                label,
-                {
-                    "path": path_raw,
-                    "uid": uid_raw,
-                },
-            )
+            self.audit_term_hits_render_timer.start(self.audit_render_batch_interval_ms)
+            return
+
         if self.audit_term_hits_list.count() > 0:
             self.audit_term_hits_list.setCurrentRow(0)
             self.audit_term_goto_btn.setEnabled(True)
+        self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
         self._refresh_audit_term_apply_state()
+
+    def _render_next_audit_term_group_batch(self) -> None:
+        if (
+            self.audit_term_variants_list is None
+            or self.audit_term_status_label is None
+            or self.audit_term_query_edit is None
+            or self.audit_term_candidates_edit is None
+            or self.audit_term_dialogue_only_check is None
+        ):
+            self._stop_audit_term_render()
+            return
+        groups = self.audit_term_render_groups
+        total = len(groups)
+        if total <= 0:
+            self.audit_term_status_label.setText("No matching term hits.")
+            self._stop_audit_term_render()
+            return
+        start = self.audit_term_render_index
+        end = min(start + self.audit_result_batch_size, total)
+
+        prev_updates = self.audit_term_variants_list.updatesEnabled()
+        self.audit_term_variants_list.setUpdatesEnabled(False)
+        try:
+            for group in groups[start:end]:
+                group_key_raw = group.get("group_key")
+                group_key = group_key_raw if isinstance(group_key_raw, str) else ""
+                count = int(group.get("entry_count", 0))
+                if group_key == "__all__":
+                    label = f"x{count} | All hits"
+                elif group_key == "__unmatched__":
+                    label = f"x{count} | (unmatched candidates)"
+                else:
+                    label = f"x{count} | {preview_text(group_key, 110)}"
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, group)
+                self.audit_term_variants_list.addItem(item)
+        finally:
+            self.audit_term_variants_list.setUpdatesEnabled(prev_updates)
+
+        self.audit_term_render_index = end
+        if end < total:
+            self._set_audit_progress_overlay(
+                self.audit_term_variants_list,
+                self.audit_term_variants_progress_overlay,
+                f"Rendering {end}/{total}",
+            )
+            self.audit_term_render_timer.start(self.audit_render_batch_interval_ms)
+            return
+
+        total_hits = sum(int(group.get("entry_count", 0)) for group in groups)
+        candidates = self._parse_audit_term_candidates(
+            self.audit_term_render_candidates
+        )
+        if candidates:
+            canonical = candidates[0]
+            self.audit_term_status_label.setText(
+                f"Canonical: {canonical} | Candidates: {len(candidates)} | Groups: {len(groups)} | Hits: {total_hits}"
+            )
+        else:
+            self.audit_term_status_label.setText(
+                f"Candidates empty: showing raw hits | Hits: {total_hits}"
+            )
+        if self.audit_term_variants_list.count() > 0:
+            self.audit_term_variants_list.setCurrentRow(0)
+        self.audit_term_displayed_key = (
+            self.audit_term_render_generation,
+            self.audit_term_render_term,
+            self.audit_term_render_candidates,
+            self.audit_term_render_dialogue_only,
+        )
+        self.audit_term_display_complete = True
+        self._hide_audit_progress_overlay(self.audit_term_variants_progress_overlay)
+        self._refresh_audit_term_hits()
 
     def _refresh_audit_term_apply_state(self) -> None:
         if (
@@ -577,50 +845,75 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         ):
             return
         term = self.audit_term_query_edit.text().strip()
+        candidates_text = self.audit_term_candidates_edit.text()
+        dialogue_only = self.audit_term_dialogue_only_check.isChecked()
+        requested_key = (
+            self.audit_cache_generation,
+            term,
+            candidates_text,
+            dialogue_only,
+        )
+        self.audit_term_render_timer.stop()
+        self.audit_term_hits_render_timer.stop()
         self.audit_term_variants_list.clear()
         self.audit_term_hits_list.clear()
         self.audit_term_goto_btn.setEnabled(False)
         if not term:
+            self.audit_term_displayed_key = None
+            self.audit_term_display_complete = False
+            self._hide_audit_progress_overlay(self.audit_term_variants_progress_overlay)
+            self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
+            self.audit_term_worker_pending_request = None
             self.audit_term_status_label.setText(
                 "Type a JP source term to inspect variants."
             )
             return
-        dialogue_only = self.audit_term_dialogue_only_check.isChecked()
-        candidates = self._parse_audit_term_candidates(
-            self.audit_term_candidates_edit.text()
+        if (
+            self.audit_term_display_complete
+            and self.audit_term_displayed_key == requested_key
+        ):
+            self._refresh_audit_term_hits()
+            self._refresh_audit_term_apply_state()
+            return
+        self.audit_term_displayed_key = None
+        self.audit_term_display_complete = False
+        if self.audit_term_cache_key == requested_key:
+            groups = list(self.audit_term_cache_groups)
+            self.audit_term_render_groups = groups
+            self.audit_term_render_index = 0
+            self.audit_term_render_generation = self.audit_cache_generation
+            self.audit_term_render_term = term
+            self.audit_term_render_candidates = candidates_text
+            self.audit_term_render_dialogue_only = dialogue_only
+            if not groups:
+                self.audit_term_status_label.setText("No matching term hits.")
+                self.audit_term_display_complete = True
+                self.audit_term_displayed_key = requested_key
+                return
+            self._set_audit_progress_overlay(
+                self.audit_term_variants_list,
+                self.audit_term_variants_progress_overlay,
+                f"Rendering 0/{len(groups)}",
+            )
+            self.audit_term_render_timer.start(self.audit_render_batch_interval_ms)
+            return
+
+        request = {
+            "generation": self.audit_cache_generation,
+            "term": term,
+            "candidates_text": candidates_text,
+            "dialogue_only": dialogue_only,
+            "path_sessions": self._audit_path_sessions_snapshot(),
+        }
+        self.audit_term_status_label.setText(
+            f"Scanning term '{term}'..."
         )
-        hits = self._collect_audit_term_hits(term, dialogue_only)
-        groups = self._build_term_groups(hits, candidates)
-        total_hits = 0
-        for group in groups:
-            group_key_raw = group.get("group_key")
-            group_key = group_key_raw if isinstance(group_key_raw, str) else ""
-            count = int(group.get("entry_count", 0))
-            total_hits += count
-            if group_key == "__all__":
-                label = f"x{count} | All hits"
-            elif group_key == "__unmatched__":
-                label = f"x{count} | (unmatched candidates)"
-            else:
-                label = f"x{count} | {preview_text(group_key, 110)}"
-            item = QListWidgetItem(
-                label
-            )
-            item.setData(Qt.ItemDataRole.UserRole, group)
-            self.audit_term_variants_list.addItem(item)
-        if self.audit_term_variants_list.count() > 0:
-            self.audit_term_variants_list.setCurrentRow(0)
-        if candidates:
-            canonical = candidates[0]
-            self.audit_term_status_label.setText(
-                f"Canonical: {canonical} | Candidates: {len(candidates)} | Groups: {len(groups)} | Hits: {total_hits}"
-            )
-        else:
-            self.audit_term_status_label.setText(
-                f"Candidates empty: showing raw hits | Hits: {total_hits}"
-            )
-        self._refresh_audit_term_hits()
-        self._refresh_audit_term_apply_state()
+        self._set_audit_progress_overlay(
+            self.audit_term_variants_list,
+            self.audit_term_variants_progress_overlay,
+            "Scanning...",
+        )
+        self._queue_audit_term_worker(request)
 
     def _go_to_selected_audit_term_hit(self) -> None:
         if self.audit_term_hits_list is None:

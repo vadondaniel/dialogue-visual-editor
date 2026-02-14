@@ -146,6 +146,22 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
         self.audit_control_mismatch_render_only_translated = True
         self.audit_control_mismatch_render_generation = 0
 
+    def _stop_audit_term_render(self) -> None:
+        self.audit_term_render_timer.stop()
+        self.audit_term_hits_render_timer.stop()
+        self._hide_audit_progress_overlay(self.audit_term_variants_progress_overlay)
+        self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
+        self.audit_term_render_groups = []
+        self.audit_term_render_index = 0
+        self.audit_term_render_generation = 0
+        self.audit_term_render_term = ""
+        self.audit_term_render_candidates = ""
+        self.audit_term_render_dialogue_only = True
+        self.audit_term_hits_render_entries = []
+        self.audit_term_hits_render_index = 0
+        self.audit_term_hits_render_group_key = ""
+        self._audit_term_hits_render_candidates = []
+
     def _invalidate_audit_caches(self) -> None:
         self.audit_cache_generation += 1
         self.audit_search_cache_key = None
@@ -166,14 +182,20 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
         self.audit_sanitize_active_view_key = None
         self.audit_control_mismatch_displayed_key = None
         self.audit_control_mismatch_display_complete = False
+        self.audit_term_cache_key = None
+        self.audit_term_cache_groups = []
+        self.audit_term_displayed_key = None
+        self.audit_term_display_complete = False
         if self.audit_sanitize_occurrences_list is not None:
             self.audit_sanitize_occurrences_list.clear()
         self.audit_search_worker_pending_request = None
         self.audit_sanitize_worker_pending_request = None
         self.audit_control_worker_pending_request = None
+        self.audit_term_worker_pending_request = None
         self._stop_audit_search_render()
         self._stop_audit_sanitize_render()
         self._stop_audit_control_mismatch_render()
+        self._stop_audit_term_render()
 
     def _audit_highlight_style(self) -> str:
         if is_dark_palette():

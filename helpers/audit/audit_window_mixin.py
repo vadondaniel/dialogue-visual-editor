@@ -422,6 +422,12 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         control_progress_overlay = self._create_audit_progress_overlay(
             control_results_list)
+        term_variants_progress_overlay = self._create_audit_progress_overlay(
+            term_variants_list
+        )
+        term_hits_progress_overlay = self._create_audit_progress_overlay(
+            term_hits_list
+        )
 
         self.audit_window = dialog
         self.audit_search_query_edit = query_edit
@@ -471,6 +477,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_term_suggest_jp_list = term_suggest_jp_list
         self.audit_term_suggest_en_list = term_suggest_en_list
         self.audit_term_suggest_refresh_btn = term_suggest_refresh_btn
+        self.audit_term_variants_progress_overlay = term_variants_progress_overlay
+        self.audit_term_hits_progress_overlay = term_hits_progress_overlay
 
         for rule_id, label, find_text, replace_text in SANITIZE_CHAR_RULES:
             item = QListWidgetItem()
@@ -687,6 +695,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self._hide_audit_progress_overlay(self.audit_sanitize_progress_overlay)
         self._hide_audit_progress_overlay(
             self.audit_control_mismatch_progress_overlay)
+        self._hide_audit_progress_overlay(self.audit_term_variants_progress_overlay)
+        self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
         self._refresh_audit_sanitize_panel()
         self._refresh_audit_consistency_panel()
         self._refresh_audit_term_panel()

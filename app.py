@@ -284,6 +284,8 @@ class DialogueVisualEditor(
         self.audit_term_suggest_jp_list: Optional[QListWidget] = None
         self.audit_term_suggest_en_list: Optional[QListWidget] = None
         self.audit_term_suggest_refresh_btn: Optional[QPushButton] = None
+        self.audit_term_variants_progress_overlay: Optional[QLabel] = None
+        self.audit_term_hits_progress_overlay: Optional[QLabel] = None
         self.mass_translate_dialog: Optional[MassTranslateDialog] = None
         self.audit_cache_generation = 0
         self.audit_result_batch_size = 16
@@ -340,6 +342,30 @@ class DialogueVisualEditor(
         self.audit_control_mismatch_render_timer.timeout.connect(
             self._render_next_audit_control_mismatch_batch
         )
+        self.audit_term_cache_key: Optional[tuple[int, str, str, bool]] = None
+        self.audit_term_cache_groups: list[dict[str, Any]] = []
+        self.audit_term_render_groups: list[dict[str, Any]] = []
+        self.audit_term_render_index = 0
+        self.audit_term_render_generation = 0
+        self.audit_term_render_term = ""
+        self.audit_term_render_candidates = ""
+        self.audit_term_render_dialogue_only = True
+        self.audit_term_displayed_key: Optional[tuple[int, str, str, bool]] = None
+        self.audit_term_display_complete = False
+        self.audit_term_render_timer = QTimer(self)
+        self.audit_term_render_timer.setSingleShot(True)
+        self.audit_term_render_timer.timeout.connect(
+            self._render_next_audit_term_group_batch
+        )
+        self.audit_term_hits_render_entries: list[dict[str, Any]] = []
+        self.audit_term_hits_render_index = 0
+        self.audit_term_hits_render_group_key = ""
+        self._audit_term_hits_render_candidates: list[str] = []
+        self.audit_term_hits_render_timer = QTimer(self)
+        self.audit_term_hits_render_timer.setSingleShot(True)
+        self.audit_term_hits_render_timer.timeout.connect(
+            self._render_next_audit_term_hits_batch
+        )
         self.audit_worker_executor = ThreadPoolExecutor(max_workers=1)
         self.audit_search_worker_future: Optional[Future] = None
         self.audit_search_worker_running_request: Optional[dict[str, Any]] = None
@@ -364,6 +390,13 @@ class DialogueVisualEditor(
         self.audit_control_worker_timer.setSingleShot(True)
         self.audit_control_worker_timer.timeout.connect(
             self._poll_audit_control_worker)
+        self.audit_term_worker_future: Optional[Future] = None
+        self.audit_term_worker_running_request: Optional[dict[str, Any]] = None
+        self.audit_term_worker_pending_request: Optional[dict[str, Any]] = None
+        self.audit_term_worker_timer = QTimer(self)
+        self.audit_term_worker_timer.setSingleShot(True)
+        self.audit_term_worker_timer.timeout.connect(
+            self._poll_audit_term_worker)
         self.structural_undo_stack: list[StructuralAction] = []
         self.structural_redo_stack: list[StructuralAction] = []
         self._pending_render_state: Optional[dict[str, Any]] = None
@@ -3707,6 +3740,7 @@ class DialogueVisualEditor(
         self.audit_search_worker_timer.stop()
         self.audit_sanitize_worker_timer.stop()
         self.audit_control_worker_timer.stop()
+        self.audit_term_worker_timer.stop()
         try:
             self.audit_worker_executor.shutdown(
                 wait=False, cancel_futures=True)
