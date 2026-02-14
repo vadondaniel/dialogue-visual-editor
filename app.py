@@ -321,6 +321,8 @@ class DialogueVisualEditor(
             self._on_global_redo_shortcut)
         self._global_redo_alt_shortcut.activated.connect(
             self._on_global_redo_shortcut)
+        self._next_problem_shortcut = QShortcut(QKeySequence("F5"), self)
+        self._next_problem_shortcut.activated.connect(self._jump_to_next_problem)
 
         self._build_ui()
         app_instance = QApplication.instance()
@@ -686,18 +688,22 @@ class DialogueVisualEditor(
 
         tools_menu = menu_bar.addMenu("Tools")
         speakers_action = QAction("Speakers...", self)
+        speakers_action.setShortcut(QKeySequence("F1"))
         speakers_action.triggered.connect(self._open_speaker_manager)
         tools_menu.addAction(speakers_action)
 
         mass_translate_action = QAction("Mass Translate...", self)
+        mass_translate_action.setShortcut(QKeySequence("F2"))
         mass_translate_action.triggered.connect(self._open_mass_translate_dialog)
         tools_menu.addAction(mass_translate_action)
 
         normalize_codes_action = QAction("Normalize Codes...", self)
+        normalize_codes_action.setShortcut(QKeySequence("F3"))
         normalize_codes_action.triggered.connect(self._open_normalize_codes_dialog)
         tools_menu.addAction(normalize_codes_action)
 
         audit_action = QAction("Audit...", self)
+        audit_action.setShortcut(QKeySequence("F4"))
         audit_action.triggered.connect(self._open_audit_window)
         tools_menu.addAction(audit_action)
 
