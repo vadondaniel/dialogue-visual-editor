@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from dialogue_visual_editor.helpers.ui.mass_translate_dialog import (
@@ -39,6 +41,7 @@ class _EditorPromptMeta:
 
 
 class _PromptDialogHarness:
+    _NAME_TOKEN_RE = MassTranslateDialog._NAME_TOKEN_RE
     _default_prompt_template = classmethod(MassTranslateDialog._default_prompt_template.__func__)
     _normalize_prompt_language_code = staticmethod(
         MassTranslateDialog._normalize_prompt_language_code
@@ -48,9 +51,40 @@ class _PromptDialogHarness:
     _target_translation_field_name = MassTranslateDialog._target_translation_field_name
     _translation_prompt_metadata = MassTranslateDialog._translation_prompt_metadata
     _build_prompt_for_payload = MassTranslateDialog._build_prompt_for_payload
+    _speaker_display_for_prompt = MassTranslateDialog._speaker_display_for_prompt
+    _resolve_name_tokens_for_prompt = MassTranslateDialog._resolve_name_tokens_for_prompt
+    _actor_source_name_map_for_prompt = MassTranslateDialog._actor_source_name_map_for_prompt
 
     def __init__(self, editor: Any) -> None:
         self.editor = editor
+
+
+class _SpeakerDisplayEditorMeta:
+    def __init__(self) -> None:
+        self._translated_by_key: dict[str, str] = {}
+        self._resolved_by_key: dict[str, str] = {}
+        self.sessions: dict[Path, Any] = {}
+
+    @staticmethod
+    def _normalize_speaker_key(value: str) -> str:
+        cleaned = value.strip()
+        return cleaned if cleaned else ""
+
+    def _speaker_translation_for_key(self, speaker_key: str) -> str:
+        return self._translated_by_key.get(speaker_key, "")
+
+    def _resolve_name_tokens_in_text(
+        self,
+        text: str,
+        prefer_translated: bool,
+        unresolved_placeholder: bool = False,
+    ) -> str:
+        _ = prefer_translated
+        _ = unresolved_placeholder
+        return self._resolved_by_key.get(text, text)
+
+    def _resolve_speaker_display_name(self, raw_speaker: str) -> str:
+        return self._resolved_by_key.get(raw_speaker, raw_speaker)
 
 
 class MassTranslatePromptTests(unittest.TestCase):
@@ -80,6 +114,34 @@ class MassTranslatePromptTests(unittest.TestCase):
         self.assertIn("from ja into en", prompt)
         self.assertIn("`ja_text`", prompt)
         self.assertIn("`en_translation`", prompt)
+
+    def test_speaker_display_resolves_name_tokens_for_prompt_context(self) -> None:
+        editor = _SpeakerDisplayEditorMeta()
+        editor._resolved_by_key[r"\C[2]\N[1]\C[0]"] = r"\C[2]Masatoki\C[0]"
+        harness = _PromptDialogHarness(editor)
+
+        display = harness._speaker_display_for_prompt(r"\C[2]\N[1]\C[0]")
+
+        self.assertEqual(display, r"\C[2]Masatoki\C[0]")
+
+    def test_speaker_display_falls_back_to_actors_data_when_needed(self) -> None:
+        editor = _SpeakerDisplayEditorMeta()
+        actors_path = Path("Actors.json")
+        editor.sessions[actors_path] = SimpleNamespace(
+            path=actors_path,
+            data=[
+                None,
+                {"name": "Ari"},
+                {"name": "Boro"},
+                {"name": "Cira"},
+                {"name": "Dane"},
+            ],
+        )
+        harness = _PromptDialogHarness(editor)
+
+        display = harness._speaker_display_for_prompt(r"\C[2]\N[4]\C[0]")
+
+        self.assertEqual(display, r"\C[2]Dane\C[0]")
 
 
 if __name__ == "__main__":

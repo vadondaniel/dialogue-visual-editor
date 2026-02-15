@@ -72,6 +72,7 @@ class MassTranslateHost(Protocol):
 class MassTranslateDialog(QDialog):
     _JSON_FENCE_RE = re.compile(
         r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
+    _NAME_TOKEN_RE = re.compile(r"\\[Nn]\[(\d+)\]")
     _WORKFLOW_CONTENT_MODES: tuple[str, ...] = ("speakers", "misc", "dialogues")
 
     def __init__(self, editor: QWidget):
@@ -415,6 +416,128 @@ class MassTranslateDialog(QDialog):
             source_text.strip(),
         )
 
+    def _speaker_display_for_prompt(self, speaker_key: str) -> str:
+        normalized_key = self.editor._normalize_speaker_key(speaker_key)
+        if normalized_key == NO_SPEAKER_KEY:
+            return ""
+
+        translated_speaker = self.editor._speaker_translation_for_key(
+            normalized_key
+        ).strip()
+        if translated_speaker:
+            resolved_translated = self._resolve_name_tokens_for_prompt(
+                translated_speaker
+            )
+            if resolved_translated:
+                return resolved_translated
+
+        # Prefer a readable display label for prompt context; keep raw source keys
+        # unchanged for "Speakers" entries where translators edit the canonical key.
+        display_resolver = getattr(self.editor, "_resolve_speaker_display_name", None)
+        if callable(display_resolver):
+            try:
+                resolved_display = display_resolver(normalized_key)
+            except Exception:
+                resolved_display = None
+            if isinstance(resolved_display, str) and resolved_display.strip():
+                resolved_display_text = self._resolve_name_tokens_for_prompt(
+                    resolved_display.strip()
+                )
+                if resolved_display_text:
+                    return resolved_display_text
+
+        resolved_source = self._resolve_name_tokens_for_prompt(normalized_key)
+        if resolved_source:
+            return resolved_source
+        return normalized_key
+
+    def _actor_source_name_map_for_prompt(self) -> dict[int, str]:
+        actor_name_map: dict[int, str] = {}
+
+        actor_name_maps_resolver = getattr(self.editor, "_actor_name_maps", None)
+        if callable(actor_name_maps_resolver):
+            try:
+                source_names, _translated_names = actor_name_maps_resolver()
+            except Exception:
+                source_names = {}
+            if isinstance(source_names, dict):
+                for raw_actor_id, raw_name in source_names.items():
+                    if not (isinstance(raw_actor_id, int) and isinstance(raw_name, str)):
+                        continue
+                    cleaned_name = raw_name.strip()
+                    if cleaned_name:
+                        actor_name_map[raw_actor_id] = cleaned_name
+        if actor_name_map:
+            return actor_name_map
+
+        sessions_raw = getattr(self.editor, "sessions", None)
+        sessions = sessions_raw if isinstance(sessions_raw, dict) else {}
+        for raw_session in sessions.values():
+            session_path = getattr(raw_session, "path", None)
+            if not isinstance(session_path, Path):
+                continue
+            if session_path.name.strip().lower() != "actors.json":
+                continue
+            session_data = getattr(raw_session, "data", None)
+            if not isinstance(session_data, list):
+                continue
+            for actor_id, entry in enumerate(session_data):
+                if not isinstance(entry, dict):
+                    continue
+                raw_name = entry.get("name")
+                if not isinstance(raw_name, str):
+                    continue
+                cleaned_name = raw_name.strip()
+                if cleaned_name:
+                    actor_name_map[actor_id] = cleaned_name
+            if actor_name_map:
+                return actor_name_map
+        return actor_name_map
+
+    def _resolve_name_tokens_for_prompt(self, text: str) -> str:
+        if not isinstance(text, str):
+            return ""
+        cleaned_text = text.strip()
+        if not cleaned_text:
+            return ""
+
+        resolver = getattr(self.editor, "_resolve_name_tokens_in_text", None)
+        if callable(resolver):
+            for prefer_translated in (True, False):
+                try:
+                    resolved_value = resolver(
+                        cleaned_text,
+                        prefer_translated=prefer_translated,
+                    )
+                except TypeError:
+                    try:
+                        resolved_value = resolver(cleaned_text, prefer_translated)
+                    except Exception:
+                        resolved_value = None
+                except Exception:
+                    resolved_value = None
+                if isinstance(resolved_value, str):
+                    resolved_text = resolved_value.strip()
+                    if resolved_text and resolved_text != cleaned_text:
+                        return resolved_text
+
+        if not self._NAME_TOKEN_RE.search(cleaned_text):
+            return cleaned_text
+
+        actor_name_map = self._actor_source_name_map_for_prompt()
+        if not actor_name_map:
+            return cleaned_text
+
+        def _replace_name_token(match: re.Match[str]) -> str:
+            try:
+                actor_id = int(match.group(1))
+            except Exception:
+                return match.group(0)
+            return actor_name_map.get(actor_id, match.group(0))
+
+        resolved_fallback = self._NAME_TOKEN_RE.sub(_replace_name_token, cleaned_text).strip()
+        return resolved_fallback if resolved_fallback else cleaned_text
+
     def _on_deduplicate_blocks_toggled(self, checked: bool) -> None:
         if not checked:
             self._on_scope_or_filters_changed()
@@ -494,16 +617,7 @@ class MassTranslateDialog(QDialog):
                     continue
 
                 speaker_key = self.editor._speaker_key_for_segment(segment)
-                speaker_for_prompt = self.editor._speaker_translation_for_key(
-                    speaker_key
-                ).strip()
-                if not speaker_for_prompt:
-                    speaker_for_prompt = self.editor._resolve_name_tokens_in_text(
-                        speaker_key,
-                        prefer_translated=False,
-                    ).strip()
-                if not speaker_for_prompt:
-                    speaker_for_prompt = speaker_key
+                speaker_for_prompt = self._speaker_display_for_prompt(speaker_key)
                 is_choice_segment = segment.segment_kind == "choice"
                 include_speaker_field = (
                     content_type == "dialogue" and not is_choice_segment
@@ -830,10 +944,7 @@ class MassTranslateDialog(QDialog):
         for idx in indexes:
             neighbor = session.segments[idx]
             speaker_key = self.editor._speaker_key_for_segment(neighbor)
-            speaker_display = self.editor._speaker_translation_for_key(
-                speaker_key).strip()
-            if not speaker_display:
-                speaker_display = speaker_key
+            speaker_display = self._speaker_display_for_prompt(speaker_key)
             source_text = "\n".join(
                 self.editor._segment_source_lines_for_display(neighbor)).strip()
             if not source_text:
@@ -955,15 +1066,7 @@ class MassTranslateDialog(QDialog):
                 else:
                     entry_id = f"M:{tl_uid}"
                     entry_type = self._segment_specific_type_label(path, segment)
-                speaker_for_prompt = self.editor._speaker_translation_for_key(
-                    speaker_key).strip()
-                if not speaker_for_prompt:
-                    speaker_for_prompt = self.editor._resolve_name_tokens_in_text(
-                        speaker_key,
-                        prefer_translated=False,
-                    ).strip()
-                if not speaker_for_prompt:
-                    speaker_for_prompt = speaker_key
+                speaker_for_prompt = self._speaker_display_for_prompt(speaker_key)
                 include_speaker_field = (
                     content_type == "dialogue" and not is_choice_segment
                 )
