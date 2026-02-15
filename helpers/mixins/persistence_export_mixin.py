@@ -57,6 +57,56 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         control = getattr(self, "problem_trailing_color_code_check", None)
         return bool(control.isChecked()) if control is not None else False
 
+    def _problem_check_missing_translation_enabled(self) -> bool:
+        control = getattr(self, "problem_missing_translation_check", None)
+        return bool(control.isChecked()) if control is not None else False
+
+    def _segment_has_missing_translation_problem(
+        self,
+        segment: DialogueSegment,
+        translator_mode: bool,
+    ) -> bool:
+        if not translator_mode:
+            return False
+        source_lines_resolver = getattr(
+            self, "_segment_source_lines_for_translation", None
+        )
+        if callable(source_lines_resolver):
+            try:
+                resolved_source = source_lines_resolver(segment)
+            except Exception:
+                resolved_source = None
+            source_lines = (
+                resolved_source
+                if isinstance(resolved_source, list)
+                else list(segment.source_lines or segment.original_lines or segment.lines or [""])
+            )
+        else:
+            source_lines = list(segment.source_lines or segment.original_lines or segment.lines or [""])
+        source_lines = [
+            line if isinstance(line, str) else ("" if line is None else str(line))
+            for line in source_lines
+        ] or [""]
+        if not any(visible_length(line) > 0 for line in source_lines):
+            return False
+
+        translation_lines_resolver = getattr(
+            self, "_segment_translation_lines_for_translation", None
+        )
+        if callable(translation_lines_resolver):
+            try:
+                resolved_tl = translation_lines_resolver(segment)
+            except Exception:
+                resolved_tl = None
+            tl_lines = (
+                self._normalize_translation_lines(resolved_tl)
+                if isinstance(resolved_tl, list)
+                else self._normalize_translation_lines(segment.translation_lines)
+            )
+        else:
+            tl_lines = self._normalize_translation_lines(segment.translation_lines)
+        return not any(visible_length(line) > 0 for line in tl_lines)
+
     def _segment_has_trailing_color_code_problem(
         self,
         segment: DialogueSegment,
@@ -182,11 +232,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         check_line_limit = self._problem_check_line_limit_enabled()
         check_control_mismatch = self._problem_check_control_mismatch_enabled()
         check_trailing_color_code = self._problem_check_trailing_color_code_enabled()
+        check_missing_translation = self._problem_check_missing_translation_enabled()
         if not (
             check_char_limit
             or check_line_limit
             or check_control_mismatch
             or check_trailing_color_code
+            or check_missing_translation
         ):
             return False
 
@@ -214,6 +266,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 return True
         if check_trailing_color_code:
             if self._segment_has_trailing_color_code_problem(segment, translator_mode):
+                return True
+        if check_missing_translation:
+            if self._segment_has_missing_translation_problem(segment, translator_mode):
                 return True
         return False
 

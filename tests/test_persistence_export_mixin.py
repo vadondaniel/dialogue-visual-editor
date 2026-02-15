@@ -35,6 +35,7 @@ class _Harness(PersistenceExportMixin):
     def __init__(self) -> None:
         self.auto_split_check = _BoolControl(False)
         self.max_lines_spin = _SpinControl(4)
+        self.problem_missing_translation_check = _BoolControl(False)
 
     def _normalize_translation_lines(self, value: Any) -> list[str]:
         if isinstance(value, list):
@@ -159,6 +160,39 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual([entry["code"] for entry in rebuilt], [101, 401, 101, 401])
         self.assertEqual(rebuilt[1]["parameters"][0], "TL main")
         self.assertEqual(rebuilt[3]["parameters"][0], "TL extra")
+
+    def test_missing_translation_problem_detects_empty_translation(self) -> None:
+        harness = _Harness()
+        segment = _dialogue_segment("Map001.json:L0:0", "JP line")
+        segment.translation_lines = [""]
+        self.assertTrue(
+            harness._segment_has_missing_translation_problem(
+                segment,
+                translator_mode=True,
+            )
+        )
+
+    def test_missing_translation_problem_ignores_filled_translation(self) -> None:
+        harness = _Harness()
+        segment = _dialogue_segment("Map001.json:L0:0", "JP line")
+        segment.translation_lines = ["EN line"]
+        self.assertFalse(
+            harness._segment_has_missing_translation_problem(
+                segment,
+                translator_mode=True,
+            )
+        )
+
+    def test_missing_translation_problem_ignores_source_without_visible_text(self) -> None:
+        harness = _Harness()
+        segment = _dialogue_segment("Map001.json:L0:0", r"\!")
+        segment.translation_lines = [""]
+        self.assertFalse(
+            harness._segment_has_missing_translation_problem(
+                segment,
+                translator_mode=True,
+            )
+        )
 
 
 if __name__ == "__main__":

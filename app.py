@@ -534,12 +534,18 @@ class DialogueVisualEditor(
         self.problem_trailing_color_code_check.toggled.connect(
             self._on_problem_checks_changed
         )
+        self.problem_missing_translation_check.toggled.connect(
+            self._on_problem_checks_changed
+        )
         self.problem_char_limit_check.toggled.connect(self._on_project_setting_changed)
         self.problem_line_limit_check.toggled.connect(self._on_project_setting_changed)
         self.problem_control_mismatch_check.toggled.connect(
             self._on_project_setting_changed
         )
         self.problem_trailing_color_code_check.toggled.connect(
+            self._on_project_setting_changed
+        )
+        self.problem_missing_translation_check.toggled.connect(
             self._on_project_setting_changed
         )
 
@@ -807,6 +813,12 @@ class DialogueVisualEditor(
             "Treat missing/mismatched trailing \\C[n] token (when JP ends with one) as a problem."
         )
 
+        self.problem_missing_translation_check = QCheckBox(self)
+        self.problem_missing_translation_check.setChecked(False)
+        self.problem_missing_translation_check.setToolTip(
+            "Treat untranslated dialogue blocks (source has visible text, translation is empty) as a problem."
+        )
+
         self.apply_version_combo = QComboBox(self)
         self.apply_version_combo.addItem("Original", "original")
         self.apply_version_combo.addItem("Working", "working")
@@ -844,6 +856,7 @@ class DialogueVisualEditor(
             self.problem_line_limit_check,
             self.problem_control_mismatch_check,
             self.problem_trailing_color_code_check,
+            self.problem_missing_translation_check,
             self.apply_version_combo,
         )
         for control in hidden_controls:
@@ -1097,6 +1110,16 @@ class DialogueVisualEditor(
             self.problem_trailing_color_code_check,
         )
         problem_checks_menu.addAction(problem_trailing_color_code_action)
+
+        problem_missing_translation_action = QAction(
+            "Flag missing translation",
+            self,
+        )
+        self._bind_toggle_menu_action(
+            problem_missing_translation_action,
+            self.problem_missing_translation_check,
+        )
+        problem_checks_menu.addAction(problem_missing_translation_action)
 
         settings_menu.addSeparator()
         auto_split_action = QAction("Auto-split overflow on save", self)
@@ -3525,6 +3548,9 @@ class DialogueVisualEditor(
             "problem_trailing_color_code": bool(
                 self.problem_trailing_color_code_check.isChecked()
             ),
+            "problem_missing_translation": bool(
+                self.problem_missing_translation_check.isChecked()
+            ),
             "show_empty_files": bool(self.show_empty_files_check.isChecked()),
             "default_variable_length": int(self.default_variable_length_estimate),
             "variable_length_overrides": {
@@ -3562,6 +3588,7 @@ class DialogueVisualEditor(
         self.problem_line_limit_check.blockSignals(True)
         self.problem_control_mismatch_check.blockSignals(True)
         self.problem_trailing_color_code_check.blockSignals(True)
+        self.problem_missing_translation_check.blockSignals(True)
         self.show_empty_files_check.blockSignals(True)
         try:
             editor_mode = settings.get("editor_mode")
@@ -3661,6 +3688,13 @@ class DialogueVisualEditor(
                 self.problem_trailing_color_code_check.setChecked(
                     problem_trailing_color_code
                 )
+            problem_missing_translation = settings.get(
+                "problem_missing_translation"
+            )
+            if isinstance(problem_missing_translation, bool):
+                self.problem_missing_translation_check.setChecked(
+                    problem_missing_translation
+                )
             show_empty_files = settings.get("show_empty_files")
             if isinstance(show_empty_files, bool):
                 self.show_empty_files_check.setChecked(show_empty_files)
@@ -3703,6 +3737,7 @@ class DialogueVisualEditor(
             self.problem_line_limit_check.blockSignals(False)
             self.problem_control_mismatch_check.blockSignals(False)
             self.problem_trailing_color_code_check.blockSignals(False)
+            self.problem_missing_translation_check.blockSignals(False)
             self.show_empty_files_check.blockSignals(False)
             self._applying_project_ui_state = False
 
@@ -4817,6 +4852,8 @@ class DialogueVisualEditor(
             enabled_checks.append("control-code mismatch")
         if self.problem_trailing_color_code_check.isChecked():
             enabled_checks.append("trailing \\C[n]")
+        if self.problem_missing_translation_check.isChecked():
+            enabled_checks.append("missing translation")
         if not enabled_checks:
             return "none"
         return ", ".join(enabled_checks)
