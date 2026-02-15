@@ -568,6 +568,14 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             or bool(getattr(session, "is_actor_index_session", False))
         )
 
+        if isinstance(session.data, dict):
+            for segment in session.segments:
+                path_tokens_raw = getattr(segment, "map_display_name_path", ())
+                if not isinstance(path_tokens_raw, tuple):
+                    continue
+                new_value = "\n".join(segment.lines) if segment.lines else ""
+                self._set_json_value_by_path(session.data, path_tokens_raw, new_value)
+
         if is_name_index_session and isinstance(session.data, dict):
             name_index_kind_raw = getattr(session, "name_index_kind", "")
             name_index_kind = name_index_kind_raw.strip().lower(

@@ -1713,7 +1713,7 @@ class DialogueBlockWidget(QFrame):
         self._raw_lines = [""]
         self._load_editor_lines_from_segment()
         self._set_editor_text_lines(self._raw_lines)
-        if self.translator_mode:
+        if self._uses_translation_storage():
             source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
                 ""]
             self._source_hint_lines = list(source_lines)
@@ -1775,7 +1775,7 @@ class DialogueBlockWidget(QFrame):
         footer_row.addWidget(self.move_overflow_button, 0,
                              Qt.AlignmentFlag.AlignRight)
         self.reset_button = QPushButton("Reset")
-        if self.translator_mode:
+        if self._uses_translation_storage():
             self.reset_button.setToolTip(
                 "Reset this translation block to its last saved translation text.")
         else:
@@ -1938,6 +1938,12 @@ class DialogueBlockWidget(QFrame):
     def _is_choice_block(self) -> bool:
         return self.segment.segment_kind == "choice"
 
+    def _is_map_display_name_block(self) -> bool:
+        return self.segment.segment_kind == "map_display_name"
+
+    def _uses_translation_storage(self) -> bool:
+        return self.translator_mode and (not self._is_map_display_name_block())
+
     def _line1_inference_is_disabled(self) -> bool:
         return bool(getattr(self.segment, "disable_line1_speaker_inference", False))
 
@@ -1947,7 +1953,7 @@ class DialogueBlockWidget(QFrame):
         )
 
     def _segment_storage_lines(self) -> list[str]:
-        lines = self.segment.translation_lines if self.translator_mode else self.segment.lines
+        lines = self.segment.translation_lines if self._uses_translation_storage() else self.segment.lines
         if lines:
             return list(lines)
         return [""]
@@ -1973,7 +1979,7 @@ class DialogueBlockWidget(QFrame):
         return bool(inferred.strip())
 
     def _line1_inference_prefix_text(self) -> str:
-        if self.translator_mode:
+        if self._uses_translation_storage():
             source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
                 ""]
             return source_lines[0] if source_lines else ""
@@ -1981,7 +1987,7 @@ class DialogueBlockWidget(QFrame):
         return source_lines[0] if source_lines else ""
 
     def _line1_inference_source_lines(self) -> list[str]:
-        if self.translator_mode:
+        if self._uses_translation_storage():
             source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
                 ""]
             return list(source_lines) if source_lines else [""]
@@ -2059,7 +2065,7 @@ class DialogueBlockWidget(QFrame):
             or bool(self.segment.force_line1_speaker_inference)
             != bool(self.segment.original_force_line1_speaker_inference)
         )
-        if self.translator_mode:
+        if self._uses_translation_storage():
             speaker_changed = self.segment.translation_speaker.strip(
             ) != self.segment.original_translation_speaker.strip()
             current_tl = (
@@ -2122,6 +2128,10 @@ class DialogueBlockWidget(QFrame):
                 block_bg = "#2f2a1d" if self._dark_theme else "#fef3c7"
                 block_border = "#f59e0b" if self._dark_theme else "#d97706"
                 meta_color = "#fde68a" if self._dark_theme else "#92400e"
+            elif self._is_map_display_name_block():
+                block_bg = "#1d2f2a" if self._dark_theme else "#ecfdf5"
+                block_border = "#10b981" if self._dark_theme else "#059669"
+                meta_color = "#86efac" if self._dark_theme else "#065f46"
         border_width = 2
         if self._selected:
             block_bg = "#14362e" if self._dark_theme else "#dcfce7"
@@ -2148,6 +2158,8 @@ class DialogueBlockWidget(QFrame):
             block_prefix = "Block"
             if self._is_choice_block():
                 block_prefix = "Choice"
+            elif self._is_map_display_name_block():
+                block_prefix = "Map Display Name"
             self.title_label.setText(
                 f"{block_prefix} {self.block_number}{title_suffix}")
         self.setStyleSheet(
@@ -2253,7 +2265,7 @@ class DialogueBlockWidget(QFrame):
             return
         has_user_text = any(line.strip() for line in self._raw_lines)
         show_source_hint = (
-            self.translator_mode
+            self._uses_translation_storage()
             and not has_user_text
             and bool(self._source_hint_lines)
         )
@@ -2343,6 +2355,8 @@ class DialogueBlockWidget(QFrame):
     def _has_control_mismatch_problem(self) -> bool:
         if not self.control_mismatch_highlighting_enabled:
             return False
+        if not self._uses_translation_storage():
+            return False
         if self.actor_mode:
             return False
         source_text = "\n".join(self._source_lines_for_control_mismatch())
@@ -2363,7 +2377,7 @@ class DialogueBlockWidget(QFrame):
         )
 
     def _control_mismatch_selections(self) -> list[QTextEdit.ExtraSelection]:
-        if not self.translator_mode:
+        if not self._uses_translation_storage():
             return []
         if not self.control_mismatch_highlighting_enabled:
             return []
@@ -2441,7 +2455,7 @@ class DialogueBlockWidget(QFrame):
         return split_lines_preserve_empty(self.editor.toPlainText())
 
     def _speaker_display_name(self) -> str:
-        if self.translator_mode:
+        if self._uses_translation_storage():
             translated = ""
             if (
                 self.segment.speaker_name != NO_SPEAKER_KEY
@@ -2463,7 +2477,7 @@ class DialogueBlockWidget(QFrame):
             return explicit
         if not self._line1_inference_active():
             return NO_SPEAKER_KEY
-        if self.translator_mode:
+        if self._uses_translation_storage():
             lines = self._segment_storage_lines()
         else:
             lines = self._segment_storage_lines()
@@ -2488,7 +2502,7 @@ class DialogueBlockWidget(QFrame):
         return NO_SPEAKER_KEY
 
     def _speaker_display_name_html(self) -> str:
-        if self.translator_mode:
+        if self._uses_translation_storage():
             translated = ""
             if (
                 self.segment.speaker_name != NO_SPEAKER_KEY
@@ -2557,6 +2571,13 @@ class DialogueBlockWidget(QFrame):
                 f"Field: {html.escape(field_text)} | "
                 f"View: {html.escape(mode_text)}"
             )
+            self.meta_label.setTextFormat(Qt.TextFormat.RichText)
+            self.meta_label.setText(meta_html)
+            return
+
+        if self._is_map_display_name_block():
+            view_text = "EN displayName" if self._uses_translation_storage() else "Map displayName"
+            meta_html = f"Type: Map Display Name | View: {html.escape(view_text)}"
             self.meta_label.setTextFormat(Qt.TextFormat.RichText)
             self.meta_label.setText(meta_html)
             return
@@ -2638,7 +2659,7 @@ class DialogueBlockWidget(QFrame):
             self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
             self.move_overflow_button.setVisible(False)
             self.move_overflow_button.setEnabled(False)
-            if self.translator_mode:
+            if self._uses_translation_storage():
                 speaker_changed = self.segment.translation_speaker.strip(
                 ) != self.segment.original_translation_speaker.strip()
                 original_tl = (
@@ -2687,7 +2708,7 @@ class DialogueBlockWidget(QFrame):
                 self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
             self.move_overflow_button.setVisible(False)
             self.move_overflow_button.setEnabled(False)
-            if self.translator_mode:
+            if self._uses_translation_storage():
                 speaker_changed = self.segment.translation_speaker.strip(
                 ) != self.segment.original_translation_speaker.strip()
                 original_tl = (
@@ -2765,7 +2786,7 @@ class DialogueBlockWidget(QFrame):
         if can_move_overflow:
             label = "Move Overflow Down" if overflow_count == 1 else f"Move {overflow_count} Lines Down"
             self.move_overflow_button.setText(label)
-        if self.translator_mode:
+        if self._uses_translation_storage():
             speaker_changed = self.segment.translation_speaker.strip(
             ) != self.segment.original_translation_speaker.strip()
             original_tl = (
@@ -2849,7 +2870,7 @@ class DialogueBlockWidget(QFrame):
         ) else self._masked_lines_from_raw(self._raw_lines)
         self._set_editor_text_lines(display_lines)
         storage_lines = self._storage_lines_from_editor_lines(self._raw_lines)
-        if self.translator_mode:
+        if self._uses_translation_storage():
             self.segment.translation_lines = list(storage_lines)
         else:
             self.segment.lines = list(storage_lines)
@@ -2898,7 +2919,7 @@ class DialogueBlockWidget(QFrame):
         lines = self._current_lines()
         self._raw_lines = list(lines)
         storage_lines = self._storage_lines_from_editor_lines(lines)
-        if self.translator_mode:
+        if self._uses_translation_storage():
             self.segment.translation_lines = list(storage_lines)
         else:
             self.segment.lines = list(storage_lines)

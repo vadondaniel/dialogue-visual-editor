@@ -58,6 +58,7 @@ _PLUGINS_JS_SUFFIX_KEY = "__dve_plugins_js_suffix__"
 _PLUGINS_JS_ARRAY_KEY = "__dve_plugins_js_array__"
 _PLUGINS_JS_DEFAULT_PREFIX = "var $plugins =\n"
 _PLUGINS_JS_DEFAULT_SUFFIX = ";\n"
+_MAP_FILE_NAME_RE = re.compile(r"^map\d+\.json$", re.IGNORECASE)
 
 
 def is_plugins_js_path(path: Path) -> bool:
@@ -215,6 +216,34 @@ def _build_plugins_text_segments(path: Path, data: dict[str, Any]) -> list[Dialo
             )
             segments.append(segment)
     return segments
+
+
+def _build_map_display_name_segment(path: Path, data: Any) -> DialogueSegment | None:
+    if not isinstance(data, dict):
+        return None
+    if not _MAP_FILE_NAME_RE.fullmatch(path.name.strip()):
+        return None
+    display_name_raw = data.get("displayName")
+    if not isinstance(display_name_raw, str):
+        return None
+
+    lines = split_lines_preserve_empty(display_name_raw)
+    code101 = {
+        "code": 101,
+        "indent": 0,
+        "parameters": ["", 0, 0, 2, ""],
+    }
+    segment = DialogueSegment(
+        uid=f"{path.name}:map_display_name",
+        context=f"{path.name} > displayName",
+        code101=code101,
+        lines=list(lines),
+        original_lines=list(lines),
+        source_lines=list(lines),
+        segment_kind="map_display_name",
+    )
+    setattr(segment, "map_display_name_path", ("displayName",))
+    return segment
 
 
 def _choice_lines_from_code102(entry: dict[str, Any]) -> list[str]:
@@ -633,6 +662,11 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
             setattr(session, "name_index_kind", "system")
             setattr(session, "name_index_uid_prefix", "Y")
             setattr(session, "name_index_label", "System")
+            return session
+
+    map_display_name_segment = _build_map_display_name_segment(path, data)
+    if map_display_name_segment is not None:
+        session.segments.insert(0, map_display_name_segment)
 
     return session
 
