@@ -1168,11 +1168,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 else:
                     orphan_tl_uids.append(segment.uid)
                 continue
+            if segment.segment_kind == "map_display_name":
+                continue
             last_source_uid = segment.uid
         if orphan_tl_uids and session.segments:
             first_source_uid = ""
             for segment in session.segments:
-                if not segment.translation_only:
+                if not segment.translation_only and segment.segment_kind != "map_display_name":
                     first_source_uid = segment.uid
                     break
             if first_source_uid:

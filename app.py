@@ -3577,18 +3577,41 @@ class DialogueVisualEditor(
         path: Path,
         rel_path: str,
         disk_session: FileSession,
-    ) -> tuple[FileSession, list[list[str]]]:
-        translated_lines_by_order: list[list[str]] = [
-            list(segment.lines) if segment.lines else [""]
-            for segment in disk_session.segments
-            if not segment.translation_only
-        ]
+    ) -> tuple[FileSession, dict[str, list[str]], list[list[str]], dict[str, str], list[str]]:
+        translated_lines_by_uid: dict[str, list[str]] = {}
+        translated_lines_by_order: list[list[str]] = []
+        translated_speakers_by_uid: dict[str, str] = {}
+        translated_speakers_by_order: list[str] = []
+        for segment in disk_session.segments:
+            if segment.translation_only:
+                continue
+            translated_lines = self._normalize_translation_lines(segment.lines)
+            translated_lines_by_uid[segment.uid] = list(translated_lines)
+            translated_lines_by_order.append(list(translated_lines))
+            speaker_text = segment.speaker_name.strip()
+            if speaker_text and speaker_text != NO_SPEAKER_KEY:
+                translated_speakers_by_uid[segment.uid] = speaker_text
+                translated_speakers_by_order.append(speaker_text)
+            else:
+                translated_speakers_by_order.append("")
         if self.version_db is None:
-            return disk_session, translated_lines_by_order
+            return (
+                disk_session,
+                translated_lines_by_uid,
+                translated_lines_by_order,
+                translated_speakers_by_uid,
+                translated_speakers_by_order,
+            )
 
         payload = self.version_db.get_working_snapshot_payload(rel_path)
         if not payload:
-            return disk_session, translated_lines_by_order
+            return (
+                disk_session,
+                translated_lines_by_uid,
+                translated_lines_by_order,
+                translated_speakers_by_uid,
+                translated_speakers_by_order,
+            )
         try:
             decoded = json.loads(payload)
             working_session = parse_dialogue_data(path, decoded)
@@ -3597,21 +3620,75 @@ class DialogueVisualEditor(
                 "Failed to parse working snapshot for translated import fallback '%s'; using disk session.",
                 rel_path,
             )
-            return disk_session, translated_lines_by_order
-        return working_session, translated_lines_by_order
+            return (
+                disk_session,
+                translated_lines_by_uid,
+                translated_lines_by_order,
+                translated_speakers_by_uid,
+                translated_speakers_by_order,
+            )
+        return (
+            working_session,
+            translated_lines_by_uid,
+            translated_lines_by_order,
+            translated_speakers_by_uid,
+            translated_speakers_by_order,
+        )
 
     def _hydrate_translation_lines_from_import(
         self,
         session: FileSession,
+        translated_lines_by_uid: dict[str, list[str]],
         translated_lines_by_order: list[list[str]],
+        translated_speakers_by_uid: dict[str, str],
+        translated_speakers_by_order: list[str],
     ) -> None:
         source_segments = [seg for seg in session.segments if not seg.translation_only]
+        matched_by_uid = 0
+
+        for segment in source_segments:
+            translated_lines = translated_lines_by_uid.get(segment.uid)
+            if translated_lines is None:
+                continue
+            tl_lines = self._normalize_translation_lines(translated_lines)
+            segment.translation_lines = list(tl_lines)
+            segment.original_translation_lines = list(tl_lines)
+            imported_speaker = translated_speakers_by_uid.get(segment.uid, "").strip()
+            if imported_speaker and segment.speaker_name != NO_SPEAKER_KEY:
+                segment.translation_speaker = imported_speaker
+                segment.original_translation_speaker = imported_speaker
+                speaker_key = self._speaker_key_for_segment(segment)
+                if speaker_key != NO_SPEAKER_KEY:
+                    self.speaker_translation_map[speaker_key] = imported_speaker
+            matched_by_uid += 1
+
+        if matched_by_uid > 0:
+            if matched_by_uid != len(source_segments):
+                logger.warning(
+                    "Translated import UID coverage mismatch for '%s': matched=%s source=%s",
+                    session.path.name,
+                    matched_by_uid,
+                    len(source_segments),
+                )
+            return
+
         count = min(len(source_segments), len(translated_lines_by_order))
         for idx in range(count):
             segment = source_segments[idx]
             tl_lines = self._normalize_translation_lines(translated_lines_by_order[idx])
             segment.translation_lines = list(tl_lines)
             segment.original_translation_lines = list(tl_lines)
+            imported_speaker = (
+                translated_speakers_by_order[idx].strip()
+                if idx < len(translated_speakers_by_order)
+                else ""
+            )
+            if imported_speaker and segment.speaker_name != NO_SPEAKER_KEY:
+                segment.translation_speaker = imported_speaker
+                segment.original_translation_speaker = imported_speaker
+                speaker_key = self._speaker_key_for_segment(segment)
+                if speaker_key != NO_SPEAKER_KEY:
+                    self.speaker_translation_map[speaker_key] = imported_speaker
         if len(source_segments) != len(translated_lines_by_order):
             logger.warning(
                 "Translated import segment count mismatch for '%s': source=%s translated=%s",
@@ -3737,7 +3814,10 @@ class DialogueVisualEditor(
                 had_working_payload = False
                 failed_working_snapshot_parse = False
                 import_data: Any = None
+                translated_lines_by_uid: Optional[dict[str, list[str]]] = None
                 translated_lines_by_order: Optional[list[list[str]]] = None
+                translated_speakers_by_uid: Optional[dict[str, str]] = None
+                translated_speakers_by_order: Optional[list[str]] = None
 
                 if not force_disk_import and self.version_db is not None:
                     payload = self.version_db.get_working_snapshot_payload(
@@ -3759,7 +3839,13 @@ class DialogueVisualEditor(
                 if force_disk_import and import_target_version == "translated":
                     disk_session = parse_dialogue_file(path)
                     import_data = disk_session.data
-                    session, translated_lines_by_order = self._prepare_session_for_translated_disk_import(
+                    (
+                        session,
+                        translated_lines_by_uid,
+                        translated_lines_by_order,
+                        translated_speakers_by_uid,
+                        translated_speakers_by_order,
+                    ) = self._prepare_session_for_translated_disk_import(
                         path,
                         rel_path,
                         disk_session,
@@ -3774,7 +3860,16 @@ class DialogueVisualEditor(
                 if translated_lines_by_order is not None:
                     self._hydrate_translation_lines_from_import(
                         session,
+                        translated_lines_by_uid
+                        if translated_lines_by_uid is not None
+                        else {},
                         translated_lines_by_order,
+                        translated_speakers_by_uid
+                        if translated_speakers_by_uid is not None
+                        else {},
+                        translated_speakers_by_order
+                        if translated_speakers_by_order is not None
+                        else [],
                     )
                     translated_import_hydrated = True
                 self.sessions[path] = session
