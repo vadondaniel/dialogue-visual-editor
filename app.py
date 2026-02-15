@@ -3316,10 +3316,11 @@ class DialogueVisualEditor(
             self,
             "Reload from game files",
             (
-                "This will re-read JSON files from disk and overwrite your working snapshot data.\n"
+                "This will re-read JSON files from disk and overwrite snapshot data.\n"
                 "Use with caution.\n\n"
                 f"Selected apply version: {selected_label}\n"
                 f"Default import target: {import_target_label}\n"
+                f"Will overwrite: {import_target_label} snapshot\n"
                 "Original snapshot is locked and will not be overwritten."
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -3526,6 +3527,54 @@ class DialogueVisualEditor(
             key=lambda path: natural_sort_key(self._relative_path(path)))
         return supported_files
 
+    def _prepare_session_for_translated_disk_import(
+        self,
+        path: Path,
+        rel_path: str,
+        disk_session: FileSession,
+    ) -> tuple[FileSession, list[list[str]]]:
+        translated_lines_by_order: list[list[str]] = [
+            list(segment.lines) if segment.lines else [""]
+            for segment in disk_session.segments
+            if not segment.translation_only
+        ]
+        if self.version_db is None:
+            return disk_session, translated_lines_by_order
+
+        payload = self.version_db.get_working_snapshot_payload(rel_path)
+        if not payload:
+            return disk_session, translated_lines_by_order
+        try:
+            decoded = json.loads(payload)
+            working_session = parse_dialogue_data(path, decoded)
+        except Exception:
+            logger.exception(
+                "Failed to parse working snapshot for translated import fallback '%s'; using disk session.",
+                rel_path,
+            )
+            return disk_session, translated_lines_by_order
+        return working_session, translated_lines_by_order
+
+    def _hydrate_translation_lines_from_import(
+        self,
+        session: FileSession,
+        translated_lines_by_order: list[list[str]],
+    ) -> None:
+        source_segments = [seg for seg in session.segments if not seg.translation_only]
+        count = min(len(source_segments), len(translated_lines_by_order))
+        for idx in range(count):
+            segment = source_segments[idx]
+            tl_lines = self._normalize_translation_lines(translated_lines_by_order[idx])
+            segment.translation_lines = list(tl_lines)
+            segment.original_translation_lines = list(tl_lines)
+        if len(source_segments) != len(translated_lines_by_order):
+            logger.warning(
+                "Translated import segment count mismatch for '%s': source=%s translated=%s",
+                session.path.name,
+                len(source_segments),
+                len(translated_lines_by_order),
+            )
+
     def _load_data_folder(
         self,
         folder: Path,
@@ -3631,11 +3680,14 @@ class DialogueVisualEditor(
         loaded_from_db_count = 0
         loaded_from_disk_count = 0
         total_blocks = 0
+        translated_import_hydrated = False
         for path in self.file_paths:
             try:
                 rel_path = self._relative_path(path)
                 session: Optional[FileSession] = None
                 loaded_from_db = False
+                import_data: Any = None
+                translated_lines_by_order: Optional[list[list[str]]] = None
 
                 if not force_disk_import and self.version_db is not None:
                     payload = self.version_db.get_working_snapshot_payload(
@@ -3652,10 +3704,27 @@ class DialogueVisualEditor(
                             )
                             session = None
 
-                if session is None:
+                if force_disk_import and import_target_version == "translated":
+                    disk_session = parse_dialogue_file(path)
+                    import_data = disk_session.data
+                    session, translated_lines_by_order = self._prepare_session_for_translated_disk_import(
+                        path,
+                        rel_path,
+                        disk_session,
+                    )
+                elif session is None:
                     session = parse_dialogue_file(path)
+                    import_data = session.data
+                elif import_data is None:
+                    import_data = session.data
 
                 self._apply_translation_state_to_session(session)
+                if translated_lines_by_order is not None:
+                    self._hydrate_translation_lines_from_import(
+                        session,
+                        translated_lines_by_order,
+                    )
+                    translated_import_hydrated = True
                 self.sessions[path] = session
                 self.segment_uid_counter = max(
                     self.segment_uid_counter, len(session.segments))
@@ -3672,7 +3741,7 @@ class DialogueVisualEditor(
                             target_version = "translated" if import_target_version == "translated" else "working"
                             self.version_db.import_from_disk(
                                 rel_path,
-                                session.data,
+                                import_data,
                                 target_version,
                             )
                         elif not loaded_from_db:
@@ -3708,6 +3777,9 @@ class DialogueVisualEditor(
             except Exception:
                 logger.exception("Failed to load supported file '%s'.", path)
                 load_errors.append(path.name)
+
+        if translated_import_hydrated:
+            self._save_translation_state()
 
         if not self.sessions:
             self.save_btn.setEnabled(False)

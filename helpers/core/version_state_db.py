@@ -181,12 +181,10 @@ class DialogueVersionDB:
                     UPDATE file_versions
                     SET
                         translated_json = ?,
-                        translated_saved_at = ?,
-                        working_json = ?,
-                        working_saved_at = ?
+                        translated_saved_at = ?
                     WHERE file_path = ?
                     """,
-                    (payload, now, payload, now, file_path),
+                    (payload, now, file_path),
                 )
 
     def get_working_snapshot_payload(self, file_path: str) -> Optional[str]:
