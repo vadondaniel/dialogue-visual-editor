@@ -185,6 +185,7 @@ def build_control_mismatch_selections(
 
 class SpeakerManagerHost(Protocol):
     speaker_custom_colors: dict[str, str]
+    speaker_translation_map: dict[str, str]
 
     def _collect_speaker_keys(self) -> list[str]: ...
     def _speaker_color_for_key(self, speaker_key: str) -> str: ...
@@ -506,18 +507,10 @@ class SpeakerManagerDialog(QDialog):
                 "#f8fafc" if color.lightness() < 128 else "#0f172a")
 
             is_custom = speaker_key in self.editor.speaker_custom_colors
-            speaker_key_display = self.editor._resolve_name_tokens_in_text(
-                speaker_key,
-                prefer_translated=False,
-            ).strip()
-            label = speaker_key_display or speaker_key
-            speaker_en = self.editor._speaker_translation_for_key(speaker_key)
-            speaker_en_display = self.editor._resolve_name_tokens_in_text(
-                speaker_en,
-                prefer_translated=True,
-            ).strip()
+            label = speaker_key
+            speaker_en = self._raw_translation_for_key(speaker_key)
             if speaker_en:
-                label += f" -> {speaker_en_display or speaker_en}"
+                label += f" -> {speaker_en}"
             if is_custom:
                 label += " [custom]"
             item = QListWidgetItem(label)
@@ -546,7 +539,7 @@ class SpeakerManagerDialog(QDialog):
         has_custom = bool(
             selected_key and selected_key in self.editor.speaker_custom_colors)
         has_translation = bool(
-            selected_key and self.editor._speaker_translation_for_key(selected_key))
+            selected_key and self._raw_translation_for_key(selected_key))
         self.rename_btn.setEnabled(has_selection)
         self.translate_btn.setEnabled(has_selection)
         self.clear_translate_btn.setEnabled(has_translation)
@@ -559,12 +552,34 @@ class SpeakerManagerDialog(QDialog):
         return speaker_key
 
     def _translation_prefill_text(self, speaker_key: str) -> str:
-        existing = self.editor._speaker_translation_for_key(speaker_key)
+        existing = self._raw_translation_for_key(speaker_key)
         if existing.strip():
             return existing
         if speaker_key == NO_SPEAKER_KEY:
             return ""
         return speaker_key
+
+    def _raw_translation_for_key(self, speaker_key: str) -> str:
+        normalized = self.editor._normalize_speaker_key(speaker_key)
+        if normalized == NO_SPEAKER_KEY:
+            return ""
+
+        direct = self.editor.speaker_translation_map.get(normalized, "")
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+
+        # Backward compatibility for older state that stored resolved token keys.
+        resolved_key = self.editor._normalize_speaker_key(
+            self.editor._resolve_name_tokens_in_text(
+                normalized,
+                prefer_translated=False,
+            )
+        )
+        if resolved_key != normalized:
+            legacy = self.editor.speaker_translation_map.get(resolved_key, "")
+            if isinstance(legacy, str) and legacy.strip():
+                return legacy.strip()
+        return ""
 
     def _on_rename_clicked(self) -> None:
         current = self._selected_speaker_key()

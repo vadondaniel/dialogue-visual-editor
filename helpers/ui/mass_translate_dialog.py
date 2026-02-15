@@ -37,6 +37,12 @@ class MassTranslateHost(Protocol):
     def _new_translation_uid(self) -> str: ...
     def _normalize_speaker_key(self, value: str) -> str: ...
     def _speaker_key_for_segment(self, segment: DialogueSegment) -> str: ...
+    def _resolve_name_tokens_in_text(
+        self,
+        text: str,
+        prefer_translated: bool,
+        unresolved_placeholder: bool = False,
+    ) -> str: ...
     def _segment_source_lines_for_display(
         self, segment: DialogueSegment) -> list[str]: ...
 
@@ -482,6 +488,11 @@ class MassTranslateDialog(QDialog):
                 speaker_for_prompt = self.editor._speaker_translation_for_key(
                     speaker_key
                 ).strip()
+                if not speaker_for_prompt:
+                    speaker_for_prompt = self.editor._resolve_name_tokens_in_text(
+                        speaker_key,
+                        prefer_translated=False,
+                    ).strip()
                 if not speaker_for_prompt:
                     speaker_for_prompt = speaker_key
                 is_choice_segment = segment.segment_kind == "choice"
@@ -934,6 +945,11 @@ class MassTranslateDialog(QDialog):
                     entry_type = self._segment_specific_type_label(path, segment)
                 speaker_for_prompt = self.editor._speaker_translation_for_key(
                     speaker_key).strip()
+                if not speaker_for_prompt:
+                    speaker_for_prompt = self.editor._resolve_name_tokens_in_text(
+                        speaker_key,
+                        prefer_translated=False,
+                    ).strip()
                 if not speaker_for_prompt:
                     speaker_for_prompt = speaker_key
                 include_speaker_field = (

@@ -2271,9 +2271,21 @@ class DialogueVisualEditor(
         if isinstance(value, str) and value.strip():
             return value.strip()
 
+        resolved_key = self._normalize_speaker_key(
+            self._resolve_name_tokens_in_text(
+                key,
+                prefer_translated=False,
+            )
+        )
+        if resolved_key != key:
+            legacy_value = self.speaker_translation_map.get(resolved_key, "")
+            if isinstance(legacy_value, str) and legacy_value.strip():
+                return legacy_value.strip()
+
         jp_by_id, en_by_id = self._actor_name_maps()
         for actor_id, jp_name in jp_by_id.items():
-            if self._normalize_speaker_key(jp_name) != key:
+            normalized_jp_name = self._normalize_speaker_key(jp_name)
+            if normalized_jp_name != key and normalized_jp_name != resolved_key:
                 continue
             candidate = en_by_id.get(actor_id, "").strip()
             if candidate:
@@ -2410,10 +2422,7 @@ class DialogueVisualEditor(
     def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
         if not segment.is_structural_dialogue:
             return NO_SPEAKER_KEY
-        explicit_raw = self._resolve_name_tokens_in_text(
-            segment.speaker_name,
-            prefer_translated=False,
-        )
+        explicit_raw = segment.speaker_name
         explicit = self._normalize_speaker_key(explicit_raw)
         if explicit != NO_SPEAKER_KEY:
             return explicit

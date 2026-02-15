@@ -432,7 +432,18 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 speaker_key = self._speaker_key_for_state(segment)
                 speaker_field_present = "speaker_en" in entry
                 if not speaker_en and (not speaker_field_present):
-                    speaker_en = self.speaker_translation_map.get(speaker_key, "")
+                    speaker_lookup = getattr(self, "_speaker_translation_for_key", None)
+                    if callable(speaker_lookup):
+                        try:
+                            resolved_speaker = speaker_lookup(speaker_key)
+                        except Exception:
+                            resolved_speaker = ""
+                        if isinstance(resolved_speaker, str):
+                            speaker_en = resolved_speaker.strip()
+                    if not speaker_en:
+                        map_value = self.speaker_translation_map.get(speaker_key, "")
+                        if isinstance(map_value, str):
+                            speaker_en = map_value.strip()
                 if speaker_key == NO_SPEAKER_KEY:
                     speaker_en = ""
 
