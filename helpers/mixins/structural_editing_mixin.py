@@ -49,6 +49,7 @@ class _EditorHostTypingFallback:
 class StructuralEditingMixin(_EditorHostTypingFallback):
     _COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]")
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
+    _TRAILING_RESET_COLOR_RE = re.compile(r"\\[Cc]\[0\]\s*$")
     def _prompt_smart_collapse_all_options(
         self,
     ) -> Optional[tuple[bool, bool, bool, bool, float, bool]]:
@@ -337,6 +338,33 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         kept_lines[-1] = f"{kept_lines[-1]}\\C[0]"
         return kept_lines, moved_lines
+
+    def _sync_source_split_color_continuity_from_translation(
+        self,
+        kept_source_lines: list[str],
+        moved_source_lines: list[str],
+        kept_translation_lines: list[str],
+        moved_translation_lines: list[str],
+    ) -> tuple[list[str], list[str]]:
+        if not kept_source_lines or not moved_source_lines:
+            return kept_source_lines, moved_source_lines
+        if not kept_translation_lines or not moved_translation_lines:
+            return kept_source_lines, moved_source_lines
+
+        moved_first_tl = moved_translation_lines[0] if moved_translation_lines else ""
+        start_match = self._COLOR_CODE_AT_LINE_START_RE.match(moved_first_tl or "")
+        if (
+            start_match is not None
+            and (not self._line_starts_with_color_code(moved_source_lines[0]))
+        ):
+            moved_source_lines[0] = f"{start_match.group(0)}{moved_source_lines[0]}"
+
+        kept_last_tl = kept_translation_lines[-1] if kept_translation_lines else ""
+        if self._TRAILING_RESET_COLOR_RE.search(kept_last_tl or "") is not None:
+            if self._TRAILING_RESET_COLOR_RE.search(kept_source_lines[-1] or "") is None:
+                kept_source_lines[-1] = f"{kept_source_lines[-1]}\\C[0]"
+
+        return kept_source_lines, moved_source_lines
 
     def _refresh_after_structure_change_without_full_rerender(
         self,
@@ -1057,10 +1085,25 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         )
 
         if translator_mode:
-            kept_source_lines = list(source_lines_before)
-            moved_source_lines = [""]
             kept_tl_lines = list(kept_active_lines)
             moved_tl_lines = list(moved_active_lines)
+            split_index = len(kept_tl_lines)
+            kept_source_lines = (
+                list(source_lines_before[:split_index])
+                if split_index > 0
+                else [""]
+            )
+            moved_source_lines = list(source_lines_before[split_index:])
+            if not moved_source_lines:
+                moved_source_lines = [""]
+            kept_source_lines, moved_source_lines = (
+                self._sync_source_split_color_continuity_from_translation(
+                    kept_source_lines,
+                    moved_source_lines,
+                    kept_tl_lines,
+                    moved_tl_lines,
+                )
+            )
         else:
             kept_source_lines = list(kept_active_lines)
             moved_source_lines = list(moved_active_lines)
@@ -1108,8 +1151,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             translation_only=translator_mode,
         )
 
-        source_segment.lines = list(kept_source_lines)
-        source_segment.source_lines = list(source_segment.lines)
+        if translator_mode:
+            source_segment.source_lines = list(kept_source_lines)
+        else:
+            source_segment.lines = list(kept_source_lines)
+            source_segment.source_lines = list(source_segment.lines)
         source_segment.translation_lines = list(kept_tl_lines)
         if bundle is not None:
             bundle.tokens.insert(

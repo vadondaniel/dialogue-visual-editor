@@ -1021,7 +1021,14 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         failed: list[str] = []
         index_title_applied = False
         index_title_warning = ""
-        target_paths = [path for path in self.file_paths if path in self.sessions]
+        translation_state_path = getattr(self, "translation_state_path", None)
+        target_paths: list[Path] = []
+        for path in self.file_paths:
+            if path not in self.sessions:
+                continue
+            if isinstance(translation_state_path, Path) and path.resolve() == translation_state_path.resolve():
+                continue
+            target_paths.append(path)
         for path in target_paths:
             rel_path = self._relative_path(path)
             payload = self.version_db.get_snapshot_payload(rel_path, version)

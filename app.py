@@ -3501,10 +3501,17 @@ class DialogueVisualEditor(
         ]
 
     def _collect_supported_file_paths(self, data_dir: Path) -> list[Path]:
+        excluded_names = {
+            TRANSLATION_STATE_FILENAME,
+        }
         supported_files: list[Path] = [
             path
             for path in data_dir.glob("*.json")
-            if path.is_file() and not path.name.endswith(".bak")
+            if (
+                path.is_file()
+                and not path.name.endswith(".bak")
+                and path.name not in excluded_names
+            )
         ]
         seen: set[Path] = {path.resolve() for path in supported_files}
         for candidate in self._plugins_js_candidates(data_dir):
