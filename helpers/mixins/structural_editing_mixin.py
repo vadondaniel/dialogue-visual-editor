@@ -757,6 +757,212 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             )
         return True
 
+    def _refresh_after_remove_without_full_rerender(
+        self,
+        session: FileSession,
+        *,
+        removed_uid: str,
+        updated_uids: Optional[set[str]] = None,
+        focus_uid: Optional[str] = None,
+        preserve_scroll: bool = True,
+    ) -> bool:
+        if self.current_path != session.path:
+            return False
+        if self._pending_render_state is not None:
+            return False
+        if self.rendered_blocks_path != session.path:
+            return False
+        if not isinstance(removed_uid, str) or not removed_uid:
+            return False
+
+        actor_mode = self._is_name_index_session(session)
+        if actor_mode:
+            return False
+        translator_mode = self._is_translator_mode()
+        name_index_kind = ""
+        name_index_label = self._name_index_label(session)
+        target_view_meta = self._block_view_meta(
+            translator_mode=translator_mode,
+            actor_mode=actor_mode,
+            name_index_kind=name_index_kind,
+            name_index_label=name_index_label,
+        )
+        if self.rendered_block_view_meta != target_view_meta:
+            return False
+
+        display_segments_resolver = getattr(self, "_display_segments_for_session", None)
+        display_segments_raw: object
+        if callable(display_segments_resolver):
+            display_segments_raw = display_segments_resolver(
+                session,
+                translator_mode=translator_mode,
+                actor_mode=actor_mode,
+            )
+        else:
+            display_segments_raw = list(session.segments)
+        if isinstance(display_segments_raw, list):
+            display_segments: list[DialogueSegment] = cast(
+                list[DialogueSegment], display_segments_raw
+            )
+        else:
+            display_segments = list(session.segments)
+
+        new_uid_order = [segment.uid for segment in display_segments]
+        old_uid_order = list(self.rendered_block_uid_order)
+        if removed_uid in new_uid_order or removed_uid not in old_uid_order:
+            return False
+        if len(new_uid_order) + 1 != len(old_uid_order):
+            return False
+        removed_index = old_uid_order.index(removed_uid)
+        if new_uid_order != (old_uid_order[:removed_index] + old_uid_order[removed_index + 1:]):
+            return False
+
+        normalized_updated_uids = {
+            uid
+            for uid in (updated_uids or set())
+            if isinstance(uid, str) and uid and uid in new_uid_order
+        }
+        existing_widgets = dict(self.block_widgets)
+        removed_widget = existing_widgets.get(removed_uid)
+        if removed_widget is None:
+            return False
+        for segment in display_segments:
+            widget = existing_widgets.get(segment.uid)
+            if widget is None:
+                return False
+            if not self._can_reuse_block_widget(
+                widget,
+                segment=segment,
+                translator_mode=translator_mode,
+                actor_mode=actor_mode,
+                name_index_kind=name_index_kind,
+                name_index_label=name_index_label,
+            ):
+                return False
+
+        block_numbers = self._display_block_numbers(
+            display_segments,
+            actor_mode=actor_mode,
+        )
+        if translator_mode:
+            refreshed_reference_map = self._build_reference_summary_for_session(session)
+            self.reference_summary_cache_by_path[session.path] = refreshed_reference_map
+            self.current_reference_map = refreshed_reference_map
+        else:
+            self.current_reference_map = {}
+
+        previous_scroll_value = (
+            self.scroll_area.verticalScrollBar().value() if preserve_scroll else None
+        )
+        self.current_segment_lookup = {
+            segment.uid: segment for segment in display_segments
+        }
+        if self.selected_segment_uid and self.selected_segment_uid not in self.current_segment_lookup:
+            self.selected_segment_uid = None
+        if focus_uid and focus_uid in self.current_segment_lookup:
+            self.selected_segment_uid = focus_uid
+
+        self.cached_block_widgets_by_path.pop(session.path, None)
+        self.cached_block_uid_order_by_path.pop(session.path, None)
+        self.cached_block_view_meta_by_path.pop(session.path, None)
+        cached_container = self.cached_block_containers_by_path.pop(
+            session.path, None
+        )
+        if isinstance(cached_container, dict):
+            container = cached_container.get("container")
+            if isinstance(container, QWidget) and container is not self.scroll_container:
+                container.deleteLater()
+
+        preserve_widgets = set(cast(list[QWidget], list(existing_widgets.values())))
+        preserve_widgets.discard(removed_widget)
+        self._clear_blocks(preserve_widgets=preserve_widgets)
+        self.block_widgets = {}
+
+        merge_pairs = self._precompute_merge_pairs(
+            session,
+            translator_mode=translator_mode,
+        )
+        segment_count = len(display_segments)
+        for idx, segment in enumerate(display_segments):
+            widget = existing_widgets.pop(segment.uid, None)
+            if widget is None:
+                return False
+            block_number = block_numbers.get(segment.uid, idx + 1)
+            if segment.uid in normalized_updated_uids:
+                self._sync_reused_block_widget(
+                    widget,
+                    segment=segment,
+                    block_number=block_number,
+                    name_index_label=name_index_label,
+                )
+            elif getattr(widget, "block_number", block_number) != block_number:
+                try:
+                    setattr(widget, "block_number", block_number)
+                except Exception:
+                    pass
+                refresh_block_style = getattr(widget, "_refresh_block_style", None)
+                if callable(refresh_block_style):
+                    refresh_block_style()
+
+            self.blocks_layout.addWidget(widget)
+            widget.show()
+            self.block_widgets[segment.uid] = widget
+            self._apply_block_visual_state(segment.uid, widget)
+
+            if idx < segment_count - 1:
+                next_segment = display_segments[idx + 1]
+                if (segment.uid, next_segment.uid) in merge_pairs:
+                    connector_widget = self._build_merge_connector_widget(
+                        session,
+                        segment,
+                        next_segment,
+                    )
+                    self.blocks_layout.addWidget(connector_widget)
+
+        self.blocks_layout.addStretch(1)
+        for leftover in existing_widgets.values():
+            leftover.deleteLater()
+
+        self.rendered_blocks_path = session.path
+        self.rendered_block_uid_order = new_uid_order
+        self.rendered_block_view_meta = target_view_meta
+        self._hide_audit_progress_overlay(self.main_render_progress_overlay)
+
+        source_dirty, tl_dirty = self._session_dirty_flags_cached(session)
+        block_count = len(display_segments)
+        block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
+        header = f"{session.path.name} | {block_count} {block_label}"
+        if source_dirty and tl_dirty:
+            header += " | UNSAVED SOURCE+TL"
+        elif source_dirty:
+            header += " | UNSAVED SOURCE"
+        elif tl_dirty:
+            header += " | UNSAVED TL"
+        self.file_header_label.setText(header)
+        self._update_reset_json_button(session)
+        self._refresh_translator_detail_panel()
+
+        target_widget = (
+            self.block_widgets.get(focus_uid)
+            if focus_uid and focus_uid in self.block_widgets
+            else None
+        )
+        self._flash_pending_audit_target(focus_uid, target_widget)
+        if target_widget is not None:
+            def focus_and_reveal() -> None:
+                self._focus_target_widget(
+                    target_widget,
+                    preserve_scroll_value=previous_scroll_value if preserve_scroll else None,
+                )
+
+            QTimer.singleShot(0, focus_and_reveal)
+            return True
+        if preserve_scroll and previous_scroll_value is not None:
+            QTimer.singleShot(
+                0, lambda: self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
+            )
+        return True
+
     def _segment_line_width(self, segment: DialogueSegment) -> int:
         return self.thin_width_spin.value() if segment.has_face else self.wide_width_spin.value()
 
@@ -1531,12 +1737,19 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
-        if not self._refresh_after_structure_change_without_full_rerender(
+        if not self._refresh_after_remove_without_full_rerender(
             session,
+            removed_uid=right_uid,
+            updated_uids={left_uid},
             focus_uid=left_uid,
             preserve_scroll=True,
         ):
-            self._render_session(session, focus_uid=left_uid, preserve_scroll=True)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=left_uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(session, focus_uid=left_uid, preserve_scroll=True)
         self.statusBar().showMessage("Merged neighboring dialogue blocks.")
 
     def _on_reset_requested(self, uid: str) -> None:
@@ -1709,11 +1922,16 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
-        if not self._refresh_after_structure_change_without_full_rerender(
+        if not self._refresh_after_remove_without_full_rerender(
             session,
+            removed_uid=uid,
             preserve_scroll=True,
         ):
-            self._render_session(session)
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                preserve_scroll=True,
+            ):
+                self._render_session(session)
         self.statusBar().showMessage("Deleted dialogue block.")
 
     def _apply_undo_delete(self, action: DeletedBlockAction) -> bool:
