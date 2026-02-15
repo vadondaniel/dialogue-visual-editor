@@ -28,7 +28,9 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -46,6 +48,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QSpinBox,
     QSplitter,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -223,10 +226,13 @@ class DialogueVisualEditor(
         self.current_reference_map: dict[str, tuple[str, str]] = {}
         self.segment_uid_counter = 0
         self.translation_uid_counter = 0
+        default_prompt_template = self._default_translation_prompt_template()
         self.active_translation_profile_id = DEFAULT_TRANSLATION_PROFILE_ID
         self.translation_profiles_meta: dict[str, dict[str, Any]] = {
             DEFAULT_TRANSLATION_PROFILE_ID: {
                 "name": DEFAULT_TRANSLATION_PROFILE_NAME,
+                "target_language_code": "en",
+                "prompt_template": default_prompt_template,
             }
         }
         self.speaker_custom_colors: dict[str, str] = {}
@@ -255,10 +261,13 @@ class DialogueVisualEditor(
         self.translation_state: dict[str, Any] = {
             "version": 2,
             "active_profile_id": DEFAULT_TRANSLATION_PROFILE_ID,
+            "source_language_code": "ja",
             "profiles": {
                 DEFAULT_TRANSLATION_PROFILE_ID: {
                     "name": DEFAULT_TRANSLATION_PROFILE_NAME,
                     "uid_counter": 0,
+                    "target_language_code": "en",
+                    "prompt_template": default_prompt_template,
                     "speaker_map": {},
                     "files": {},
                 }
@@ -268,6 +277,8 @@ class DialogueVisualEditor(
         self._settings_translation_profiles_switch_menu: Optional[QMenu] = None
         self._settings_translation_profile_switch_group: Optional[QActionGroup] = None
         self._settings_translation_new_profile_action: Optional[QAction] = None
+        self._settings_translation_profile_settings_action: Optional[QAction] = None
+        self._settings_translation_project_source_action: Optional[QAction] = None
         self._settings_translation_rename_profile_action: Optional[QAction] = None
         self._settings_translation_delete_profile_action: Optional[QAction] = None
         self.audit_window: Optional[QDialog] = None
@@ -1068,6 +1079,20 @@ class DialogueVisualEditor(
         translation_profiles_menu.addAction(new_profile_action)
         self._settings_translation_new_profile_action = new_profile_action
 
+        profile_settings_action = QAction("Edit Active Profile Settings...", self)
+        profile_settings_action.triggered.connect(
+            self._edit_active_translation_profile_settings
+        )
+        translation_profiles_menu.addAction(profile_settings_action)
+        self._settings_translation_profile_settings_action = profile_settings_action
+
+        project_source_action = QAction("Set Project Source Language...", self)
+        project_source_action.triggered.connect(
+            self._set_project_source_language_code
+        )
+        translation_profiles_menu.addAction(project_source_action)
+        self._settings_translation_project_source_action = project_source_action
+
         rename_profile_action = QAction("Rename Active Profile...", self)
         rename_profile_action.triggered.connect(self._rename_active_translation_profile)
         translation_profiles_menu.addAction(rename_profile_action)
@@ -1199,9 +1224,10 @@ class DialogueVisualEditor(
 
     def _translation_profile_choice_label(self, profile_id: str) -> str:
         profile_name = self._translation_profile_name(profile_id)
+        target_language_code = self._translation_profile_target_language_code(profile_id)
         if profile_name == profile_id:
-            return profile_name
-        return f"{profile_name} ({profile_id})"
+            return f"{profile_name} [{target_language_code}]"
+        return f"{profile_name} ({profile_id}) [{target_language_code}]"
 
     def _generate_translation_profile_id(self, display_name: str) -> str:
         normalized_base = re.sub(r"[^a-z0-9]+", "-", display_name.lower()).strip("-")
@@ -1244,6 +1270,12 @@ class DialogueVisualEditor(
         has_folder = self.data_dir is not None
         if self._settings_translation_new_profile_action is not None:
             self._settings_translation_new_profile_action.setEnabled(has_folder)
+        if self._settings_translation_profile_settings_action is not None:
+            self._settings_translation_profile_settings_action.setEnabled(
+                has_folder and bool(profile_ids)
+            )
+        if self._settings_translation_project_source_action is not None:
+            self._settings_translation_project_source_action.setEnabled(has_folder)
         if self._settings_translation_rename_profile_action is not None:
             self._settings_translation_rename_profile_action.setEnabled(
                 has_folder and bool(profile_ids)
@@ -1408,9 +1440,17 @@ class DialogueVisualEditor(
                         profile_id,
                     )
         else:
+            source_profile_target_language_code = self._translation_profile_target_language_code(
+                self.active_translation_profile_id
+            )
+            source_profile_prompt_template = self._translation_profile_prompt_template(
+                self.active_translation_profile_id
+            )
             profiles[profile_id] = {
                 "name": profile_name,
                 "uid_counter": 0,
+                "target_language_code": source_profile_target_language_code,
+                "prompt_template": source_profile_prompt_template,
                 "speaker_map": {},
                 "files": {},
             }
@@ -1445,6 +1485,131 @@ class DialogueVisualEditor(
 
         self._refresh_translation_profiles_meta()
         self._switch_translation_profile(profile_id, prompt_unsaved=False)
+
+    def _edit_active_translation_profile_settings(self) -> None:
+        if self.data_dir is None:
+            QMessageBox.warning(
+                self,
+                "No folder selected",
+                "Load a data folder before editing translation profile settings.",
+            )
+            return
+        active_profile_id = self.active_translation_profile_id
+        profile_name = self._translation_profile_name(active_profile_id)
+        current_target_language_code = self._translation_profile_target_language_code(
+            active_profile_id
+        )
+        current_prompt_template = self._translation_profile_prompt_template(
+            active_profile_id
+        )
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(
+            f"Profile Settings: {profile_name} ({active_profile_id})"
+        )
+        dialog.resize(760, 560)
+        root = QVBoxLayout(dialog)
+        form = QFormLayout()
+        form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+
+        target_language_code_edit = QLineEdit(current_target_language_code)
+        target_language_code_edit.setPlaceholderText("en, fr, es-419, ...")
+        form.addRow("Target language code", target_language_code_edit)
+
+        prompt_template_edit = QTextEdit()
+        prompt_template_edit.setAcceptRichText(False)
+        prompt_template_edit.setPlainText(current_prompt_template)
+        form.addRow("Prompt template", prompt_template_edit)
+        root.addLayout(form, 1)
+
+        hint_label = QLabel(
+            (
+                "Available placeholders: {source_language_code}, {target_language_code}, "
+                "{source_field}, {target_field}, {payload_json}."
+            )
+        )
+        hint_label.setWordWrap(True)
+        root.addWidget(hint_label)
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        reset_prompt_btn = button_box.addButton(
+            "Reset Default Prompt",
+            QDialogButtonBox.ButtonRole.ActionRole,
+        )
+        reset_prompt_btn.clicked.connect(
+            lambda: prompt_template_edit.setPlainText(
+                self._default_translation_prompt_template()
+            )
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        root.addWidget(button_box)
+
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return
+
+        target_language_code = target_language_code_edit.text().strip()
+        if not target_language_code:
+            QMessageBox.warning(
+                self,
+                "Invalid language code",
+                "Target language code cannot be empty.",
+            )
+            return
+        prompt_template = prompt_template_edit.toPlainText().strip()
+        self._set_translation_profile_prompt_settings(
+            target_language_code=target_language_code,
+            prompt_template=prompt_template,
+            profile_id=active_profile_id,
+        )
+        self._save_translation_state()
+        self._rebuild_translation_profile_menu()
+        self.statusBar().showMessage(
+            (
+                f"Updated profile settings for '{profile_name}' "
+                f"({active_profile_id}) -> target {self._translation_profile_target_language_code(active_profile_id)}."
+            )
+        )
+
+    def _set_project_source_language_code(self) -> None:
+        if self.data_dir is None:
+            QMessageBox.warning(
+                self,
+                "No folder selected",
+                "Load a data folder before editing project source language.",
+            )
+            return
+        current_source_language_code = self._translation_project_source_language_code()
+        source_language_code_raw, accepted = QInputDialog.getText(
+            self,
+            "Project Source Language",
+            "Project source language code:",
+            QLineEdit.EchoMode.Normal,
+            current_source_language_code,
+        )
+        if not accepted:
+            return
+        source_language_code = source_language_code_raw.strip()
+        if not source_language_code:
+            QMessageBox.warning(
+                self,
+                "Invalid language code",
+                "Source language code cannot be empty.",
+            )
+            return
+        self._set_translation_project_source_language_code(source_language_code)
+        self._save_translation_state()
+        self.statusBar().showMessage(
+            (
+                "Set project source language to "
+                f"'{self._translation_project_source_language_code()}'."
+            )
+        )
 
     def _rename_active_translation_profile(self) -> None:
         if self.data_dir is None:

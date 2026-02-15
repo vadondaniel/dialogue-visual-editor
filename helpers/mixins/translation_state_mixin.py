@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _DEFAULT_TRANSLATION_PROFILE_ID = "default"
 _DEFAULT_TRANSLATION_PROFILE_NAME = "Default"
+_DEFAULT_SOURCE_LANGUAGE_CODE = "ja"
+_DEFAULT_TARGET_LANGUAGE_CODE = "en"
 
 
 class _EditorHostTypingFallback:
@@ -267,6 +269,30 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 return cleaned
         return _DEFAULT_TRANSLATION_PROFILE_ID
 
+    def _normalize_language_code(self, value: Any, default: str) -> str:
+        if isinstance(value, str):
+            cleaned = value.strip().replace("_", "-").lower()
+            if cleaned and re.fullmatch(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*", cleaned):
+                return cleaned
+        return default
+
+    def _default_translation_prompt_template(self) -> str:
+        return (
+            "Translate `{source_field}` from {source_language_code} into "
+            "{target_language_code} for each entry, writing output to `{target_field}`.\n"
+            "Keep JSON structure and IDs unchanged.\n"
+            "Do not change `speaker`, `{source_field}`, `context_before`, or `context_after`.\n"
+            "Preserve all control codes and symbols exactly (`\\\\C[]` `\\\\V[]` `\\\\N[]` `\\\\I[]` `\\\\{` `♡`).\n"
+            "Keep \\\\n line breaks from `{source_field}`.\n"
+            "Use natural game dialogue in {target_language_code}; keep the same tone "
+            "(taunts/flirting/insults) without sanitizing.\n"
+            "`{target_field}` is only the JSON field name; it stores {target_language_code} text.\n"
+            "Return JSON only.\n\n"
+            "```json\n"
+            "{payload_json}\n"
+            "```"
+        )
+
     def _default_translation_profile_name(self, profile_id: str) -> str:
         if profile_id == _DEFAULT_TRANSLATION_PROFILE_ID:
             return _DEFAULT_TRANSLATION_PROFILE_NAME
@@ -312,9 +338,30 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         uid_counter = raw_uid_counter if isinstance(raw_uid_counter, int) else 0
         if uid_counter < 0:
             uid_counter = 0
+        raw_prompt_template = profile_dict.get("prompt_template")
+        prompt_template = (
+            raw_prompt_template.strip()
+            if isinstance(raw_prompt_template, str)
+            else ""
+        )
+        if not prompt_template:
+            legacy_prompt_instructions = profile_dict.get("prompt_instructions")
+            if isinstance(legacy_prompt_instructions, str) and legacy_prompt_instructions.strip():
+                prompt_template = (
+                    self._default_translation_prompt_template()
+                    + "\n\n"
+                    + legacy_prompt_instructions.strip()
+                )
+            else:
+                prompt_template = self._default_translation_prompt_template()
         return {
             "name": name,
             "uid_counter": uid_counter,
+            "target_language_code": self._normalize_language_code(
+                profile_dict.get("target_language_code"),
+                _DEFAULT_TARGET_LANGUAGE_CODE,
+            ),
+            "prompt_template": prompt_template,
             "speaker_map": self._normalize_profile_speaker_map(
                 profile_dict.get("speaker_map")
             ),
@@ -382,10 +429,15 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 if sorted_profile_ids
                 else _DEFAULT_TRANSLATION_PROFILE_ID
             )
+        source_language_code = self._normalize_language_code(
+            raw_dict.get("source_language_code"),
+            _DEFAULT_SOURCE_LANGUAGE_CODE,
+        )
 
         return {
             "version": 2,
             "active_profile_id": active_profile_id,
+            "source_language_code": source_language_code,
             "profiles": profiles,
         }
 
@@ -402,12 +454,114 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else (
                 self._default_translation_profile_name(profile_id)
             )
-            meta[profile_id] = {"name": name}
+            target_language_code = self._normalize_language_code(
+                state.get("target_language_code"),
+                _DEFAULT_TARGET_LANGUAGE_CODE,
+            )
+            prompt_template_raw = state.get("prompt_template")
+            prompt_template = (
+                prompt_template_raw.strip()
+                if isinstance(prompt_template_raw, str)
+                else self._default_translation_prompt_template()
+            )
+            if not prompt_template:
+                prompt_template = self._default_translation_prompt_template()
+            meta[profile_id] = {
+                "name": name,
+                "target_language_code": target_language_code,
+                "prompt_template": prompt_template,
+            }
         if not meta:
             meta[_DEFAULT_TRANSLATION_PROFILE_ID] = {
-                "name": _DEFAULT_TRANSLATION_PROFILE_NAME
+                "name": _DEFAULT_TRANSLATION_PROFILE_NAME,
+                "target_language_code": _DEFAULT_TARGET_LANGUAGE_CODE,
+                "prompt_template": self._default_translation_prompt_template(),
             }
         self.translation_profiles_meta = meta
+
+    def _translation_project_source_language_code(self) -> str:
+        self.translation_state = self._normalize_translation_state_v2(self.translation_state)
+        raw_source_language_code = self.translation_state.get("source_language_code")
+        normalized_source_language_code = self._normalize_language_code(
+            raw_source_language_code,
+            _DEFAULT_SOURCE_LANGUAGE_CODE,
+        )
+        self.translation_state["source_language_code"] = normalized_source_language_code
+        return normalized_source_language_code
+
+    def _set_translation_project_source_language_code(self, source_language_code: str) -> None:
+        self.translation_state = self._normalize_translation_state_v2(self.translation_state)
+        self.translation_state["source_language_code"] = self._normalize_language_code(
+            source_language_code,
+            _DEFAULT_SOURCE_LANGUAGE_CODE,
+        )
+
+    def _translation_profile_target_language_code(
+        self,
+        profile_id: Optional[str] = None,
+    ) -> str:
+        normalized_profile_id = self._normalize_translation_profile_id(
+            profile_id if isinstance(profile_id, str) else self.active_translation_profile_id
+        )
+        profile_state = self._ensure_translation_profile(normalized_profile_id)
+        target_language_code = self._normalize_language_code(
+            profile_state.get("target_language_code"),
+            _DEFAULT_TARGET_LANGUAGE_CODE,
+        )
+        profile_state["target_language_code"] = target_language_code
+        self._refresh_translation_profiles_meta()
+        return target_language_code
+
+    def _translation_profile_prompt_template(
+        self,
+        profile_id: Optional[str] = None,
+    ) -> str:
+        normalized_profile_id = self._normalize_translation_profile_id(
+            profile_id if isinstance(profile_id, str) else self.active_translation_profile_id
+        )
+        profile_state = self._ensure_translation_profile(normalized_profile_id)
+        raw_prompt_template = profile_state.get("prompt_template")
+        prompt_template = (
+            raw_prompt_template.strip()
+            if isinstance(raw_prompt_template, str)
+            else self._default_translation_prompt_template()
+        )
+        if not prompt_template:
+            prompt_template = self._default_translation_prompt_template()
+        profile_state["prompt_template"] = prompt_template
+        self._refresh_translation_profiles_meta()
+        return prompt_template
+
+    def _set_translation_profile_prompt_settings(
+        self,
+        *,
+        target_language_code: str,
+        prompt_template: str,
+        profile_id: Optional[str] = None,
+    ) -> None:
+        normalized_profile_id = self._normalize_translation_profile_id(
+            profile_id if isinstance(profile_id, str) else self.active_translation_profile_id
+        )
+        profile_state = self._ensure_translation_profile(normalized_profile_id)
+        profile_state["target_language_code"] = self._normalize_language_code(
+            target_language_code,
+            _DEFAULT_TARGET_LANGUAGE_CODE,
+        )
+        normalized_prompt_template = (
+            prompt_template.strip()
+            if isinstance(prompt_template, str)
+            else ""
+        )
+        if not normalized_prompt_template:
+            normalized_prompt_template = self._default_translation_prompt_template()
+        profile_state["prompt_template"] = normalized_prompt_template
+        self._refresh_translation_profiles_meta()
+
+    def _translation_profile_prompt_instructions(
+        self,
+        profile_id: Optional[str] = None,
+    ) -> str:
+        return self._translation_profile_prompt_template(profile_id)
 
     def _ensure_translation_profile(self, profile_id: str) -> dict[str, Any]:
         normalized_state = self._normalize_translation_state_v2(self.translation_state)

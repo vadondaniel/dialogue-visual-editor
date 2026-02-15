@@ -33,7 +33,11 @@ class _Harness(TranslationStateMixin):
         }
         self.active_translation_profile_id = "default"
         self.translation_profiles_meta: dict[str, dict[str, Any]] = {
-            "default": {"name": "Default"}
+            "default": {
+                "name": "Default",
+                "target_language_code": "en",
+                "prompt_template": self._default_translation_prompt_template(),
+            }
         }
         self.translation_state_path: Path | None = None
         self.speaker_translation_map: dict[str, str] = {}
@@ -183,6 +187,7 @@ class TranslationStateMixinTests(unittest.TestCase):
 
         self.assertEqual(harness.translation_state.get("version"), 2)
         self.assertEqual(harness.active_translation_profile_id, "default")
+        self.assertEqual(harness.translation_state.get("source_language_code"), "ja")
         profiles = harness.translation_state.get("profiles")
         self.assertIsInstance(profiles, dict)
         default_profile = profiles.get("default") if isinstance(profiles, dict) else None
@@ -190,8 +195,37 @@ class TranslationStateMixinTests(unittest.TestCase):
         if isinstance(default_profile, dict):
             self.assertEqual(default_profile.get("uid_counter"), 12)
             self.assertEqual(default_profile.get("speaker_map"), {"Hero": "Aki"})
+            self.assertEqual(default_profile.get("target_language_code"), "en")
+            prompt_template = default_profile.get("prompt_template")
+            self.assertTrue(isinstance(prompt_template, str))
+            if isinstance(prompt_template, str):
+                self.assertIn("{payload_json}", prompt_template)
             files = default_profile.get("files")
             self.assertTrue(isinstance(files, dict) and "Map001.json" in files)
+
+    def test_language_and_prompt_settings_normalization(self) -> None:
+        harness = _Harness()
+        harness.translation_state = {
+            "version": 2,
+            "active_profile_id": "default",
+            "source_language_code": "JA_JP",
+            "profiles": {
+                "default": {
+                    "name": "Default",
+                    "uid_counter": 0,
+                    "target_language_code": "EN-US",
+                    "prompt_template": "  Keep honorifics.  ",
+                    "speaker_map": {},
+                    "files": {},
+                }
+            },
+        }
+        source_lang = harness._translation_project_source_language_code()
+        target_lang = harness._translation_profile_target_language_code("default")
+        prompt_template = harness._translation_profile_prompt_template("default")
+        self.assertEqual(source_lang, "ja-jp")
+        self.assertEqual(target_lang, "en-us")
+        self.assertEqual(prompt_template, "Keep honorifics.")
 
     def test_apply_state_uses_active_profile_and_keeps_speaker_map_isolated(self) -> None:
         harness = _Harness()

@@ -58,6 +58,15 @@ class MassTranslateHost(Protocol):
     ) -> None: ...
     def _refresh_translator_detail_panel(self) -> None: ...
     def statusBar(self) -> Any: ...
+    def _translation_project_source_language_code(self) -> str: ...
+    def _translation_profile_target_language_code(
+        self,
+        profile_id: Optional[str] = None,
+    ) -> str: ...
+    def _translation_profile_prompt_template(
+        self,
+        profile_id: Optional[str] = None,
+    ) -> str: ...
 
 
 class MassTranslateDialog(QDialog):
@@ -397,13 +406,13 @@ class MassTranslateDialog(QDialog):
         content_type: str,
         entry_type: str,
         speaker_value: str,
-        jp_text: str,
+        source_text: str,
     ) -> tuple[str, str, str, str]:
         return (
             content_type.strip(),
             entry_type.strip(),
             speaker_value.strip(),
-            jp_text.strip(),
+            source_text.strip(),
         )
 
     def _on_deduplicate_blocks_toggled(self, checked: bool) -> None:
@@ -519,7 +528,7 @@ class MassTranslateDialog(QDialog):
                     content_type=content_type,
                     entry_type=entry_type,
                     speaker_value=speaker_field_value,
-                    jp_text=source_text,
+                    source_text=source_text,
                 )
 
                 existing_lines = self._segment_existing_lines_for_mass_translate(
@@ -816,6 +825,7 @@ class MassTranslateDialog(QDialog):
         else:
             indexes = range(segment_index + 1, len(session.segments))
 
+        source_field = self._source_text_field_name()
         blocks: list[dict[str, str]] = []
         for idx in indexes:
             neighbor = session.segments[idx]
@@ -824,11 +834,11 @@ class MassTranslateDialog(QDialog):
                 speaker_key).strip()
             if not speaker_display:
                 speaker_display = speaker_key
-            jp_text = "\n".join(
+            source_text = "\n".join(
                 self.editor._segment_source_lines_for_display(neighbor)).strip()
-            if not jp_text:
-                jp_text = "(empty)"
-            blocks.append({"speaker": speaker_display, "jp_text": jp_text})
+            if not source_text:
+                source_text = "(empty)"
+            blocks.append({"speaker": speaker_display, source_field: source_text})
             if len(blocks) >= box_limit:
                 break
 
@@ -886,6 +896,8 @@ class MassTranslateDialog(QDialog):
         self.speaker_targets.clear()
         self._dedupe_collapsed_entries = 0
         entries: list[dict[str, Any]] = []
+        source_field = self._source_text_field_name()
+        target_field = self._target_translation_field_name()
         session_items = self._scoped_session_items()
         speaker_keys: set[str] = set()
         dedupe_enabled = bool(self.deduplicate_blocks_check.isChecked())
@@ -963,7 +975,7 @@ class MassTranslateDialog(QDialog):
                         content_type=content_type,
                         entry_type=entry_type,
                         speaker_value=speaker_field_value,
-                        jp_text=source_text,
+                        source_text=source_text,
                     )
                     canonical_entry_id = dedupe_key_to_entry_id.get(dedupe_key)
                     if canonical_entry_id is not None:
@@ -988,8 +1000,8 @@ class MassTranslateDialog(QDialog):
                         "id": entry_id,
                         "type": entry_type,
                         **({"speaker": speaker_for_prompt} if include_speaker_field else {}),
-                        "jp_text": source_text,
-                        "en_translation": existing_text,
+                        source_field: source_text,
+                        target_field: existing_text,
                     }
                 )
                 if content_type == "dialogue":
@@ -1025,8 +1037,8 @@ class MassTranslateDialog(QDialog):
                     {
                         "id": entry_id,
                         "type": "speaker_name",
-                        "jp_text": speaker_key,
-                        "en_translation": existing_speaker,
+                        source_field: speaker_key,
+                        target_field: existing_speaker,
                     }
                 )
                 self.speaker_targets[entry_id] = speaker_key
@@ -1180,22 +1192,121 @@ class MassTranslateDialog(QDialog):
         self.result_box.setPlainText(
             "Copied selected chunk JSON to clipboard.")
 
+    @staticmethod
+    def _normalize_prompt_language_code(raw_value: Any, default: str) -> str:
+        if isinstance(raw_value, str):
+            cleaned = raw_value.strip().replace("_", "-").lower()
+            if cleaned:
+                return cleaned
+        return default
+
+    @classmethod
+    def _default_prompt_template(cls) -> str:
+        return (
+            "Translate `{source_field}` from {source_language_code} into "
+            "{target_language_code} for each entry, writing output to `{target_field}`.\n"
+            "Keep JSON structure and IDs unchanged.\n"
+            "Do not change `speaker`, `{source_field}`, `context_before`, or `context_after`.\n"
+            "Preserve all control codes and symbols exactly (`\\C[]` `\\V[]` `\\N[]` `\\I[]` `\\{` `♡`).\n"
+            "Keep \\n line breaks from `{source_field}`.\n"
+            "Use natural game dialogue in {target_language_code}; keep the same tone "
+            "(taunts/flirting/insults) without sanitizing.\n"
+            "`{target_field}` is the output text field.\n"
+            "Return JSON only.\n\n"
+            "```json\n"
+            "{payload_json}\n"
+            "```"
+        )
+
+    @staticmethod
+    def _language_field_prefix(language_code: str, default_prefix: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", "_", language_code.lower()).strip("_")
+        if not normalized:
+            return default_prefix
+        return normalized
+
+    def _source_text_field_name(self) -> str:
+        source_language_code, _, _ = self._translation_prompt_metadata()
+        return (
+            f"{self._language_field_prefix(source_language_code, 'source')}_text"
+        )
+
+    def _target_translation_field_name(self) -> str:
+        _, target_language_code, _ = self._translation_prompt_metadata()
+        return (
+            f"{self._language_field_prefix(target_language_code, 'target')}_translation"
+        )
+
+    def _translation_prompt_metadata(self) -> tuple[str, str, str]:
+        source_language_code = "ja"
+        target_language_code = "en"
+        prompt_template = self._default_prompt_template()
+
+        source_language_resolver = getattr(
+            self.editor,
+            "_translation_project_source_language_code",
+            None,
+        )
+        if callable(source_language_resolver):
+            try:
+                resolved_source = source_language_resolver()
+            except Exception:
+                resolved_source = None
+            source_language_code = self._normalize_prompt_language_code(
+                resolved_source,
+                "ja",
+            )
+
+        target_language_resolver = getattr(
+            self.editor,
+            "_translation_profile_target_language_code",
+            None,
+        )
+        if callable(target_language_resolver):
+            try:
+                resolved_target = target_language_resolver()
+            except Exception:
+                resolved_target = None
+            target_language_code = self._normalize_prompt_language_code(
+                resolved_target,
+                "en",
+            )
+
+        prompt_template_resolver = getattr(
+            self.editor,
+            "_translation_profile_prompt_template",
+            None,
+        )
+        if callable(prompt_template_resolver):
+            try:
+                resolved_prompt_template = prompt_template_resolver()
+            except Exception:
+                resolved_prompt_template = None
+            if isinstance(resolved_prompt_template, str) and resolved_prompt_template.strip():
+                prompt_template = resolved_prompt_template.strip()
+
+        return source_language_code, target_language_code, prompt_template
+
     def _build_prompt_for_payload(self, payload: dict[str, Any]) -> str:
         payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
-        lines = [
-            "Translate `jp_text` into `en_translation` for each entry.",
-            "Keep JSON structure and IDs unchanged.",
-            "Do not change `speaker`, `jp_text`, `context_before`, or `context_after`.",
-            "Preserve all control codes and symbols exactly (`\\C[]` `\\V[]` `\\N[]` `\\I[]` `\\{` `♡`).",
-            "Keep \\n line breaks from jp_text.",
-            "Use natural English game dialogue; keep the same tone (taunts/flirting/insults) without sanitizing.",
-            "Return JSON only.",
-            "",
-            "```json",
-            payload_json,
-            "```",
-        ]
-        return "\n".join(lines)
+        (
+            source_language_code,
+            target_language_code,
+            prompt_template,
+        ) = self._translation_prompt_metadata()
+        source_field = self._source_text_field_name()
+        target_field = self._target_translation_field_name()
+        rendered_prompt = prompt_template
+        replacements = {
+            "source_language_code": source_language_code,
+            "target_language_code": target_language_code,
+            "source_field": source_field,
+            "target_field": target_field,
+            "payload_json": payload_json,
+        }
+        for key, value in replacements.items():
+            rendered_prompt = rendered_prompt.replace(f"{{{key}}}", value)
+        return rendered_prompt
 
     def _copy_active_chunk_prompt(self) -> None:
         idx = self.chunk_combo.currentIndex()
@@ -1350,6 +1461,7 @@ class MassTranslateDialog(QDialog):
         if isinstance(translations_raw, dict):
             return self._entries_from_payload(translations_raw)
 
+        target_field = self._target_translation_field_name()
         converted: list[dict[str, Any]] = []
         for key, value in payload.items():
             if not isinstance(key, str):
@@ -1368,9 +1480,9 @@ class MassTranslateDialog(QDialog):
                 row["id"] = key
                 converted.append(row)
             elif isinstance(value, list):
-                converted.append({"id": key, "translation_lines_en": value})
+                converted.append({"id": key, target_field: value})
             else:
-                converted.append({"id": key, "translation_en": value})
+                converted.append({"id": key, target_field: value})
         if converted:
             return converted
 
@@ -1382,7 +1494,9 @@ class MassTranslateDialog(QDialog):
         return []
 
     def _extract_dialogue_translation_lines(self, entry: dict[str, Any]) -> Optional[list[str]]:
+        target_field = self._target_translation_field_name()
         line_fields = [
+            target_field,
             "translation_lines_en",
             "translated_lines_en",
             "translation_lines",
@@ -1390,6 +1504,7 @@ class MassTranslateDialog(QDialog):
             "lines_en",
         ]
         text_fields = [
+            target_field,
             "en_translation",
             "translation_en",
             "translated_en",
@@ -1414,7 +1529,9 @@ class MassTranslateDialog(QDialog):
         return None
 
     def _extract_speaker_translation(self, entry: dict[str, Any]) -> Optional[str]:
+        target_field = self._target_translation_field_name()
         fields = [
+            target_field,
             "en_translation",
             "translation_en",
             "speaker_en",
