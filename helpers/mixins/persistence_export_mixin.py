@@ -10,9 +10,15 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 
-from PySide6.QtWidgets import QMessageBox, QWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog, QWidget
 
-from ..core.models import NO_SPEAKER_KEY, CommandToken, DialogueSegment, FileSession
+from ..core.models import (
+    NO_SPEAKER_KEY,
+    CommandBundle,
+    CommandToken,
+    DialogueSegment,
+    FileSession,
+)
 from ..core.parser import is_plugins_js_path, plugins_js_source_from_data
 from ..core.script_message_utils import build_game_message_call
 from ..core.text_utils import (
@@ -754,9 +760,69 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             bundle.commands_ref[:] = rebuilt
 
     def _build_source_data_for_session(self, session: FileSession) -> Any:
-        source_session = copy.deepcopy(session)
+        source_data = copy.deepcopy(session.data)
+        list_mapping: dict[int, list[Any]] = {}
+        self._collect_list_mapping_from_copied_data(
+            session.data,
+            source_data,
+            list_mapping,
+        )
+
+        source_bundles: list[CommandBundle] = []
+        for bundle in session.bundles:
+            mapped_commands_ref = list_mapping.get(id(bundle.commands_ref))
+            if not isinstance(mapped_commands_ref, list):
+                # Fallback to legacy full deep-copy path when bundle list mapping is unknown.
+                source_session = copy.deepcopy(session)
+                self._apply_session_to_json(source_session)
+                return source_session.data
+            source_bundles.append(
+                CommandBundle(
+                    context=bundle.context,
+                    commands_ref=mapped_commands_ref,
+                    tokens=list(bundle.tokens),
+                )
+            )
+
+        source_session = FileSession(
+            path=session.path,
+            data=source_data,
+            bundles=source_bundles,
+            segments=session.segments,
+            dirty=session.dirty,
+        )
+        for attr_name, attr_value in vars(session).items():
+            if attr_name in {"path", "data", "bundles", "segments", "dirty"}:
+                continue
+            setattr(source_session, attr_name, attr_value)
         self._apply_session_to_json(source_session)
-        return source_session.data
+        return source_data
+
+    def _collect_list_mapping_from_copied_data(
+        self,
+        original_node: Any,
+        copied_node: Any,
+        mapping: dict[int, list[Any]],
+    ) -> None:
+        if isinstance(original_node, list) and isinstance(copied_node, list):
+            mapping[id(original_node)] = copied_node
+            pair_count = min(len(original_node), len(copied_node))
+            for index in range(pair_count):
+                self._collect_list_mapping_from_copied_data(
+                    original_node[index],
+                    copied_node[index],
+                    mapping,
+                )
+            return
+        if isinstance(original_node, dict) and isinstance(copied_node, dict):
+            for key, original_value in original_node.items():
+                if key not in copied_node:
+                    continue
+                self._collect_list_mapping_from_copied_data(
+                    original_value,
+                    copied_node[key],
+                    mapping,
+                )
 
     def _mark_session_source_saved(self, session: FileSession) -> None:
         for segment in session.segments:
@@ -794,7 +860,14 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             profile_id=active_profile_id,
         )
 
-    def _save_session(self, session: FileSession, refresh_current_view: bool = False) -> bool:
+    def _save_session(
+        self,
+        session: FileSession,
+        refresh_current_view: bool = False,
+        *,
+        save_translation_state: bool = True,
+        show_status_message: bool = True,
+    ) -> bool:
         if self.version_db is None:
             QMessageBox.critical(
                 cast(QWidget, self),
@@ -806,7 +879,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         translator_mode = self._is_translator_mode()
         source_dirty_before_save = self._session_has_source_changes(session)
         try:
-            if not self._save_translation_state([session.path]):
+            if save_translation_state and (not self._save_translation_state([session.path])):
                 return False
 
             save_working_snapshot = (not translator_mode) or source_dirty_before_save
@@ -845,12 +918,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             if refresh_current_view and self.current_path == session.path:
                 self._render_session(session, preserve_scroll=True)
 
-            if translator_mode and not source_dirty_before_save:
-                self.statusBar().showMessage(
-                    f"Saved TL snapshot to DB: {session.path.name}")
-            else:
-                self.statusBar().showMessage(
-                    f"Saved snapshot to DB: {session.path.name}")
+            if show_status_message:
+                if translator_mode and not source_dirty_before_save:
+                    self.statusBar().showMessage(
+                        f"Saved TL snapshot to DB: {session.path.name}")
+                else:
+                    self.statusBar().showMessage(
+                        f"Saved snapshot to DB: {session.path.name}")
             return True
         except Exception as exc:
             logger.exception("Failed to save snapshot for '%s'.", session.path)
@@ -943,36 +1017,46 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 f"Reset {session.path.name} to saved snapshot state.")
 
     def _save_all_files(self) -> bool:
-        if self._is_translator_mode():
-            dirty_paths = [
-                path
-                for path, session in self.sessions.items()
-                if self._session_has_source_changes(session)
-                or self._session_has_translation_changes(session)
-            ]
-            if not dirty_paths:
-                self.statusBar().showMessage("No unsaved files.")
-                return True
-        else:
-            dirty_paths = [
-                path
-                for path, session in self.sessions.items()
-                if self._session_has_source_changes(session)
-                or self._session_has_translation_changes(session)
-            ]
-            if not dirty_paths:
-                self.statusBar().showMessage("No unsaved files.")
-                return True
+        dirty_paths = [
+            path
+            for path, session in self.sessions.items()
+            if self._session_has_source_changes(session)
+            or self._session_has_translation_changes(session)
+        ]
+        if not dirty_paths:
+            self.statusBar().showMessage("No unsaved files.")
+            return True
+
+        if not self._save_translation_state(dirty_paths):
+            return False
 
         failures: list[str] = []
-        for path in dirty_paths:
+        progress_dialog = self._create_save_all_progress_dialog(len(dirty_paths))
+        total_dirty = len(dirty_paths)
+        for index, path in enumerate(dirty_paths, start=1):
+            self._update_save_all_progress_dialog(
+                progress_dialog,
+                index - 1,
+                f"Saving {index}/{total_dirty}: {path.name}",
+            )
             session = self.sessions.get(path)
             if session is None:
                 continue
             ok = self._save_session(
-                session, refresh_current_view=(path == self.current_path))
+                session,
+                refresh_current_view=(path == self.current_path),
+                save_translation_state=False,
+                show_status_message=False,
+            )
             if not ok:
                 failures.append(path.name)
+            self._update_save_all_progress_dialog(
+                progress_dialog,
+                index,
+                f"Saved {index}/{total_dirty}: {path.name}",
+            )
+        if progress_dialog is not None:
+            progress_dialog.close()
 
         if failures:
             QMessageBox.warning(
@@ -986,6 +1070,43 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         file_label = "snapshot file" if saved_count == 1 else "snapshot files"
         self.statusBar().showMessage(f"Saved {saved_count} {file_label} to DB.")
         return True
+
+    def _create_save_all_progress_dialog(
+        self,
+        total_files: int,
+    ) -> Optional[QProgressDialog]:
+        app = QApplication.instance()
+        if app is None:
+            return None
+        dialog = QProgressDialog(
+            "Preparing save...",
+            "",
+            0,
+            max(1, total_files),
+            cast(QWidget, self),
+        )
+        dialog.setWindowTitle("Saving files")
+        dialog.setMinimumDuration(0)
+        dialog.setCancelButton(None)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setValue(0)
+        dialog.show()
+        app.processEvents()
+        return dialog
+
+    def _update_save_all_progress_dialog(
+        self,
+        dialog: Optional[QProgressDialog],
+        value: int,
+        label_text: str,
+    ) -> None:
+        app = QApplication.instance()
+        if dialog is not None:
+            dialog.setValue(value)
+            dialog.setLabelText(label_text)
+        if app is not None:
+            app.processEvents()
 
     def _selected_apply_version(self) -> ApplyVersionKind:
         raw = self.apply_version_combo.currentData()
