@@ -36,6 +36,7 @@ class _Harness(PersistenceExportMixin):
         self.auto_split_check = _BoolControl(False)
         self.max_lines_spin = _SpinControl(4)
         self.problem_missing_translation_check = _BoolControl(False)
+        self.problem_contains_japanese_check = _BoolControl(False)
 
     def _normalize_translation_lines(self, value: Any) -> list[str]:
         if isinstance(value, list):
@@ -307,6 +308,39 @@ class PersistenceExportMixinTests(unittest.TestCase):
             harness._segment_has_missing_translation_problem(
                 segment,
                 translator_mode=True,
+            )
+        )
+
+    def test_japanese_text_problem_detects_hiragana_or_kanji_in_translation(self) -> None:
+        harness = _Harness()
+        segment = _dialogue_segment("Map001.json:L0:0", "JP line")
+        segment.translation_lines = ["Knight sama です"]
+        self.assertTrue(
+            harness._segment_has_japanese_text_problem(
+                segment,
+                translator_mode=True,
+            )
+        )
+
+    def test_japanese_text_problem_ignores_non_japanese_translation(self) -> None:
+        harness = _Harness()
+        segment = _dialogue_segment("Map001.json:L0:0", "JP line")
+        segment.translation_lines = [r"\N[3]-sama"]
+        self.assertFalse(
+            harness._segment_has_japanese_text_problem(
+                segment,
+                translator_mode=True,
+            )
+        )
+
+    def test_japanese_text_problem_only_applies_in_translator_mode(self) -> None:
+        harness = _Harness()
+        segment = _dialogue_segment("Map001.json:L0:0", "JP line")
+        segment.translation_lines = ["です"]
+        self.assertFalse(
+            harness._segment_has_japanese_text_problem(
+                segment,
+                translator_mode=False,
             )
         )
 

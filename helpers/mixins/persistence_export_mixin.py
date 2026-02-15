@@ -24,6 +24,7 @@ from ..core.script_message_utils import build_game_message_call
 from ..core.text_utils import (
     CONTROL_TOKEN_RE,
     chunk_lines_by_row_budget,
+    strip_control_tokens,
     total_display_rows,
     visible_length,
 )
@@ -46,6 +47,10 @@ class _EditorHostTypingFallback:
 
 class PersistenceExportMixin(_EditorHostTypingFallback):
     _TRAILING_COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]\s*$")
+    _JAPANESE_CHAR_RE = re.compile(
+        r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
+        r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF66-\uFF9F]"
+    )
 
     def _problem_check_char_limit_enabled(self) -> bool:
         control = getattr(self, "problem_char_limit_check", None)
@@ -65,6 +70,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
     def _problem_check_missing_translation_enabled(self) -> bool:
         control = getattr(self, "problem_missing_translation_check", None)
+        return bool(control.isChecked()) if control is not None else False
+
+    def _problem_check_contains_japanese_enabled(self) -> bool:
+        control = getattr(self, "problem_contains_japanese_check", None)
         return bool(control.isChecked()) if control is not None else False
 
     def _segment_has_missing_translation_problem(
@@ -168,6 +177,33 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return True
         return source_match.group(1) != tl_match.group(1)
 
+    def _segment_has_japanese_text_problem(
+        self,
+        segment: DialogueSegment,
+        translator_mode: bool,
+    ) -> bool:
+        if not translator_mode:
+            return False
+        translation_lines_resolver = getattr(
+            self, "_segment_translation_lines_for_translation", None
+        )
+        if callable(translation_lines_resolver):
+            try:
+                resolved_tl = translation_lines_resolver(segment)
+            except Exception:
+                resolved_tl = None
+            tl_lines = (
+                self._normalize_translation_lines(resolved_tl)
+                if isinstance(resolved_tl, list)
+                else self._normalize_translation_lines(segment.translation_lines)
+            )
+        else:
+            tl_lines = self._normalize_translation_lines(segment.translation_lines)
+        if not any(visible_length(line) > 0 for line in tl_lines):
+            return False
+        tl_text = strip_control_tokens("\n".join(tl_lines))
+        return self._JAPANESE_CHAR_RE.search(tl_text) is not None
+
     def _segment_has_control_code_mismatch_problem(
         self,
         segment: DialogueSegment,
@@ -239,12 +275,14 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         check_control_mismatch = self._problem_check_control_mismatch_enabled()
         check_trailing_color_code = self._problem_check_trailing_color_code_enabled()
         check_missing_translation = self._problem_check_missing_translation_enabled()
+        check_contains_japanese = self._problem_check_contains_japanese_enabled()
         if not (
             check_char_limit
             or check_line_limit
             or check_control_mismatch
             or check_trailing_color_code
             or check_missing_translation
+            or check_contains_japanese
         ):
             return False
 
@@ -275,6 +313,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 return True
         if check_missing_translation:
             if self._segment_has_missing_translation_problem(segment, translator_mode):
+                return True
+        if check_contains_japanese:
+            if self._segment_has_japanese_text_problem(segment, translator_mode):
                 return True
         return False
 

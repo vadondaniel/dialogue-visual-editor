@@ -548,6 +548,9 @@ class DialogueVisualEditor(
         self.problem_missing_translation_check.toggled.connect(
             self._on_problem_checks_changed
         )
+        self.problem_contains_japanese_check.toggled.connect(
+            self._on_problem_checks_changed
+        )
         self.problem_char_limit_check.toggled.connect(self._on_project_setting_changed)
         self.problem_line_limit_check.toggled.connect(self._on_project_setting_changed)
         self.problem_control_mismatch_check.toggled.connect(
@@ -557,6 +560,9 @@ class DialogueVisualEditor(
             self._on_project_setting_changed
         )
         self.problem_missing_translation_check.toggled.connect(
+            self._on_project_setting_changed
+        )
+        self.problem_contains_japanese_check.toggled.connect(
             self._on_project_setting_changed
         )
 
@@ -830,6 +836,12 @@ class DialogueVisualEditor(
             "Treat untranslated dialogue blocks (source has visible text, translation is empty) as a problem."
         )
 
+        self.problem_contains_japanese_check = QCheckBox(self)
+        self.problem_contains_japanese_check.setChecked(False)
+        self.problem_contains_japanese_check.setToolTip(
+            "Treat translated text that still contains Japanese characters as a problem."
+        )
+
         self.apply_version_combo = QComboBox(self)
         self.apply_version_combo.addItem("Original", "original")
         self.apply_version_combo.addItem("Working", "working")
@@ -868,6 +880,7 @@ class DialogueVisualEditor(
             self.problem_control_mismatch_check,
             self.problem_trailing_color_code_check,
             self.problem_missing_translation_check,
+            self.problem_contains_japanese_check,
             self.apply_version_combo,
         )
         for control in hidden_controls:
@@ -1145,6 +1158,16 @@ class DialogueVisualEditor(
             self.problem_missing_translation_check,
         )
         problem_checks_menu.addAction(problem_missing_translation_action)
+
+        problem_contains_japanese_action = QAction(
+            "Flag Japanese in translation",
+            self,
+        )
+        self._bind_toggle_menu_action(
+            problem_contains_japanese_action,
+            self.problem_contains_japanese_check,
+        )
+        problem_checks_menu.addAction(problem_contains_japanese_action)
 
         settings_menu.addSeparator()
         auto_split_action = QAction("Auto-split overflow on save", self)
@@ -3716,6 +3739,9 @@ class DialogueVisualEditor(
             "problem_missing_translation": bool(
                 self.problem_missing_translation_check.isChecked()
             ),
+            "problem_contains_japanese": bool(
+                self.problem_contains_japanese_check.isChecked()
+            ),
             "show_empty_files": bool(self.show_empty_files_check.isChecked()),
             "default_variable_length": int(self.default_variable_length_estimate),
             "variable_length_overrides": {
@@ -3754,6 +3780,7 @@ class DialogueVisualEditor(
         self.problem_control_mismatch_check.blockSignals(True)
         self.problem_trailing_color_code_check.blockSignals(True)
         self.problem_missing_translation_check.blockSignals(True)
+        self.problem_contains_japanese_check.blockSignals(True)
         self.show_empty_files_check.blockSignals(True)
         try:
             editor_mode = settings.get("editor_mode")
@@ -3860,6 +3887,13 @@ class DialogueVisualEditor(
                 self.problem_missing_translation_check.setChecked(
                     problem_missing_translation
                 )
+            problem_contains_japanese = settings.get(
+                "problem_contains_japanese"
+            )
+            if isinstance(problem_contains_japanese, bool):
+                self.problem_contains_japanese_check.setChecked(
+                    problem_contains_japanese
+                )
             show_empty_files = settings.get("show_empty_files")
             if isinstance(show_empty_files, bool):
                 self.show_empty_files_check.setChecked(show_empty_files)
@@ -3903,6 +3937,7 @@ class DialogueVisualEditor(
             self.problem_control_mismatch_check.blockSignals(False)
             self.problem_trailing_color_code_check.blockSignals(False)
             self.problem_missing_translation_check.blockSignals(False)
+            self.problem_contains_japanese_check.blockSignals(False)
             self.show_empty_files_check.blockSignals(False)
             self._applying_project_ui_state = False
 
@@ -5019,6 +5054,8 @@ class DialogueVisualEditor(
             enabled_checks.append("trailing \\C[n]")
         if self.problem_missing_translation_check.isChecked():
             enabled_checks.append("missing translation")
+        if self.problem_contains_japanese_check.isChecked():
+            enabled_checks.append("contains Japanese")
         if not enabled_checks:
             return "none"
         return ", ".join(enabled_checks)
