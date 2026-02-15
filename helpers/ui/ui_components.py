@@ -1942,7 +1942,7 @@ class DialogueBlockWidget(QFrame):
         return self.segment.segment_kind == "map_display_name"
 
     def _uses_translation_storage(self) -> bool:
-        return self.translator_mode and (not self._is_map_display_name_block())
+        return self.translator_mode
 
     def _line1_inference_is_disabled(self) -> bool:
         return bool(getattr(self.segment, "disable_line1_speaker_inference", False))

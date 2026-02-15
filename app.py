@@ -1823,6 +1823,9 @@ class DialogueVisualEditor(
             if actor_mode and segment is not None
             else "name"
         )
+        structural_dialogue_selected = bool(
+            segment is not None and segment.is_structural_dialogue
+        )
         is_name_desc_combined = (
             actor_mode
             and segment is not None
@@ -1838,8 +1841,12 @@ class DialogueVisualEditor(
                 if selected_field == "name"
                 else selected_field.replace("_", " ").strip().title()
             )
-        self.translator_speaker_jp_row.setVisible(not actor_mode)
-        self.translator_speaker_en_row.setVisible(not actor_mode)
+        self.translator_speaker_jp_row.setVisible(
+            (not actor_mode) and structural_dialogue_selected
+        )
+        self.translator_speaker_en_row.setVisible(
+            (not actor_mode) and structural_dialogue_selected
+        )
         self.translator_reference_exact_label.setVisible(not actor_mode)
         self.translator_review_exact_matches_btn.setVisible(not actor_mode)
         self.translator_reference_similar_label.setVisible(not actor_mode)
@@ -1890,20 +1897,24 @@ class DialogueVisualEditor(
             self.translator_context_label.setText(
                 f"Context: {segment.context}")
 
-            speaker_key = self._speaker_key_for_segment(segment)
-            explicit_speaker_raw = self._resolve_name_tokens_in_text(
-                segment.speaker_name,
-                prefer_translated=False,
-            )
-            explicit_speaker_key = self._normalize_speaker_key(explicit_speaker_raw)
-            if explicit_speaker_key == NO_SPEAKER_KEY:
-                self.translator_speaker_jp_edit.setText("")
+            if segment.is_structural_dialogue:
+                speaker_key = self._speaker_key_for_segment(segment)
+                explicit_speaker_raw = self._resolve_name_tokens_in_text(
+                    segment.speaker_name,
+                    prefer_translated=False,
+                )
+                explicit_speaker_key = self._normalize_speaker_key(explicit_speaker_raw)
+                if explicit_speaker_key == NO_SPEAKER_KEY:
+                    self.translator_speaker_jp_edit.setText("")
+                else:
+                    self.translator_speaker_jp_edit.setText(explicit_speaker_key)
+                speaker_en = self._speaker_translation_for_key(speaker_key)
+                if not speaker_en:
+                    speaker_en = segment.translation_speaker.strip()
+                self.translator_speaker_en_edit.setText(speaker_en)
             else:
-                self.translator_speaker_jp_edit.setText(explicit_speaker_key)
-            speaker_en = self._speaker_translation_for_key(speaker_key)
-            if not speaker_en:
-                speaker_en = segment.translation_speaker.strip()
-            self.translator_speaker_en_edit.setText(speaker_en)
+                self.translator_speaker_jp_edit.setText("")
+                self.translator_speaker_en_edit.setText("")
 
         self.translator_source_view.setPlainText(
             "\n".join(self._segment_source_lines_for_translation(segment)))
