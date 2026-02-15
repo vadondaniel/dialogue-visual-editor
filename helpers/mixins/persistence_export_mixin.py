@@ -28,6 +28,7 @@ _HTML_TITLE_TAG_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 logger = logging.getLogger(__name__)
+DEFAULT_TRANSLATION_PROFILE_ID = "default"
 
 
 class _EditorHostTypingFallback:
@@ -723,10 +724,20 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             raise RuntimeError("Version database is not initialized.")
         rel_path = self._relative_path(session.path)
         translated_data = self._export_translated_data_for_session(session)
+        active_profile_raw = getattr(self, "active_translation_profile_id", "")
+        active_profile_id = (
+            active_profile_raw.strip()
+            if isinstance(active_profile_raw, str) and active_profile_raw.strip()
+            else DEFAULT_TRANSLATION_PROFILE_ID
+        )
         if save_working_snapshot:
             working_data = self._build_source_data_for_session(session)
             self.version_db.save_working_snapshot(rel_path, working_data)
-        self.version_db.save_translated_snapshot(rel_path, translated_data)
+        self.version_db.save_translated_snapshot(
+            rel_path,
+            translated_data,
+            profile_id=active_profile_id,
+        )
 
     def _save_session(self, session: FileSession, refresh_current_view: bool = False) -> bool:
         if self.version_db is None:
@@ -929,7 +940,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return "working"
         return "translated"
 
-    def _system_game_title_from_snapshot(self, version: ApplyVersionKind) -> str:
+    def _system_game_title_from_snapshot(
+        self,
+        version: ApplyVersionKind,
+        *,
+        translated_profile_id: str = DEFAULT_TRANSLATION_PROFILE_ID,
+    ) -> str:
         if self.version_db is None:
             return ""
         system_path: Optional[Path] = None
@@ -940,7 +956,11 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         if system_path is None:
             return ""
         rel_path = self._relative_path(system_path)
-        payload = self.version_db.get_snapshot_payload(rel_path, version)
+        payload = self.version_db.get_snapshot_payload(
+            rel_path,
+            version,
+            profile_id=translated_profile_id,
+        )
         if not payload:
             return ""
         try:
@@ -1056,11 +1076,45 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             version_label = "Working"
         else:
             version_label = "Translated"
+        translated_profile_id = DEFAULT_TRANSLATION_PROFILE_ID
+        translated_profile_name = ""
+        if version == "translated":
+            active_profile_raw = getattr(self, "active_translation_profile_id", "")
+            active_profile_id = (
+                active_profile_raw.strip()
+                if isinstance(active_profile_raw, str) and active_profile_raw.strip()
+                else DEFAULT_TRANSLATION_PROFILE_ID
+            )
+            chooser = getattr(self, "_prompt_translation_profile_for_apply", None)
+            if callable(chooser):
+                selected_profile_id = chooser(default_profile_id=active_profile_id)
+                if not isinstance(selected_profile_id, str):
+                    return
+                normalized_selected = selected_profile_id.strip()
+                if not normalized_selected:
+                    return
+                translated_profile_id = normalized_selected
+            else:
+                translated_profile_id = active_profile_id
+            profile_name_resolver = getattr(self, "_translation_profile_name", None)
+            if callable(profile_name_resolver):
+                try:
+                    resolved_name = profile_name_resolver(translated_profile_id)
+                except Exception:
+                    resolved_name = ""
+                if isinstance(resolved_name, str):
+                    translated_profile_name = resolved_name.strip()
+            if not translated_profile_name:
+                translated_profile_name = translated_profile_id
+
+        version_status_label = version_label
+        if version == "translated":
+            version_status_label = f"{version_label} ({translated_profile_name})"
         button = QMessageBox.question(
             cast(QWidget, self),
             "Apply snapshots to game files",
             (
-                f"Apply '{version_label}' snapshots to game files for:\n"
+                f"Apply '{version_status_label}' snapshots to game files for:\n"
                 f"{self.data_dir}\n\n"
                 "This will overwrite current file contents."
             ),
@@ -1085,7 +1139,11 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             target_paths.append(path)
         for path in target_paths:
             rel_path = self._relative_path(path)
-            payload = self.version_db.get_snapshot_payload(rel_path, version)
+            payload = self.version_db.get_snapshot_payload(
+                rel_path,
+                version,
+                profile_id=translated_profile_id,
+            )
             if not payload:
                 missing.append(path.name)
                 continue
@@ -1107,7 +1165,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
         if applied > 0:
             try:
-                game_title = self._system_game_title_from_snapshot(version)
+                game_title = self._system_game_title_from_snapshot(
+                    version,
+                    translated_profile_id=translated_profile_id,
+                )
                 index_title_applied, index_title_warning = self._apply_game_title_to_index_html(
                     game_title
                 )
@@ -1133,6 +1194,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
         try:
             self.version_db.set_applied_version(version)
+            if version == "translated":
+                self.version_db.set_applied_translation_profile(translated_profile_id)
         except Exception:
             logger.exception("Failed to persist applied snapshot version '%s'.", version)
 
@@ -1142,7 +1205,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             file_label = "file" if applied == 1 else "files"
             title_suffix = " Synced index.html title." if index_title_applied else ""
             self.statusBar().showMessage(
-                f"Applied {version_label} snapshots to {applied} {file_label} with warnings.{title_suffix}"
+                f"Applied {version_status_label} snapshots to {applied} {file_label} with warnings.{title_suffix}"
             )
         else:
             file_label = "file" if applied == 1 else "files"
@@ -1150,7 +1213,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             if index_title_warning:
                 status_suffix += f" ({index_title_warning})"
             self.statusBar().showMessage(
-                f"Applied {version_label} snapshots to {applied} {file_label}.{status_suffix}"
+                f"Applied {version_status_label} snapshots to {applied} {file_label}.{status_suffix}"
             )
 
     def _export_translated_data_for_session(self, session: FileSession) -> Any:

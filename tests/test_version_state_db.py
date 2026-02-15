@@ -6,7 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dialogue_visual_editor.helpers.core.version_state_db import DialogueVersionDB
+from dialogue_visual_editor.helpers.core.version_state_db import (
+    DEFAULT_TRANSLATION_PROFILE_ID,
+    DialogueVersionDB,
+)
 
 
 class VersionStateDBTests(unittest.TestCase):
@@ -20,6 +23,11 @@ class VersionStateDBTests(unittest.TestCase):
 
                 db.save_working_snapshot("Map001.json", {"v": 2})
                 db.save_translated_snapshot("Map001.json", {"v": 3})
+                db.save_translated_snapshot(
+                    "Map001.json",
+                    {"v": 4},
+                    profile_id="alt",
+                )
 
                 original = json.loads(
                     db.get_snapshot_payload("Map001.json", "original") or ""
@@ -30,9 +38,18 @@ class VersionStateDBTests(unittest.TestCase):
                 translated = json.loads(
                     db.get_snapshot_payload("Map001.json", "translated") or ""
                 )
+                translated_alt = json.loads(
+                    db.get_snapshot_payload(
+                        "Map001.json",
+                        "translated",
+                        profile_id="alt",
+                    )
+                    or ""
+                )
                 self.assertEqual(original["v"], 1)
                 self.assertEqual(working["v"], 2)
                 self.assertEqual(translated["v"], 3)
+                self.assertEqual(translated_alt["v"], 4)
             finally:
                 db.close()
 
@@ -42,7 +59,12 @@ class VersionStateDBTests(unittest.TestCase):
             db = DialogueVersionDB(db_path)
             try:
                 db.ensure_original_snapshot("Map002.json", {"v": "orig"})
-                db.import_from_disk("Map002.json", {"v": "tl"}, "translated")
+                db.import_from_disk(
+                    "Map002.json",
+                    {"v": "tl"},
+                    "translated",
+                    profile_id="alt",
+                )
                 db.import_from_disk("Map002.json", {"v": "wk"}, "working")
 
                 working = json.loads(
@@ -51,8 +73,17 @@ class VersionStateDBTests(unittest.TestCase):
                 translated = json.loads(
                     db.get_snapshot_payload("Map002.json", "translated") or ""
                 )
+                translated_alt = json.loads(
+                    db.get_snapshot_payload(
+                        "Map002.json",
+                        "translated",
+                        profile_id="alt",
+                    )
+                    or ""
+                )
                 self.assertEqual(working["v"], "wk")
                 self.assertEqual(translated["v"], "tl")
+                self.assertEqual(translated_alt["v"], "tl")
             finally:
                 db.close()
 
@@ -62,7 +93,9 @@ class VersionStateDBTests(unittest.TestCase):
             db = DialogueVersionDB(db_path)
             try:
                 db.set_applied_version("translated")
+                db.set_applied_translation_profile("alt")
                 self.assertEqual(db.get_applied_version(), "translated")
+                self.assertEqual(db.get_applied_translation_profile(), "alt")
                 self.assertNotEqual(db.get_applied_version_timestamp(), "")
             finally:
                 db.close()
@@ -118,7 +151,55 @@ class VersionStateDBTests(unittest.TestCase):
                 working = json.loads(
                     db.get_snapshot_payload("Map003.json", "working") or ""
                 )
+                translated_default = json.loads(
+                    db.get_snapshot_payload(
+                        "Map003.json",
+                        "translated",
+                        profile_id=DEFAULT_TRANSLATION_PROFILE_ID,
+                    )
+                    or ""
+                )
                 self.assertEqual(working["v"], "tl")
+                self.assertEqual(translated_default["v"], "tl")
+            finally:
+                db.close()
+
+    def test_copy_and_delete_translation_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "versions.sqlite3"
+            db = DialogueVersionDB(db_path)
+            try:
+                db.save_translated_snapshot("Map010.json", {"v": "base"})
+                db.save_translated_snapshot("Map011.json", {"v": "base-2"})
+                db.copy_translation_profile("default", "draft")
+
+                copied_1 = json.loads(
+                    db.get_snapshot_payload(
+                        "Map010.json",
+                        "translated",
+                        profile_id="draft",
+                    )
+                    or ""
+                )
+                copied_2 = json.loads(
+                    db.get_snapshot_payload(
+                        "Map011.json",
+                        "translated",
+                        profile_id="draft",
+                    )
+                    or ""
+                )
+                self.assertEqual(copied_1["v"], "base")
+                self.assertEqual(copied_2["v"], "base-2")
+                self.assertIn("draft", db.list_translation_profiles())
+
+                db.delete_translation_profile("draft")
+                deleted_payload = db.get_snapshot_payload(
+                    "Map010.json",
+                    "translated",
+                    profile_id="draft",
+                )
+                self.assertEqual(deleted_payload, db.get_snapshot_payload("Map010.json", "translated"))
             finally:
                 db.close()
 

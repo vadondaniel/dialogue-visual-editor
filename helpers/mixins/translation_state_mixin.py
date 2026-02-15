@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from PySide6.QtWidgets import QCheckBox, QComboBox, QPushButton
 
 logger = logging.getLogger(__name__)
+_DEFAULT_TRANSLATION_PROFILE_ID = "default"
+_DEFAULT_TRANSLATION_PROFILE_NAME = "Default"
 
 
 class _EditorHostTypingFallback:
@@ -47,6 +49,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
     auto_split_check: "QCheckBox"
     translation_state_path: Optional[Path]
     translation_state: dict[str, Any]
+    active_translation_profile_id: str
+    translation_profiles_meta: dict[str, dict[str, Any]]
     speaker_translation_map: dict[str, str]
     translation_uid_counter: int
     sessions: dict[Path, FileSession]
@@ -256,13 +260,200 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 pass
         return segment.speaker_name
 
-    def _load_translation_state(self) -> None:
-        self.translation_state = {
-            "version": 1,
-            "uid_counter": 0,
-            "speaker_map": {},
-            "files": {},
+    def _normalize_translation_profile_id(self, profile_id: Any) -> str:
+        if isinstance(profile_id, str):
+            cleaned = profile_id.strip()
+            if cleaned:
+                return cleaned
+        return _DEFAULT_TRANSLATION_PROFILE_ID
+
+    def _default_translation_profile_name(self, profile_id: str) -> str:
+        if profile_id == _DEFAULT_TRANSLATION_PROFILE_ID:
+            return _DEFAULT_TRANSLATION_PROFILE_NAME
+        return profile_id
+
+    def _normalize_profile_speaker_map(self, raw_map: Any) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        if not isinstance(raw_map, dict):
+            return normalized
+        for key, value in raw_map.items():
+            if not (
+                isinstance(key, str)
+                and key.strip()
+                and key.strip() != NO_SPEAKER_KEY
+                and isinstance(value, str)
+            ):
+                continue
+            cleaned_value = value.strip()
+            if cleaned_value:
+                normalized[key.strip()] = cleaned_value
+        return normalized
+
+    def _normalize_profile_files_state(self, raw_files: Any) -> dict[str, Any]:
+        normalized: dict[str, Any] = {}
+        if not isinstance(raw_files, dict):
+            return normalized
+        for key, value in raw_files.items():
+            if isinstance(key, str) and isinstance(value, dict):
+                normalized[key] = value
+        return normalized
+
+    def _normalize_translation_profile_payload(
+        self,
+        profile_id: str,
+        raw_profile: Any,
+    ) -> dict[str, Any]:
+        profile_dict = raw_profile if isinstance(raw_profile, dict) else {}
+        raw_name = profile_dict.get("name")
+        name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else (
+            self._default_translation_profile_name(profile_id)
+        )
+        raw_uid_counter = profile_dict.get("uid_counter", 0)
+        uid_counter = raw_uid_counter if isinstance(raw_uid_counter, int) else 0
+        if uid_counter < 0:
+            uid_counter = 0
+        return {
+            "name": name,
+            "uid_counter": uid_counter,
+            "speaker_map": self._normalize_profile_speaker_map(
+                profile_dict.get("speaker_map")
+            ),
+            "files": self._normalize_profile_files_state(profile_dict.get("files")),
         }
+
+    def _normalize_translation_state_v2(self, raw_state: Any) -> dict[str, Any]:
+        raw_dict = raw_state if isinstance(raw_state, dict) else {}
+        raw_version = raw_dict.get("version")
+        profiles: dict[str, dict[str, Any]] = {}
+
+        if raw_version == 2:
+            raw_profiles = raw_dict.get("profiles")
+            if isinstance(raw_profiles, dict):
+                for raw_profile_id, raw_profile in raw_profiles.items():
+                    if not isinstance(raw_profile_id, str):
+                        continue
+                    profile_id = self._normalize_translation_profile_id(raw_profile_id)
+                    if profile_id in profiles:
+                        continue
+                    profiles[profile_id] = self._normalize_translation_profile_payload(
+                        profile_id,
+                        raw_profile,
+                    )
+        else:
+            profile_id = _DEFAULT_TRANSLATION_PROFILE_ID
+            profiles[profile_id] = self._normalize_translation_profile_payload(
+                profile_id,
+                {
+                    "name": _DEFAULT_TRANSLATION_PROFILE_NAME,
+                    "uid_counter": raw_dict.get("uid_counter", 0),
+                    "speaker_map": raw_dict.get("speaker_map"),
+                    "files": raw_dict.get("files"),
+                },
+            )
+
+        if _DEFAULT_TRANSLATION_PROFILE_ID not in profiles:
+            profiles[_DEFAULT_TRANSLATION_PROFILE_ID] = (
+                self._normalize_translation_profile_payload(
+                    _DEFAULT_TRANSLATION_PROFILE_ID,
+                    {"name": _DEFAULT_TRANSLATION_PROFILE_NAME},
+                )
+            )
+
+        raw_active_profile_id = raw_dict.get("active_profile_id")
+        active_profile_id = self._normalize_translation_profile_id(raw_active_profile_id)
+        has_raw_active = (
+            isinstance(raw_active_profile_id, str)
+            and raw_active_profile_id.strip()
+            and active_profile_id in profiles
+        )
+        if not has_raw_active:
+            current_active = getattr(self, "active_translation_profile_id", "")
+            if (
+                current_active
+                and isinstance(current_active, str)
+                and current_active.strip()
+                and current_active.strip() in profiles
+            ):
+                active_profile_id = current_active.strip()
+        if active_profile_id not in profiles:
+            sorted_profile_ids = sorted(profiles.keys(), key=natural_sort_key)
+            active_profile_id = (
+                sorted_profile_ids[0]
+                if sorted_profile_ids
+                else _DEFAULT_TRANSLATION_PROFILE_ID
+            )
+
+        return {
+            "version": 2,
+            "active_profile_id": active_profile_id,
+            "profiles": profiles,
+        }
+
+    def _refresh_translation_profiles_meta(self) -> None:
+        profiles_raw = self.translation_state.get("profiles")
+        profiles = profiles_raw if isinstance(profiles_raw, dict) else {}
+        meta: dict[str, dict[str, Any]] = {}
+        for raw_profile_id, raw_profile_state in profiles.items():
+            if not isinstance(raw_profile_id, str):
+                continue
+            profile_id = self._normalize_translation_profile_id(raw_profile_id)
+            state = raw_profile_state if isinstance(raw_profile_state, dict) else {}
+            raw_name = state.get("name")
+            name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else (
+                self._default_translation_profile_name(profile_id)
+            )
+            meta[profile_id] = {"name": name}
+        if not meta:
+            meta[_DEFAULT_TRANSLATION_PROFILE_ID] = {
+                "name": _DEFAULT_TRANSLATION_PROFILE_NAME
+            }
+        self.translation_profiles_meta = meta
+
+    def _ensure_translation_profile(self, profile_id: str) -> dict[str, Any]:
+        normalized_state = self._normalize_translation_state_v2(self.translation_state)
+        self.translation_state = normalized_state
+        profiles_raw = normalized_state.get("profiles")
+        profiles = profiles_raw if isinstance(profiles_raw, dict) else {}
+        normalized_profile_id = self._normalize_translation_profile_id(profile_id)
+        profile_state_raw = profiles.get(normalized_profile_id)
+        if not isinstance(profile_state_raw, dict):
+            profile_state_raw = self._normalize_translation_profile_payload(
+                normalized_profile_id,
+                {"name": self._default_translation_profile_name(normalized_profile_id)},
+            )
+            profiles[normalized_profile_id] = profile_state_raw
+        else:
+            profile_state_raw = self._normalize_translation_profile_payload(
+                normalized_profile_id,
+                profile_state_raw,
+            )
+            profiles[normalized_profile_id] = profile_state_raw
+        self.translation_state["profiles"] = profiles
+        self._refresh_translation_profiles_meta()
+        return profile_state_raw
+
+    def _active_profile_state(self) -> dict[str, Any]:
+        active_profile_raw = getattr(self, "active_translation_profile_id", "")
+        if not (isinstance(active_profile_raw, str) and active_profile_raw.strip()):
+            active_profile_raw = self.translation_state.get("active_profile_id", "")
+        active_profile_id = self._normalize_translation_profile_id(active_profile_raw)
+        profile_state = self._ensure_translation_profile(active_profile_id)
+        self.active_translation_profile_id = active_profile_id
+        self.translation_state["active_profile_id"] = active_profile_id
+        return profile_state
+
+    def _active_profile_files_state(self) -> dict[str, Any]:
+        profile_state = self._active_profile_state()
+        files_raw = profile_state.get("files")
+        if not isinstance(files_raw, dict):
+            files_raw = {}
+            profile_state["files"] = files_raw
+        return files_raw
+
+    def _load_translation_state(self) -> None:
+        self.translation_state = self._normalize_translation_state_v2({})
+        self.active_translation_profile_id = self.translation_state["active_profile_id"]
+        self._refresh_translation_profiles_meta()
         self.speaker_translation_map = {}
         self.translation_uid_counter = 0
         if self.translation_state_path is None:
@@ -273,8 +464,9 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         try:
             with self.translation_state_path.open("r", encoding="utf-8") as src:
                 loaded = json.load(src)
-            if isinstance(loaded, dict):
-                self.translation_state.update(loaded)
+            self.translation_state = self._normalize_translation_state_v2(loaded)
+            self.active_translation_profile_id = self.translation_state["active_profile_id"]
+            self._refresh_translation_profiles_meta()
         except Exception as exc:
             logger.exception(
                 "Failed to load translation state from '%s'.",
@@ -287,23 +479,16 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             )
             return
 
-        speaker_map_raw = self.translation_state.get("speaker_map")
+        profile_state = self._active_profile_state()
+        speaker_map_raw = profile_state.get("speaker_map")
         if isinstance(speaker_map_raw, dict):
-            for key, value in speaker_map_raw.items():
-                if (
-                    isinstance(key, str)
-                    and key.strip()
-                    and key.strip() != NO_SPEAKER_KEY
-                    and isinstance(value, str)
-                    and value.strip()
-                ):
-                    self.speaker_translation_map[key] = value.strip()
+            self.speaker_translation_map.update(speaker_map_raw)
 
-        counter_raw = self.translation_state.get("uid_counter", 0)
+        counter_raw = profile_state.get("uid_counter", 0)
         if isinstance(counter_raw, int):
             self.translation_uid_counter = max(0, counter_raw)
 
-        files_raw = self.translation_state.get("files")
+        files_raw = profile_state.get("files")
         if isinstance(files_raw, dict):
             for file_state in files_raw.values():
                 if not isinstance(file_state, dict):
@@ -327,7 +512,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
     def _apply_translation_state_to_session(self, session: FileSession) -> None:
         rel_path = self._relative_path(session.path)
         is_name_index_session = bool(getattr(session, "is_name_index_session", False))
-        files_raw = self.translation_state.get("files")
+        files_raw = self._active_profile_files_state()
         file_state: dict[str, Any] = {}
         if isinstance(files_raw, dict):
             candidate = files_raw.get(rel_path)
@@ -542,12 +727,13 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             if value:
                 sorted_speaker_map[key] = value
 
-        self.translation_state = {
-            "version": 1,
-            "uid_counter": self.translation_uid_counter,
-            "speaker_map": sorted_speaker_map,
-            "files": files_state,
-        }
+        profile_state = self._active_profile_state()
+        profile_state["uid_counter"] = self.translation_uid_counter
+        profile_state["speaker_map"] = sorted_speaker_map
+        profile_state["files"] = files_state
+        self.translation_state["version"] = 2
+        self.translation_state["active_profile_id"] = self.active_translation_profile_id
+        self._refresh_translation_profiles_meta()
 
     def _translation_state_for_session(self, session: FileSession) -> dict[str, Any]:
         is_name_index_session = bool(getattr(session, "is_name_index_session", False))
@@ -598,13 +784,15 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         if self.translation_state_path is None:
             return True
         try:
+            self._active_profile_state()
             if changed_paths is None:
                 self._sync_translation_state_from_sessions()
             else:
-                files_raw = self.translation_state.get("files")
+                profile_state = self._active_profile_state()
+                files_raw = profile_state.get("files")
                 if not isinstance(files_raw, dict):
                     files_raw = {}
-                    self.translation_state["files"] = files_raw
+                    profile_state["files"] = files_raw
                 for path in changed_paths:
                     session = self.sessions.get(path)
                     if session is None:
@@ -619,9 +807,11 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                     value = self.speaker_translation_map.get(key, "").strip()
                     if value:
                         sorted_speaker_map[key] = value
-                self.translation_state["speaker_map"] = sorted_speaker_map
-                self.translation_state["uid_counter"] = self.translation_uid_counter
-                self.translation_state["version"] = 1
+                profile_state["speaker_map"] = sorted_speaker_map
+                profile_state["uid_counter"] = self.translation_uid_counter
+                self.translation_state["version"] = 2
+                self.translation_state["active_profile_id"] = self.active_translation_profile_id
+                self._refresh_translation_profiles_meta()
 
             with self.translation_state_path.open("w", encoding="utf-8") as dst:
                 json.dump(self.translation_state, dst,
