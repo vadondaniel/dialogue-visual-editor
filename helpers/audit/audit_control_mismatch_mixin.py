@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QListWidgetItem
 
 from .audit_constants import COLOR_CODE_TOKEN_RE
-from ..core.models import FileSession
+from ..core.models import DialogueSegment, FileSession
 from ..core.text_utils import CONTROL_TOKEN_RE
 
 
@@ -159,6 +159,77 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             + tl_html
             + "</div>"
         )
+
+    def _control_mismatch_scan_groups(
+        self,
+        session: FileSession,
+    ) -> list[dict[str, Any]]:
+        groups: list[dict[str, Any]] = []
+        leading_translation_only: list[DialogueSegment] = []
+        for idx, segment in enumerate(list(session.segments), start=1):
+            if segment.translation_only:
+                if groups:
+                    cast(list[DialogueSegment], groups[-1]["segments"]).append(segment)
+                else:
+                    leading_translation_only.append(segment)
+                continue
+
+            group_segments: list[DialogueSegment] = [segment]
+            if leading_translation_only:
+                group_segments.extend(leading_translation_only)
+                leading_translation_only = []
+            groups.append(
+                {
+                    "anchor_segment": segment,
+                    "anchor_index": idx,
+                    "segments": group_segments,
+                }
+            )
+
+        if leading_translation_only:
+            if groups:
+                cast(list[DialogueSegment], groups[0]["segments"]).extend(
+                    leading_translation_only
+                )
+            else:
+                anchor_segment = leading_translation_only[0]
+                groups.append(
+                    {
+                        "anchor_segment": anchor_segment,
+                        "anchor_index": 1,
+                        "segments": list(leading_translation_only),
+                    }
+                )
+        return groups
+
+    def _control_mismatch_group_translation_lines(
+        self,
+        segments: list[DialogueSegment],
+    ) -> list[str]:
+        lines: list[str] = []
+        for segment in segments:
+            lines.extend(self._normalize_translation_lines(segment.translation_lines))
+        return lines if lines else [""]
+
+    def _control_mismatch_group_entry_text(
+        self,
+        session: FileSession,
+        anchor_segment: DialogueSegment,
+        anchor_index: int,
+        group_segments: list[DialogueSegment],
+    ) -> str:
+        base = self._audit_entry_text_for_segment(
+            session, anchor_segment, anchor_index
+        )
+        followup_count = sum(
+            1
+            for segment in group_segments
+            if segment.translation_only and segment.uid != anchor_segment.uid
+        )
+        if followup_count <= 0:
+            return base
+        split_label = "split" if followup_count == 1 else "splits"
+        return f"{base} (+{followup_count} TL {split_label})"
 
     def _add_audit_control_mismatch_result(
         self,
@@ -316,10 +387,13 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
         scanned_blocks = 0
         records: list[dict[str, Any]] = []
         for path, session in path_sessions:
-            for idx, segment in enumerate(list(session.segments), start=1):
-                source_lines = self._segment_source_lines_for_display(segment)
-                tl_lines = self._normalize_translation_lines(
-                    segment.translation_lines)
+            groups = self._control_mismatch_scan_groups(session)
+            for group in groups:
+                anchor_segment = cast(DialogueSegment, group["anchor_segment"])
+                anchor_index = int(group["anchor_index"])
+                group_segments = cast(list[DialogueSegment], group["segments"])
+                source_lines = self._segment_source_lines_for_display(anchor_segment)
+                tl_lines = self._control_mismatch_group_translation_lines(group_segments)
                 if only_translated and not any(line.strip() for line in tl_lines):
                     continue
                 scanned_blocks += 1
@@ -334,8 +408,13 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
                 records.append(
                     {
                         "path": path,
-                        "uid": segment.uid,
-                        "entry_text": self._audit_entry_text_for_segment(session, segment, idx),
+                        "uid": anchor_segment.uid,
+                        "entry_text": self._control_mismatch_group_entry_text(
+                            session,
+                            anchor_segment,
+                            anchor_index,
+                            group_segments,
+                        ),
                         "source_text": "\n".join(source_lines),
                         "tl_text": "\n".join(tl_lines),
                         "missing_in_tl": source_counter - tl_counter,
