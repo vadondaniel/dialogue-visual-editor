@@ -63,6 +63,26 @@ class TextUtilsTests(unittest.TestCase):
         self.assertEqual(without_rule, [first, second])
         self.assertEqual(with_rule, [f"{first} {second}"])
 
+    def test_wrap_lines_keep_breaks_handles_hungarian_accents(self) -> None:
+        wrapped = text_utils.wrap_lines_keep_breaks(["árvíztűrő tükörfúrógép"], 12)
+        self.assertEqual(wrapped, ["árvíztűrő", "tükörfúrógép"])
+
+    def test_smart_collapse_ellipsis_lowercase_with_hungarian_accent(self) -> None:
+        first = "Ez a mondat elég hosszú..."
+        second = "és menjünk tovább"
+        without_rule = text_utils.smart_collapse_lines(
+            [first, second],
+            46,
+            allow_ellipsis_lowercase_continuation=False,
+        )
+        with_rule = text_utils.smart_collapse_lines(
+            [first, second],
+            46,
+            allow_ellipsis_lowercase_continuation=True,
+        )
+        self.assertEqual(without_rule, [first, second])
+        self.assertEqual(with_rule, [f"{first} {second}"])
+
 
 if __name__ == "__main__":
     unittest.main()
