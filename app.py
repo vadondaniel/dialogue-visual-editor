@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
+import copy
 import json
 import logging
 import re
@@ -59,6 +60,7 @@ try:
         configure_message_text_metrics,
         configure_name_text_metrics,
         configure_variable_text_metrics,
+        align_source_translated_segments,
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
@@ -96,6 +98,7 @@ except ImportError:
         configure_message_text_metrics,
         configure_name_text_metrics,
         configure_variable_text_metrics,
+        align_source_translated_segments,
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
@@ -3585,42 +3588,14 @@ class DialogueVisualEditor(
         self,
         path: Path,
         rel_path: str,
-        disk_session: FileSession,
-    ) -> tuple[FileSession, dict[str, list[str]], list[list[str]], dict[str, str], list[str]]:
-        translated_lines_by_uid: dict[str, list[str]] = {}
-        translated_lines_by_order: list[list[str]] = []
-        translated_speakers_by_uid: dict[str, str] = {}
-        translated_speakers_by_order: list[str] = []
-        for segment in disk_session.segments:
-            if segment.translation_only:
-                continue
-            translated_lines = self._normalize_translation_lines(segment.lines)
-            translated_lines_by_uid[segment.uid] = list(translated_lines)
-            translated_lines_by_order.append(list(translated_lines))
-            speaker_text = segment.speaker_name.strip()
-            if speaker_text and speaker_text != NO_SPEAKER_KEY:
-                translated_speakers_by_uid[segment.uid] = speaker_text
-                translated_speakers_by_order.append(speaker_text)
-            else:
-                translated_speakers_by_order.append("")
+        translated_disk_session: FileSession,
+    ) -> FileSession:
         if self.version_db is None:
-            return (
-                disk_session,
-                translated_lines_by_uid,
-                translated_lines_by_order,
-                translated_speakers_by_uid,
-                translated_speakers_by_order,
-            )
+            return translated_disk_session
 
         payload = self.version_db.get_working_snapshot_payload(rel_path)
         if not payload:
-            return (
-                disk_session,
-                translated_lines_by_uid,
-                translated_lines_by_order,
-                translated_speakers_by_uid,
-                translated_speakers_by_order,
-            )
+            return translated_disk_session
         try:
             decoded = json.loads(payload)
             working_session = parse_dialogue_data(path, decoded)
@@ -3629,82 +3604,200 @@ class DialogueVisualEditor(
                 "Failed to parse working snapshot for translated import fallback '%s'; using disk session.",
                 rel_path,
             )
-            return (
-                disk_session,
-                translated_lines_by_uid,
-                translated_lines_by_order,
-                translated_speakers_by_uid,
-                translated_speakers_by_order,
-            )
-        return (
-            working_session,
-            translated_lines_by_uid,
-            translated_lines_by_order,
-            translated_speakers_by_uid,
-            translated_speakers_by_order,
-        )
+            return translated_disk_session
+        return working_session
 
-    def _hydrate_translation_lines_from_import(
+    def _json_backup_counterpart_for_path(self, path: Path) -> Optional[Path]:
+        if path.suffix.lower() != ".json":
+            return None
+        backup_path = path.with_suffix(path.suffix + ".bak")
+        if backup_path.is_file():
+            return backup_path
+        return None
+
+    def _parse_json_dialogue_source_as_path(
+        self,
+        source_path: Path,
+        virtual_path: Path,
+    ) -> FileSession:
+        with source_path.open("r", encoding="utf-8") as src:
+            decoded = json.load(src)
+        return parse_dialogue_data(virtual_path, decoded)
+
+    def _build_translation_only_segment_for_import(
         self,
         session: FileSession,
-        translated_lines_by_uid: dict[str, list[str]],
-        translated_lines_by_order: list[list[str]],
-        translated_speakers_by_uid: dict[str, str],
-        translated_speakers_by_order: list[str],
-    ) -> None:
+        template_segment: DialogueSegment,
+        translated_segment: DialogueSegment,
+    ) -> DialogueSegment:
+        speaker_text = translated_segment.speaker_name.strip()
+        if speaker_text == NO_SPEAKER_KEY:
+            speaker_text = ""
+        translation_lines = self._normalize_translation_lines(translated_segment.lines)
+        return DialogueSegment(
+            uid=self._new_segment_uid(session.path),
+            context=template_segment.context,
+            code101=copy.deepcopy(template_segment.code101),
+            lines=[""],
+            original_lines=[""],
+            source_lines=[""],
+            code401_template=copy.deepcopy(template_segment.code401_template),
+            segment_kind=template_segment.segment_kind,
+            line_entry_code=template_segment.line_entry_code,
+            choice_branch_entries=copy.deepcopy(template_segment.choice_branch_entries),
+            script_entries_template=copy.deepcopy(template_segment.script_entries_template),
+            script_entry_roles=list(template_segment.script_entry_roles),
+            script_entry_quotes=list(template_segment.script_entry_quotes),
+            tl_uid=self._new_translation_uid(),
+            translation_lines=list(translation_lines),
+            original_translation_lines=list(translation_lines),
+            translation_speaker=speaker_text,
+            original_translation_speaker=speaker_text,
+            disable_line1_speaker_inference=template_segment.disable_line1_speaker_inference,
+            original_disable_line1_speaker_inference=template_segment.disable_line1_speaker_inference,
+            force_line1_speaker_inference=template_segment.force_line1_speaker_inference,
+            original_force_line1_speaker_inference=template_segment.force_line1_speaker_inference,
+            inserted=False,
+            translation_only=True,
+        )
+
+    def _hydrate_translation_from_translated_session(
+        self,
+        session: FileSession,
+        translated_session: FileSession,
+    ) -> bool:
         source_segments = [seg for seg in session.segments if not seg.translation_only]
-        matched_by_uid = 0
+        translated_segments = [
+            seg for seg in translated_session.segments if not seg.translation_only
+        ]
+        if not source_segments or not translated_segments:
+            return False
 
-        for segment in source_segments:
-            translated_lines = translated_lines_by_uid.get(segment.uid)
-            if translated_lines is None:
+        mapped_pairs: list[tuple[int, int]] = []
+        translated_inserts_by_anchor: dict[int, list[int]] = {}
+        is_name_index_session = bool(getattr(session, "is_name_index_session", False))
+        if is_name_index_session:
+            translated_by_uid: dict[str, int] = {}
+            duplicate_uid = False
+            for idx, segment in enumerate(translated_segments):
+                if segment.uid in translated_by_uid:
+                    duplicate_uid = True
+                    break
+                translated_by_uid[segment.uid] = idx
+            if not duplicate_uid:
+                for source_idx, segment in enumerate(source_segments):
+                    translated_idx = translated_by_uid.get(segment.uid)
+                    if translated_idx is not None:
+                        mapped_pairs.append((source_idx, translated_idx))
+        if not mapped_pairs:
+            mapped_pairs, translated_inserts_by_anchor = align_source_translated_segments(
+                source_segments,
+                translated_segments,
+            )
+
+        mapped_count = 0
+        for source_idx, translated_idx in mapped_pairs:
+            if source_idx < 0 or source_idx >= len(source_segments):
                 continue
-            tl_lines = self._normalize_translation_lines(translated_lines)
-            segment.translation_lines = list(tl_lines)
-            segment.original_translation_lines = list(tl_lines)
-            imported_speaker = translated_speakers_by_uid.get(segment.uid, "").strip()
-            if imported_speaker and segment.speaker_name != NO_SPEAKER_KEY:
-                segment.translation_speaker = imported_speaker
-                segment.original_translation_speaker = imported_speaker
-                speaker_key = self._speaker_key_for_segment(segment)
-                if speaker_key != NO_SPEAKER_KEY:
-                    self.speaker_translation_map[speaker_key] = imported_speaker
-            matched_by_uid += 1
+            if translated_idx < 0 or translated_idx >= len(translated_segments):
+                continue
+            source_segment = source_segments[source_idx]
+            translated_segment = translated_segments[translated_idx]
+            translation_lines = self._normalize_translation_lines(translated_segment.lines)
+            source_segment.translation_lines = list(translation_lines)
+            source_segment.original_translation_lines = list(translation_lines)
 
-        if matched_by_uid > 0:
-            if matched_by_uid != len(source_segments):
-                logger.warning(
-                    "Translated import UID coverage mismatch for '%s': matched=%s source=%s",
-                    session.path.name,
-                    matched_by_uid,
-                    len(source_segments),
+            speaker_text = translated_segment.speaker_name.strip()
+            if speaker_text == NO_SPEAKER_KEY:
+                speaker_text = ""
+            if source_segment.speaker_name != NO_SPEAKER_KEY:
+                source_segment.translation_speaker = speaker_text
+                source_segment.original_translation_speaker = speaker_text
+                if speaker_text:
+                    speaker_key = self._speaker_key_for_segment(source_segment)
+                    if speaker_key != NO_SPEAKER_KEY:
+                        self.speaker_translation_map[speaker_key] = speaker_text
+            else:
+                source_segment.translation_speaker = ""
+                source_segment.original_translation_speaker = ""
+            mapped_count += 1
+
+        def template_for_anchor(anchor_idx: int) -> Optional[DialogueSegment]:
+            if 0 <= anchor_idx < len(source_segments):
+                candidate = source_segments[anchor_idx]
+                if candidate.is_structural_dialogue:
+                    return candidate
+            for reverse_idx in range(min(anchor_idx, len(source_segments) - 1), -1, -1):
+                candidate = source_segments[reverse_idx]
+                if candidate.is_structural_dialogue:
+                    return candidate
+            for candidate in source_segments:
+                if candidate.is_structural_dialogue:
+                    return candidate
+            return None
+
+        ordered_segments: list[DialogueSegment] = []
+        inserted_count = 0
+        leading_insert_indexes = translated_inserts_by_anchor.get(-1, [])
+        if leading_insert_indexes:
+            template_segment = template_for_anchor(-1)
+            for translated_idx in leading_insert_indexes:
+                if translated_idx < 0 or translated_idx >= len(translated_segments):
+                    continue
+                translated_segment = translated_segments[translated_idx]
+                if template_segment is None or not translated_segment.is_structural_dialogue:
+                    continue
+                inserted_segment = self._build_translation_only_segment_for_import(
+                    session,
+                    template_segment,
+                    translated_segment,
                 )
-            return
+                if inserted_segment.translation_speaker:
+                    speaker_key = self._speaker_key_for_segment(inserted_segment)
+                    if speaker_key != NO_SPEAKER_KEY:
+                        self.speaker_translation_map[speaker_key] = (
+                            inserted_segment.translation_speaker
+                        )
+                ordered_segments.append(inserted_segment)
+                inserted_count += 1
 
-        count = min(len(source_segments), len(translated_lines_by_order))
-        for idx in range(count):
-            segment = source_segments[idx]
-            tl_lines = self._normalize_translation_lines(translated_lines_by_order[idx])
-            segment.translation_lines = list(tl_lines)
-            segment.original_translation_lines = list(tl_lines)
-            imported_speaker = (
-                translated_speakers_by_order[idx].strip()
-                if idx < len(translated_speakers_by_order)
-                else ""
-            )
-            if imported_speaker and segment.speaker_name != NO_SPEAKER_KEY:
-                segment.translation_speaker = imported_speaker
-                segment.original_translation_speaker = imported_speaker
-                speaker_key = self._speaker_key_for_segment(segment)
-                if speaker_key != NO_SPEAKER_KEY:
-                    self.speaker_translation_map[speaker_key] = imported_speaker
-        if len(source_segments) != len(translated_lines_by_order):
+        for source_idx, source_segment in enumerate(source_segments):
+            ordered_segments.append(source_segment)
+            translated_insert_indexes = translated_inserts_by_anchor.get(source_idx, [])
+            if not translated_insert_indexes:
+                continue
+            template_segment = template_for_anchor(source_idx)
+            for translated_idx in translated_insert_indexes:
+                if translated_idx < 0 or translated_idx >= len(translated_segments):
+                    continue
+                translated_segment = translated_segments[translated_idx]
+                if template_segment is None or not translated_segment.is_structural_dialogue:
+                    continue
+                inserted_segment = self._build_translation_only_segment_for_import(
+                    session,
+                    template_segment,
+                    translated_segment,
+                )
+                if inserted_segment.translation_speaker:
+                    speaker_key = self._speaker_key_for_segment(inserted_segment)
+                    if speaker_key != NO_SPEAKER_KEY:
+                        self.speaker_translation_map[speaker_key] = (
+                            inserted_segment.translation_speaker
+                        )
+                ordered_segments.append(inserted_segment)
+                inserted_count += 1
+
+        session.segments = ordered_segments
+        if mapped_count != len(source_segments):
             logger.warning(
-                "Translated import segment count mismatch for '%s': source=%s translated=%s",
+                "Translated import mapping mismatch for '%s': mapped=%s source=%s translated=%s inserted=%s",
                 session.path.name,
+                mapped_count,
                 len(source_segments),
-                len(translated_lines_by_order),
+                len(translated_segments),
+                inserted_count,
             )
+        return mapped_count > 0 or inserted_count > 0
 
     def _load_data_folder(
         self,
@@ -3763,8 +3856,10 @@ class DialogueVisualEditor(
             self.index_db.close()
         if self.version_db is not None:
             self.version_db.close()
+        version_db_path = self.data_dir / VERSION_DB_FILENAME
+        version_db_preexisting = version_db_path.exists()
         self.index_db = DialogueIndexDB(self.data_dir / DB_FILENAME)
-        self.version_db = DialogueVersionDB(self.data_dir / VERSION_DB_FILENAME)
+        self.version_db = DialogueVersionDB(version_db_path)
         self.translation_state_path = self.data_dir / TRANSLATION_STATE_FILENAME
         self._load_translation_state()
 
@@ -3812,6 +3907,10 @@ class DialogueVisualEditor(
         loaded_from_disk_count = 0
         total_blocks = 0
         translated_import_hydrated = False
+        bootstrap_from_json_backups = (
+            (not force_disk_import) and (not version_db_preexisting)
+        )
+        bak_bootstrap_count = 0
         # Never force positional TL-state matching. Source-hash matching is safer
         # for parser/order changes and avoids large desync cascades.
         self._translation_state_force_positional_match = False
@@ -3823,10 +3922,10 @@ class DialogueVisualEditor(
                 had_working_payload = False
                 failed_working_snapshot_parse = False
                 import_data: Any = None
-                translated_lines_by_uid: Optional[dict[str, list[str]]] = None
-                translated_lines_by_order: Optional[list[list[str]]] = None
-                translated_speakers_by_uid: Optional[dict[str, str]] = None
-                translated_speakers_by_order: Optional[list[str]] = None
+                translated_disk_session: Optional[FileSession] = None
+                used_bak_bootstrap = False
+                bak_source_data: Any = None
+                bak_translated_data: Any = None
 
                 if not force_disk_import and self.version_db is not None:
                     payload = self.version_db.get_working_snapshot_payload(
@@ -3846,41 +3945,48 @@ class DialogueVisualEditor(
                             session = None
 
                 if force_disk_import and import_target_version == "translated":
-                    disk_session = parse_dialogue_file(path)
-                    import_data = disk_session.data
-                    (
-                        session,
-                        translated_lines_by_uid,
-                        translated_lines_by_order,
-                        translated_speakers_by_uid,
-                        translated_speakers_by_order,
-                    ) = self._prepare_session_for_translated_disk_import(
+                    translated_disk_session = parse_dialogue_file(path)
+                    import_data = translated_disk_session.data
+                    session = self._prepare_session_for_translated_disk_import(
                         path,
                         rel_path,
-                        disk_session,
+                        translated_disk_session,
                     )
                 elif session is None:
-                    session = parse_dialogue_file(path)
-                    import_data = session.data
+                    if bootstrap_from_json_backups:
+                        backup_path = self._json_backup_counterpart_for_path(path)
+                        if backup_path is not None:
+                            try:
+                                session = self._parse_json_dialogue_source_as_path(
+                                    backup_path,
+                                    path,
+                                )
+                                translated_disk_session = parse_dialogue_file(path)
+                                import_data = session.data
+                                used_bak_bootstrap = True
+                                bak_source_data = session.data
+                                bak_translated_data = translated_disk_session.data
+                                bak_bootstrap_count += 1
+                            except Exception:
+                                logger.exception(
+                                    "Failed to bootstrap '%s' from backup '%s'; falling back to disk file.",
+                                    rel_path,
+                                    backup_path,
+                                )
+                                session = None
+                    if session is None:
+                        session = parse_dialogue_file(path)
+                        import_data = session.data
                 elif import_data is None:
                     import_data = session.data
 
                 self._apply_translation_state_to_session(session)
-                if translated_lines_by_order is not None:
-                    self._hydrate_translation_lines_from_import(
+                if translated_disk_session is not None:
+                    if self._hydrate_translation_from_translated_session(
                         session,
-                        translated_lines_by_uid
-                        if translated_lines_by_uid is not None
-                        else {},
-                        translated_lines_by_order,
-                        translated_speakers_by_uid
-                        if translated_speakers_by_uid is not None
-                        else {},
-                        translated_speakers_by_order
-                        if translated_speakers_by_order is not None
-                        else [],
-                    )
-                    translated_import_hydrated = True
+                        translated_disk_session,
+                    ):
+                        translated_import_hydrated = True
                 self.sessions[path] = session
                 self.segment_uid_counter = max(
                     self.segment_uid_counter, len(session.segments))
@@ -3901,19 +4007,37 @@ class DialogueVisualEditor(
                                 target_version,
                             )
                         elif not loaded_from_db and (not had_working_payload):
-                            self.version_db.ensure_original_snapshot(
-                                rel_path,
-                                session.data,
-                            )
-                            self.version_db.save_working_snapshot(
-                                rel_path,
-                                session.data,
-                            )
-                            self.version_db.save_translated_snapshot(
-                                rel_path,
-                                self._export_translated_data_for_session(
-                                    session),
-                            )
+                            if (
+                                used_bak_bootstrap
+                                and bak_source_data is not None
+                                and bak_translated_data is not None
+                            ):
+                                self.version_db.ensure_original_snapshot(
+                                    rel_path,
+                                    bak_source_data,
+                                )
+                                self.version_db.save_working_snapshot(
+                                    rel_path,
+                                    bak_source_data,
+                                )
+                                self.version_db.save_translated_snapshot(
+                                    rel_path,
+                                    bak_translated_data,
+                                )
+                            else:
+                                self.version_db.ensure_original_snapshot(
+                                    rel_path,
+                                    session.data,
+                                )
+                                self.version_db.save_working_snapshot(
+                                    rel_path,
+                                    session.data,
+                                )
+                                self.version_db.save_translated_snapshot(
+                                    rel_path,
+                                    self._export_translated_data_for_session(
+                                        session),
+                                )
                         elif failed_working_snapshot_parse:
                             logger.warning(
                                 "Preserving existing DB snapshots for '%s' because working snapshot payload exists but could not be parsed.",
@@ -4000,12 +4124,17 @@ class DialogueVisualEditor(
         font_source = self.detected_message_font_source or "default"
         font_suffix = f" Message font: {self.detected_message_font_size}px ({font_source})."
         infer_suffix = infer_auto_suffix if infer_auto_changed else ""
+        bak_suffix = (
+            f" Imported source from .bak for {bak_bootstrap_count} files."
+            if bak_bootstrap_count > 0
+            else ""
+        )
         if load_errors:
             skipped_label = "file" if len(load_errors) == 1 else "files"
             self.statusBar().showMessage(
                 f"Loaded {len(self.sessions)} files ({visible_count} shown), "
                 f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}. "
-                f"Skipped {len(load_errors)} unreadable {skipped_label}.{engine_suffix}{font_suffix}{infer_suffix}"
+                f"Skipped {len(load_errors)} unreadable {skipped_label}.{engine_suffix}{font_suffix}{infer_suffix}{bak_suffix}"
             )
             logger.warning(
                 "Folder load completed with unreadable files: %s",
@@ -4014,10 +4143,10 @@ class DialogueVisualEditor(
         else:
             self.statusBar().showMessage(
                 f"Loaded {len(self.sessions)} files ({visible_count} shown), "
-                f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}.{engine_suffix}{font_suffix}{infer_suffix}"
+                f"{total_blocks} blocks from DB:{loaded_from_db_count}/disk:{loaded_from_disk_count}.{engine_suffix}{font_suffix}{infer_suffix}{bak_suffix}"
             )
         logger.info(
-            "Folder load complete: total_files=%d loaded=%d visible=%d blocks=%d db=%d disk=%d errors=%d.",
+            "Folder load complete: total_files=%d loaded=%d visible=%d blocks=%d db=%d disk=%d errors=%d bak_bootstrapped=%d.",
             len(self.file_paths),
             len(self.sessions),
             visible_count,
@@ -4025,6 +4154,7 @@ class DialogueVisualEditor(
             loaded_from_db_count,
             loaded_from_disk_count,
             len(load_errors),
+            bak_bootstrap_count,
         )
 
     def _file_path_from_item(self, item: Optional[QListWidgetItem]) -> Optional[Path]:

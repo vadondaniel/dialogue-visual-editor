@@ -15,6 +15,7 @@ from .core.models import (
     StructuralAction,
 )
 from .core.parser import parse_dialogue_data, parse_dialogue_file
+from .core.import_utils import align_source_translated_segments
 from .core.text_utils import (
     chunk_lines,
     clamp_message_font_size,
@@ -69,6 +70,7 @@ __all__ = [
     "message_default_font_size",
     "natural_sort_key",
     "normalize_control_code_word_case",
+    "align_source_translated_segments",
     "parse_dialogue_data",
     "parse_dialogue_file",
     "preview_text",
