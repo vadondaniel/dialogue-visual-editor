@@ -71,6 +71,7 @@ try:
         parse_dialogue_data,
         parse_dialogue_file,
         strip_control_tokens,
+        trim_extra_ellipsis_runs,
     )
     from .helpers.audit import AuditMixin
     from .helpers.mixins import (
@@ -109,6 +110,7 @@ except ImportError:
         parse_dialogue_data,
         parse_dialogue_file,
         strip_control_tokens,
+        trim_extra_ellipsis_runs,
     )
     from helpers.audit import AuditMixin
     from helpers.mixins import (
@@ -969,6 +971,10 @@ class DialogueVisualEditor(
             self._smart_collapse_all_dialogue_blocks
         )
         tools_menu.addAction(smart_collapse_all_action)
+
+        trim_ellipses_action = QAction("Trim Extra Ellipses...", self)
+        trim_ellipses_action.triggered.connect(self._open_trim_extra_ellipses_dialog)
+        tools_menu.addAction(trim_ellipses_action)
 
         settings_menu = menu_bar.addMenu("Settings")
         mode_menu = settings_menu.addMenu("Edit Mode")
@@ -2257,6 +2263,129 @@ class DialogueVisualEditor(
                 f"(source text {applied_source}, source speaker {applied_source_speaker}, "
                 f"TL text {applied_tl}, TL speaker {applied_tl_speaker}) "
                 f"across {changed_blocks} {block_label}.{persist_suffix}"
+            )
+        )
+
+    def _trim_extra_ellipses_in_lines(self, lines: list[str]) -> tuple[list[str], int]:
+        if not lines:
+            return [], 0
+        trimmed_lines: list[str] = []
+        replacements = 0
+        for line in lines:
+            trimmed_line, count = trim_extra_ellipsis_runs(line)
+            trimmed_lines.append(trimmed_line)
+            replacements += count
+        return trimmed_lines, replacements
+
+    def _count_possible_extra_ellipsis_trims(self) -> int:
+        total = 0
+        for session in self.sessions.values():
+            for segment in session.segments:
+                tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                _, count = self._trim_extra_ellipses_in_lines(tl_lines)
+                total += count
+        return total
+
+    def _apply_extra_ellipsis_trim(self) -> tuple[int, int, set[Path]]:
+        total_replacements = 0
+        changed_blocks = 0
+        changed_paths: set[Path] = set()
+
+        for path, session in self.sessions.items():
+            session_changed = False
+            for segment in session.segments:
+                tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                trimmed_lines, replacements = self._trim_extra_ellipses_in_lines(
+                    tl_lines
+                )
+                if replacements <= 0 or trimmed_lines == tl_lines:
+                    continue
+                segment.translation_lines = list(trimmed_lines)
+                total_replacements += replacements
+                changed_blocks += 1
+                session_changed = True
+
+            if session_changed:
+                changed_paths.add(path)
+                self._refresh_dirty_state(session)
+
+        if self.current_path is not None and self.current_path in changed_paths:
+            current_session = self.sessions.get(self.current_path)
+            if current_session is not None:
+                self._render_session(current_session, preserve_scroll=True)
+
+        return total_replacements, changed_blocks, changed_paths
+
+    def _open_trim_extra_ellipses_dialog(self) -> None:
+        if not self.sessions:
+            QMessageBox.information(
+                self,
+                "Trim Extra Ellipses",
+                "Load files first.",
+            )
+            return
+
+        possible_replacements = self._count_possible_extra_ellipsis_trims()
+        if possible_replacements <= 0:
+            QMessageBox.information(
+                self,
+                "Trim Extra Ellipses",
+                (
+                    "No extra ellipsis runs found in translation text.\n\n"
+                    "This tool only trims runs of 4+ periods to '...'.\n"
+                    "Pause-only dot lines like '.........' are preserved."
+                ),
+            )
+            return
+
+        prompt = QMessageBox(self)
+        prompt.setIcon(QMessageBox.Icon.Question)
+        prompt.setWindowTitle("Trim Extra Ellipses")
+        prompt.setText(
+            (
+                "Trim extra ellipsis runs in translation text across loaded files?\n\n"
+                "Rule: any run of 4+ periods becomes '...'.\n"
+                "Pause-only dot lines (e.g. '.........') are left unchanged.\n\n"
+                f"Possible trims: {possible_replacements}"
+            )
+        )
+        persist_checkbox = QCheckBox(
+            "Persist immediately (save changed files)",
+            prompt,
+        )
+        persist_checkbox.setChecked(True)
+        prompt.setCheckBox(persist_checkbox)
+        prompt.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        prompt.setDefaultButton(QMessageBox.StandardButton.Yes)
+        if prompt.exec() != int(QMessageBox.StandardButton.Yes):
+            return
+        persist_immediately = bool(persist_checkbox.isChecked())
+
+        applied_total, changed_blocks, changed_paths = self._apply_extra_ellipsis_trim()
+        if applied_total <= 0:
+            self.statusBar().showMessage("Trim Extra Ellipses: no changes applied.")
+            return
+
+        persist_suffix = ""
+        if persist_immediately:
+            saved_files, failed_files = self._persist_sessions_for_paths(changed_paths)
+            saved_label = "file" if saved_files == 1 else "files"
+            if failed_files > 0:
+                failed_label = "file" if failed_files == 1 else "files"
+                persist_suffix = (
+                    f" Persisted {saved_files} {saved_label}; "
+                    f"{failed_files} {failed_label} failed."
+                )
+            else:
+                persist_suffix = f" Persisted {saved_files} {saved_label}."
+
+        block_label = "block" if changed_blocks == 1 else "blocks"
+        self.statusBar().showMessage(
+            (
+                f"Trimmed {applied_total} extra ellipsis runs across "
+                f"{changed_blocks} {block_label}.{persist_suffix}"
             )
         )
 

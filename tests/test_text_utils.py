@@ -83,6 +83,23 @@ class TextUtilsTests(unittest.TestCase):
         self.assertEqual(without_rule, [first, second])
         self.assertEqual(with_rule, [f"{first} {second}"])
 
+    def test_trim_extra_ellipsis_runs_inside_text(self) -> None:
+        updated, replacements = text_utils.trim_extra_ellipsis_runs(
+            "Wait......... what.... now..."
+        )
+        self.assertEqual(updated, "Wait... what... now...")
+        self.assertEqual(replacements, 2)
+
+    def test_trim_extra_ellipsis_runs_preserves_pause_only_line(self) -> None:
+        updated, replacements = text_utils.trim_extra_ellipsis_runs(".........")
+        self.assertEqual(updated, ".........")
+        self.assertEqual(replacements, 0)
+
+    def test_trim_extra_ellipsis_runs_preserves_pause_only_with_control_codes(self) -> None:
+        updated, replacements = text_utils.trim_extra_ellipsis_runs(r"\! ......... \C[2]")
+        self.assertEqual(updated, r"\! ......... \C[2]")
+        self.assertEqual(replacements, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

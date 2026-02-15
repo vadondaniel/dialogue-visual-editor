@@ -16,6 +16,7 @@ CONTROL_TOKEN_RE = re.compile(
     re.VERBOSE,
 )
 CONTROL_CODE_WORD_CASE_RE = re.compile(r"\\([A-Za-z]+)(?=[\[<])")
+ELLIPSIS_DOT_RUN_RE = re.compile(r"\.{4,}")
 SIMILARITY_PUNCT_RE = re.compile(
     r"[\s\.,!?\"'`~:;()\[\]{}<>\/\\\-_|\+\*&\^%$#@=。、，．？！：；「」『』（）［］｛｝【】〈〉《》…・～〜]+"
 )
@@ -415,6 +416,29 @@ def normalize_control_code_word_case(text: str) -> tuple[str, int]:
 
     normalized = CONTROL_CODE_WORD_CASE_RE.sub(_replace, text)
     return normalized, replacements
+
+
+def trim_extra_ellipsis_runs(text: str) -> tuple[str, int]:
+    if not text:
+        return "", 0
+    if "." not in text:
+        return text, 0
+
+    # Preserve pause-only lines (e.g. "........."), including ones wrapped with control codes.
+    stripped = strip_control_tokens(text).replace("\u3000", " ")
+    compact = "".join(ch for ch in stripped if not ch.isspace())
+    if compact and all(ch == "." for ch in compact):
+        return text, 0
+
+    replacements = 0
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal replacements
+        replacements += 1
+        return "..."
+
+    updated = ELLIPSIS_DOT_RUN_RE.sub(_replace, text)
+    return updated, replacements
 
 
 def similarity_signature(text: str) -> str:
