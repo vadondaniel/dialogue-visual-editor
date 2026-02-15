@@ -347,8 +347,11 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         term_controls_row.addWidget(term_refresh_btn)
         term_layout.addLayout(term_controls_row)
 
+        term_vertical_splitter = QSplitter(Qt.Orientation.Vertical)
+        term_layout.addWidget(term_vertical_splitter, 1)
+
         term_splitter = QSplitter(Qt.Orientation.Horizontal)
-        term_layout.addWidget(term_splitter, 1)
+        term_vertical_splitter.addWidget(term_splitter)
 
         term_variants_panel = QWidget()
         term_variants_layout = QVBoxLayout(term_variants_panel)
@@ -387,12 +390,24 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         term_suggest_row.setSpacing(6)
         term_suggest_row.addWidget(QLabel("Frequent Terms"))
         term_suggest_row.addStretch(1)
+        term_suggest_toggle_btn = QPushButton("Collapse")
+        term_suggest_toggle_btn.setCheckable(True)
+        term_suggest_toggle_btn.setChecked(True)
+        term_suggest_toggle_btn.setToolTip(
+            "Collapse/expand the frequent terms section."
+        )
+        term_suggest_row.addWidget(term_suggest_toggle_btn)
         term_suggest_refresh_btn = QPushButton("Refresh Suggestions")
         term_suggest_row.addWidget(term_suggest_refresh_btn)
-        term_layout.addLayout(term_suggest_row)
+
+        term_suggest_section = QWidget()
+        term_suggest_section_layout = QVBoxLayout(term_suggest_section)
+        term_suggest_section_layout.setContentsMargins(0, 0, 0, 0)
+        term_suggest_section_layout.setSpacing(6)
+        term_suggest_section_layout.addLayout(term_suggest_row)
 
         term_suggest_splitter = QSplitter(Qt.Orientation.Horizontal)
-        term_layout.addWidget(term_suggest_splitter, 0)
+        term_suggest_section_layout.addWidget(term_suggest_splitter, 1)
 
         term_suggest_jp_panel = QWidget()
         term_suggest_jp_layout = QVBoxLayout(term_suggest_jp_panel)
@@ -413,6 +428,47 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         term_suggest_splitter.addWidget(term_suggest_en_panel)
         term_suggest_splitter.setStretchFactor(0, 1)
         term_suggest_splitter.setStretchFactor(1, 1)
+        term_vertical_splitter.addWidget(term_suggest_section)
+        term_vertical_splitter.setStretchFactor(0, 5)
+        term_vertical_splitter.setStretchFactor(1, 2)
+
+        term_suggest_size_state: dict[str, int] = {"height": 220}
+
+        def _remember_term_suggest_height() -> None:
+            sizes = term_vertical_splitter.sizes()
+            if len(sizes) < 2:
+                return
+            lower_height = sizes[1]
+            if lower_height > 0:
+                term_suggest_size_state["height"] = lower_height
+
+        def _set_term_suggest_section_visible(visible: bool) -> None:
+            sizes = term_vertical_splitter.sizes()
+            total_height = sum(sizes) if sizes else 0
+            if total_height <= 0:
+                total_height = term_vertical_splitter.height()
+            if total_height <= 0:
+                total_height = 1
+            if visible:
+                requested_height = max(80, term_suggest_size_state["height"])
+                if requested_height >= total_height:
+                    requested_height = max(1, total_height // 3)
+                term_vertical_splitter.setSizes(
+                    [max(1, total_height - requested_height), requested_height]
+                )
+                term_suggest_toggle_btn.setText("Collapse")
+            else:
+                _remember_term_suggest_height()
+                term_vertical_splitter.setSizes([max(1, total_height), 0])
+                term_suggest_toggle_btn.setText("Expand")
+
+        term_vertical_splitter.splitterMoved.connect(
+            lambda _pos, _index: _remember_term_suggest_height()
+        )
+        term_suggest_toggle_btn.toggled.connect(
+            lambda checked: _set_term_suggest_section_visible(bool(checked))
+        )
+        QTimer.singleShot(0, lambda: _set_term_suggest_section_visible(True))
 
         tabs.addTab(term_tab, "Term Usage")
 
