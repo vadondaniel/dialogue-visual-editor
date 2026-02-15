@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 from ..core.models import (
     DialogueSegment,
     FileSession,
+    NO_SPEAKER_KEY,
 )
 from ..core.text_utils import (
     fuzzy_compare_text,
@@ -289,7 +290,13 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         speaker_map_raw = self.translation_state.get("speaker_map")
         if isinstance(speaker_map_raw, dict):
             for key, value in speaker_map_raw.items():
-                if isinstance(key, str) and isinstance(value, str) and value.strip():
+                if (
+                    isinstance(key, str)
+                    and key.strip()
+                    and key.strip() != NO_SPEAKER_KEY
+                    and isinstance(value, str)
+                    and value.strip()
+                ):
                     self.speaker_translation_map[key] = value.strip()
 
         counter_raw = self.translation_state.get("uid_counter", 0)
@@ -339,10 +346,14 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
         unused = set(entries.keys())
         hash_buckets: dict[str, list[str]] = {}
+        source_uid_buckets: dict[str, list[str]] = {}
         for uid, entry in entries.items():
             source_hash = entry.get("source_hash")
             if isinstance(source_hash, str) and source_hash:
                 hash_buckets.setdefault(source_hash, []).append(uid)
+            source_uid = entry.get("source_uid")
+            if isinstance(source_uid, str) and source_uid:
+                source_uid_buckets.setdefault(source_uid, []).append(uid)
 
         for idx, segment in enumerate(session.segments):
             segment.source_lines = list(
@@ -351,6 +362,15 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             chosen_uid = ""
             preferred_uid = order[idx] if idx < len(order) else ""
             preferred_hash = ""
+
+            # Name-index sessions have stable parser UIDs (e.g. States.json:S:12:message1).
+            # Prefer direct UID mapping before hash/order matching.
+            if is_name_index_session:
+                for candidate_uid in source_uid_buckets.get(segment.uid, []):
+                    if candidate_uid in unused:
+                        chosen_uid = candidate_uid
+                        unused.remove(candidate_uid)
+                        break
 
             if preferred_uid and preferred_uid in unused:
                 preferred_entry_raw = entries.get(preferred_uid)
@@ -379,6 +399,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             )
             if (
                 not chosen_uid
+                and (not is_name_index_session)
                 and preferred_uid
                 and preferred_uid in unused
                 and (not preferred_hash or force_positional_match)
@@ -404,9 +425,14 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 force_line1_inference_raw) if isinstance(force_line1_inference_raw, bool) else False
             if disable_line1_inference:
                 force_line1_inference = False
-            speaker_key = self._speaker_key_for_state(segment)
-            if not speaker_en:
-                speaker_en = self.speaker_translation_map.get(speaker_key, "")
+            if is_name_index_session:
+                speaker_key = NO_SPEAKER_KEY
+                speaker_en = ""
+            else:
+                speaker_key = self._speaker_key_for_state(segment)
+                speaker_field_present = "speaker_en" in entry
+                if not speaker_en and (not speaker_field_present):
+                    speaker_en = self.speaker_translation_map.get(speaker_key, "")
 
             segment.tl_uid = chosen_uid
             segment.translation_lines = list(tl_lines)
@@ -418,7 +444,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             segment.force_line1_speaker_inference = force_line1_inference
             segment.original_force_line1_speaker_inference = force_line1_inference
 
-            if speaker_en:
+            if speaker_en and speaker_key != NO_SPEAKER_KEY:
                 self.speaker_translation_map[speaker_key] = speaker_en
 
         # Keep parser order for name-index sessions (e.g. System/MapInfos/etc.).
@@ -491,6 +517,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
         sorted_speaker_map: dict[str, str] = {}
         for key in sorted(self.speaker_translation_map.keys(), key=natural_sort_key):
+            if key == NO_SPEAKER_KEY:
+                continue
             value = self.speaker_translation_map.get(key, "").strip()
             if value:
                 sorted_speaker_map[key] = value
@@ -503,6 +531,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         }
 
     def _translation_state_for_session(self, session: FileSession) -> dict[str, Any]:
+        is_name_index_session = bool(getattr(session, "is_name_index_session", False))
         order: list[str] = []
         entries: dict[str, Any] = {}
         for segment in session.segments:
@@ -513,11 +542,15 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 segment.translation_lines)
             speaker_en = segment.translation_speaker.strip()
             speaker_key = self._speaker_key_for_state(segment)
+            if is_name_index_session:
+                speaker_en = ""
+                speaker_key = NO_SPEAKER_KEY
             source_lines = list(
                 segment.source_lines or segment.original_lines or segment.lines or [""]
             )
             entry: dict[str, Any] = {
                 "source_hash": "" if segment.translation_only else self._segment_source_hash(segment),
+                "source_uid": segment.uid,
                 "source_preview": preview_text(self._segment_reference_source_text(segment), 130),
                 "speaker_jp": speaker_key,
                 "speaker_en": speaker_en,
@@ -536,7 +569,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 entry["source_lines"] = source_lines
                 entry["original_lines"] = list(segment.original_lines or source_lines)
             entries[segment.tl_uid] = entry
-            if speaker_en:
+            if speaker_en and speaker_key != NO_SPEAKER_KEY:
                 self.speaker_translation_map[speaker_key] = speaker_en
         return {"order": order, "entries": entries}
 
@@ -560,6 +593,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
                 sorted_speaker_map: dict[str, str] = {}
                 for key in sorted(self.speaker_translation_map.keys(), key=natural_sort_key):
+                    if key == NO_SPEAKER_KEY:
+                        continue
                     value = self.speaker_translation_map.get(key, "").strip()
                     if value:
                         sorted_speaker_map[key] = value

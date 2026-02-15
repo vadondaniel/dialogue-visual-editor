@@ -677,13 +677,19 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             segment.inserted = False
             segment.merged_segments = []
 
-    def _save_session_snapshot_to_db(self, session: FileSession) -> None:
+    def _save_session_snapshot_to_db(
+        self,
+        session: FileSession,
+        *,
+        save_working_snapshot: bool = True,
+    ) -> None:
         if self.version_db is None:
             raise RuntimeError("Version database is not initialized.")
         rel_path = self._relative_path(session.path)
-        working_data = self._build_source_data_for_session(session)
         translated_data = self._export_translated_data_for_session(session)
-        self.version_db.save_working_snapshot(rel_path, working_data)
+        if save_working_snapshot:
+            working_data = self._build_source_data_for_session(session)
+            self.version_db.save_working_snapshot(rel_path, working_data)
         self.version_db.save_translated_snapshot(rel_path, translated_data)
 
     def _save_session(self, session: FileSession, refresh_current_view: bool = False) -> bool:
@@ -701,7 +707,11 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             if not self._save_translation_state([session.path]):
                 return False
 
-            self._save_session_snapshot_to_db(session)
+            save_working_snapshot = (not translator_mode) or source_dirty_before_save
+            self._save_session_snapshot_to_db(
+                session,
+                save_working_snapshot=save_working_snapshot,
+            )
             if self.index_db is not None:
                 try:
                     rel_path = self._relative_path(session.path)
