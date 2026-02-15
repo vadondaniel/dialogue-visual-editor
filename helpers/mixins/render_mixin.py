@@ -18,6 +18,40 @@ class _RenderHostTypingFallback:
 
 
 class RenderMixin(_RenderHostTypingFallback):
+    def _is_map_display_name_segment(self, segment: DialogueSegment) -> bool:
+        return segment.segment_kind == "map_display_name"
+
+    def _display_block_count(
+        self,
+        segments: list[DialogueSegment],
+        *,
+        actor_mode: bool,
+    ) -> int:
+        if actor_mode:
+            return len(segments)
+        return sum(1 for segment in segments if not self._is_map_display_name_segment(segment))
+
+    def _display_block_numbers(
+        self,
+        segments: list[DialogueSegment],
+        *,
+        actor_mode: bool,
+    ) -> dict[str, int]:
+        numbers: dict[str, int] = {}
+        if actor_mode:
+            for idx, segment in enumerate(segments, start=1):
+                numbers[segment.uid] = idx
+            return numbers
+
+        next_number = 1
+        for segment in segments:
+            if self._is_map_display_name_segment(segment):
+                numbers[segment.uid] = 0
+                continue
+            numbers[segment.uid] = next_number
+            next_number += 1
+        return numbers
+
     def _segment_allows_structural_actions(
         self,
         segment: DialogueSegment,
@@ -589,10 +623,20 @@ class RenderMixin(_RenderHostTypingFallback):
     ) -> None:
         self.block_widgets = {}
         segment_count = len(display_segments)
+        block_numbers = self._display_block_numbers(
+            display_segments,
+            actor_mode=actor_mode,
+        )
         for idx, segment in enumerate(display_segments):
             widget = pool.pop(segment.uid, None)
             if widget is None:
                 continue
+            self._sync_reused_block_widget(
+                widget,
+                segment=segment,
+                block_number=block_numbers.get(segment.uid, idx + 1),
+                name_index_label=name_index_label,
+            )
             self.blocks_layout.addWidget(widget)
             widget.show()
             self.block_widgets[segment.uid] = widget
@@ -728,6 +772,7 @@ class RenderMixin(_RenderHostTypingFallback):
         start_idx = cast(int, state["index"])
         end_idx = min(segment_count, start_idx + self._render_batch_size)
         segments = cast(list[DialogueSegment], state["segments"])
+        block_numbers = cast(dict[str, int], state.get("block_numbers", {}))
         translator_mode = bool(state["translator_mode"])
         actor_mode = bool(state["actor_mode"])
         name_index_kind = cast(str, state.get("name_index_kind", ""))
@@ -758,7 +803,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 self._sync_reused_block_widget(
                     widget,
                     segment=segment,
-                    block_number=idx + 1,
+                    block_number=block_numbers.get(segment.uid, idx + 1),
                     name_index_label=name_index_label,
                 )
             else:
@@ -766,7 +811,7 @@ class RenderMixin(_RenderHostTypingFallback):
                     reused_widget.deleteLater()
                 widget = self._create_block_widget(
                     segment=segment,
-                    block_number=idx + 1,
+                    block_number=block_numbers.get(segment.uid, idx + 1),
                     translator_mode=translator_mode,
                     actor_mode=actor_mode,
                     name_index_kind=name_index_kind,
@@ -894,6 +939,10 @@ class RenderMixin(_RenderHostTypingFallback):
             translator_mode=translator_mode,
             actor_mode=actor_mode,
         )
+        block_numbers = self._display_block_numbers(
+            display_segments,
+            actor_mode=actor_mode,
+        )
         self.current_segment_lookup = {
             segment.uid: segment for segment in display_segments}
         view_meta = self._block_view_meta(
@@ -927,7 +976,10 @@ class RenderMixin(_RenderHostTypingFallback):
                 f"{name_index_label.lower()} {entry_label}"
             )
         else:
-            block_count = len(display_segments)
+            block_count = self._display_block_count(
+                display_segments,
+                actor_mode=False,
+            )
             block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
             header = f"{session.path.name} | {block_count} {block_label}"
         if source_dirty and tl_dirty:
@@ -989,7 +1041,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 self._sync_reused_block_widget(
                     widget,
                     segment=segment,
-                    block_number=idx,
+                    block_number=block_numbers.get(segment.uid, idx),
                     name_index_label=name_index_label,
                 )
                 self._apply_block_visual_state(segment.uid, widget)
@@ -1171,6 +1223,7 @@ class RenderMixin(_RenderHostTypingFallback):
             "session": session,
             "session_path": session.path,
             "segments": display_segments,
+            "block_numbers": block_numbers,
             "segment_count": segment_count,
             "index": 0,
             "translator_mode": translator_mode,

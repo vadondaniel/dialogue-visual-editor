@@ -433,6 +433,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 speaker_field_present = "speaker_en" in entry
                 if not speaker_en and (not speaker_field_present):
                     speaker_en = self.speaker_translation_map.get(speaker_key, "")
+                if speaker_key == NO_SPEAKER_KEY:
+                    speaker_en = ""
 
             segment.tl_uid = chosen_uid
             segment.translation_lines = list(tl_lines)
@@ -459,8 +461,12 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             return
 
         source_segments_by_tl_uid: dict[str, DialogueSegment] = {}
+        map_display_segments: list[DialogueSegment] = []
         for segment in session.segments:
             if segment.translation_only:
+                continue
+            if segment.segment_kind == "map_display_name":
+                map_display_segments.append(segment)
                 continue
             if segment.tl_uid:
                 source_segments_by_tl_uid[segment.tl_uid] = segment
@@ -470,10 +476,10 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
         def template_for_translation_only() -> Optional[DialogueSegment]:
             for candidate in reversed(ordered_segments):
-                if not candidate.translation_only:
+                if not candidate.translation_only and candidate.segment_kind != "map_display_name":
                     return candidate
             for candidate in session.segments:
-                if not candidate.translation_only:
+                if not candidate.translation_only and candidate.segment_kind != "map_display_name":
                     return candidate
             return session.segments[0] if session.segments else None
 
@@ -501,12 +507,14 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         for source_segment in session.segments:
             if source_segment.translation_only:
                 continue
+            if source_segment.segment_kind == "map_display_name":
+                continue
             if source_segment.uid in appended_source_uids:
                 continue
             ordered_segments.append(source_segment)
             appended_source_uids.add(source_segment.uid)
 
-        session.segments = ordered_segments
+        session.segments = map_display_segments + ordered_segments
         setattr(session, "_original_tl_order", [segment.tl_uid for segment in session.segments])
 
     def _sync_translation_state_from_sessions(self) -> None:
@@ -545,6 +553,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             if is_name_index_session:
                 speaker_en = ""
                 speaker_key = NO_SPEAKER_KEY
+            elif speaker_key == NO_SPEAKER_KEY:
+                speaker_en = ""
             source_lines = list(
                 segment.source_lines or segment.original_lines or segment.lines or [""]
             )

@@ -2160,8 +2160,11 @@ class DialogueBlockWidget(QFrame):
                 block_prefix = "Choice"
             elif self._is_map_display_name_block():
                 block_prefix = "Map Display Name"
-            self.title_label.setText(
-                f"{block_prefix} {self.block_number}{title_suffix}")
+            if self._is_map_display_name_block():
+                self.title_label.setText(f"{block_prefix}{title_suffix}")
+            else:
+                self.title_label.setText(
+                    f"{block_prefix} {self.block_number}{title_suffix}")
         self.setStyleSheet(
             f"""
             QFrame#DialogueBlock {{
@@ -2464,7 +2467,13 @@ class DialogueBlockWidget(QFrame):
                 translated = self.speaker_display_resolver(
                     self.segment.speaker_name
                 ).strip()
-            if not translated:
+            if (
+                not translated
+                and (
+                    self.segment.speaker_name != NO_SPEAKER_KEY
+                    or self._line1_inference_active()
+                )
+            ):
                 translated = self.segment.translation_speaker.strip()
             if translated:
                 return translated
@@ -2511,7 +2520,13 @@ class DialogueBlockWidget(QFrame):
                 translated = self.speaker_display_resolver(
                     self.segment.speaker_name
                 ).strip()
-            if not translated:
+            if (
+                not translated
+                and (
+                    self.segment.speaker_name != NO_SPEAKER_KEY
+                    or self._line1_inference_active()
+                )
+            ):
                 translated = self.segment.translation_speaker.strip()
             if translated:
                 return html.escape(translated)

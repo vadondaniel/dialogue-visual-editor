@@ -228,6 +228,38 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         for path in self.file_paths:
             self._update_file_item_text(path)
 
+    def _coerce_display_count(self, raw_value: object, fallback: int) -> int:
+        if isinstance(raw_value, bool):
+            return int(raw_value)
+        if isinstance(raw_value, int):
+            return raw_value
+        if isinstance(raw_value, float):
+            return int(raw_value)
+        if isinstance(raw_value, str):
+            stripped = raw_value.strip()
+            if not stripped:
+                return fallback
+            try:
+                return int(stripped)
+            except ValueError:
+                return fallback
+        return fallback
+
+    def _resolved_display_count(
+        self,
+        display_segments: list[DialogueSegment],
+        *,
+        actor_mode: bool,
+    ) -> int:
+        counter = getattr(self, "_display_block_count", None)
+        if not callable(counter):
+            return len(display_segments)
+        try:
+            raw_value = counter(display_segments, actor_mode=actor_mode)
+        except Exception:
+            return len(display_segments)
+        return self._coerce_display_count(raw_value, len(display_segments))
+
     def _refresh_dirty_state(self, session: FileSession) -> None:
         invalidate_audit = getattr(self, "_invalidate_audit_caches", None)
         if callable(invalidate_audit):
@@ -257,11 +289,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     translator_mode=translator_mode,
                     actor_mode=actor_mode,
                 )
-                block_count = (
-                    len(display_segments_raw)
-                    if isinstance(display_segments_raw, list)
-                    else len(session.segments)
-                )
+                if isinstance(display_segments_raw, list):
+                    block_count = self._resolved_display_count(
+                        display_segments_raw,
+                        actor_mode=actor_mode,
+                    )
+                else:
+                    block_count = len(session.segments)
             else:
                 block_count = len(session.segments)
             block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
@@ -293,11 +327,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 translator_mode=translator_mode,
                 actor_mode=actor_mode,
             )
-            display_count = (
-                len(display_segments_raw)
-                if isinstance(display_segments_raw, list)
-                else len(session.segments)
-            )
+            if isinstance(display_segments_raw, list):
+                display_count = self._resolved_display_count(
+                    display_segments_raw,
+                    actor_mode=actor_mode,
+                )
+            else:
+                display_count = len(session.segments)
         else:
             display_count = len(session.segments)
         suffix = " [empty]" if display_count == 0 else ""

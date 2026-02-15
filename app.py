@@ -1399,9 +1399,13 @@ class DialogueVisualEditor(
                             and old_speaker_key in self.speaker_translation_map
                         ):
                             mapped = self.speaker_translation_map.pop(old_speaker_key, "")
-                            if mapped and (
+                            if (
+                                mapped
+                                and new_speaker_key != NO_SPEAKER_KEY
+                                and (
                                 new_speaker_key not in self.speaker_translation_map
                                 or not self.speaker_translation_map[new_speaker_key].strip()
+                                )
                             ):
                                 self.speaker_translation_map[new_speaker_key] = mapped
 
@@ -1426,7 +1430,8 @@ class DialogueVisualEditor(
                         cleaned_speaker = normalized_tl_speaker.strip()
                         if cleaned_speaker:
                             speaker_key = self._speaker_key_for_segment(segment)
-                            self.speaker_translation_map[speaker_key] = cleaned_speaker
+                            if speaker_key != NO_SPEAKER_KEY:
+                                self.speaker_translation_map[speaker_key] = cleaned_speaker
                         translation_speaker += speaker_count
                         segment_changed = True
 
@@ -1760,9 +1765,24 @@ class DialogueVisualEditor(
         session = self.sessions.get(self.current_path)
         if session is None:
             return None
-        for idx, segment in enumerate(session.segments, start=1):
-            if segment.uid == uid:
-                return idx
+        actor_mode = self._is_name_index_session(session)
+        translator_mode = self._is_translator_mode()
+        display_segments = self._display_segments_for_session(
+            session,
+            translator_mode=translator_mode,
+            actor_mode=actor_mode,
+        )
+        block_numbers = self._display_block_numbers(
+            display_segments,
+            actor_mode=actor_mode,
+        )
+        for segment in display_segments:
+            if segment.uid != uid:
+                continue
+            number = block_numbers.get(uid)
+            if number is None or number <= 0:
+                return None
+            return number
         return None
 
     def _refresh_block_control_mismatch_highlighting(self) -> None:
@@ -1887,7 +1907,10 @@ class DialogueVisualEditor(
                     f"{name_index_label} ID: {actor_id}")
             self.translator_context_label.setText(f"Entry: {segment.context}")
         else:
-            if block_number is None:
+            if segment.segment_kind == "map_display_name":
+                self.translator_detail_title.setText("Selected Map Display Name")
+                self.translator_block_label.setText("Map displayName")
+            elif block_number is None:
                 self.translator_detail_title.setText("Selected Dialogue")
                 self.translator_block_label.setText("Block: -")
             else:
@@ -1908,9 +1931,12 @@ class DialogueVisualEditor(
                     self.translator_speaker_jp_edit.setText("")
                 else:
                     self.translator_speaker_jp_edit.setText(explicit_speaker_key)
-                speaker_en = self._speaker_translation_for_key(speaker_key)
-                if not speaker_en:
-                    speaker_en = segment.translation_speaker.strip()
+                if speaker_key == NO_SPEAKER_KEY:
+                    speaker_en = ""
+                else:
+                    speaker_en = self._speaker_translation_for_key(speaker_key)
+                    if not speaker_en:
+                        speaker_en = segment.translation_speaker.strip()
                 self.translator_speaker_en_edit.setText(speaker_en)
             else:
                 self.translator_speaker_jp_edit.setText("")
@@ -2239,6 +2265,8 @@ class DialogueVisualEditor(
 
     def _speaker_translation_for_key(self, speaker_key: str) -> str:
         key = self._normalize_speaker_key(speaker_key)
+        if key == NO_SPEAKER_KEY:
+            return ""
         value = self.speaker_translation_map.get(key, "")
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -2254,6 +2282,9 @@ class DialogueVisualEditor(
 
     def _set_speaker_translation_everywhere(self, speaker_key: str, translated_name: str) -> int:
         key = self._normalize_speaker_key(speaker_key)
+        if key == NO_SPEAKER_KEY:
+            self.statusBar().showMessage("No JP speaker key selected.")
+            return 0
         cleaned = translated_name.strip()
         previous = self._speaker_translation_for_key(key)
         changed_blocks = 0
@@ -2523,7 +2554,10 @@ class DialogueVisualEditor(
             del self.speaker_custom_colors[old_name]
 
         if old_name in self.speaker_translation_map:
-            if new_name not in self.speaker_translation_map:
+            if (
+                new_name != NO_SPEAKER_KEY
+                and new_name not in self.speaker_translation_map
+            ):
                 self.speaker_translation_map[new_name] = self.speaker_translation_map[old_name]
             del self.speaker_translation_map[old_name]
         self._invalidate_speaker_auto_color_cache()
@@ -3700,6 +3734,8 @@ class DialogueVisualEditor(
                 rel_path = self._relative_path(path)
                 session: Optional[FileSession] = None
                 loaded_from_db = False
+                had_working_payload = False
+                failed_working_snapshot_parse = False
                 import_data: Any = None
                 translated_lines_by_order: Optional[list[list[str]]] = None
 
@@ -3707,6 +3743,7 @@ class DialogueVisualEditor(
                     payload = self.version_db.get_working_snapshot_payload(
                         rel_path)
                     if payload:
+                        had_working_payload = True
                         try:
                             decoded = json.loads(payload)
                             session = parse_dialogue_data(path, decoded)
@@ -3716,6 +3753,7 @@ class DialogueVisualEditor(
                                 "Failed to parse working snapshot JSON for '%s'; falling back to disk file.",
                                 rel_path,
                             )
+                            failed_working_snapshot_parse = True
                             session = None
 
                 if force_disk_import and import_target_version == "translated":
@@ -3758,7 +3796,7 @@ class DialogueVisualEditor(
                                 import_data,
                                 target_version,
                             )
-                        elif not loaded_from_db:
+                        elif not loaded_from_db and (not had_working_payload):
                             self.version_db.ensure_original_snapshot(
                                 rel_path,
                                 session.data,
@@ -3771,6 +3809,11 @@ class DialogueVisualEditor(
                                 rel_path,
                                 self._export_translated_data_for_session(
                                     session),
+                            )
+                        elif failed_working_snapshot_parse:
+                            logger.warning(
+                                "Preserving existing DB snapshots for '%s' because working snapshot payload exists but could not be parsed.",
+                                rel_path,
                             )
                     except Exception:
                         logger.exception(
