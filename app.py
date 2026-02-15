@@ -3681,6 +3681,9 @@ class DialogueVisualEditor(
         loaded_from_disk_count = 0
         total_blocks = 0
         translated_import_hydrated = False
+        self._translation_state_force_positional_match = bool(
+            force_disk_import and import_target_version == "working"
+        )
         for path in self.file_paths:
             try:
                 rel_path = self._relative_path(path)
@@ -3777,6 +3780,7 @@ class DialogueVisualEditor(
             except Exception:
                 logger.exception("Failed to load supported file '%s'.", path)
                 load_errors.append(path.name)
+        self._translation_state_force_positional_match = False
 
         if translated_import_hydrated:
             self._save_translation_state()

@@ -372,11 +372,14 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             # Keep positional fallback only for legacy state rows that don't have
             # source hashes; otherwise parser changes (e.g. added choice segments)
             # can shift IDs and misalign all following translations.
+            force_positional_match = bool(
+                getattr(self, "_translation_state_force_positional_match", False)
+            )
             if (
                 not chosen_uid
                 and preferred_uid
                 and preferred_uid in unused
-                and not preferred_hash
+                and (not preferred_hash or force_positional_match)
             ):
                 chosen_uid = preferred_uid
                 unused.remove(preferred_uid)

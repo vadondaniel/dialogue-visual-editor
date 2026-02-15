@@ -1083,7 +1083,14 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             logger.exception("Failed to persist applied snapshot version '%s'.", version)
 
         current_dir = self.data_dir
-        self._load_data_folder(current_dir)
+        if version == "translated":
+            self._load_data_folder(
+                current_dir,
+                force_disk_import=True,
+                import_target_version="translated",
+            )
+        else:
+            self._load_data_folder(current_dir)
         if missing or failed:
             file_label = "file" if applied == 1 else "files"
             title_suffix = " Synced index.html title." if index_title_applied else ""
