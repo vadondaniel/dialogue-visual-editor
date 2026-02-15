@@ -92,6 +92,7 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
             request.get("scope"),
             request.get("needle"),
             request.get("case_sensitive"),
+            request.get("natural_mode"),
         )
 
     def _sanitize_request_key(self, request: Optional[dict[str, Any]]) -> tuple[Any, ...]:

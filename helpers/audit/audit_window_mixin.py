@@ -107,6 +107,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         controls_row.setSpacing(6)
         query_edit = QLineEdit()
         query_edit.setPlaceholderText("Find...")
+        query_edit.setClearButtonEnabled(True)
         query_edit.setStyleSheet(
             "QLineEdit { padding-right: 34px; } "
             "QLineEdit QToolButton { width: 26px; height: 26px; }"
@@ -120,6 +121,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         controls_row.addWidget(scope_combo)
         replace_edit = QLineEdit()
         replace_edit.setPlaceholderText("Replace with...")
+        replace_edit.setClearButtonEnabled(True)
         controls_row.addWidget(replace_edit, 2)
         case_sensitive_action = QAction("Aa", query_edit)
         case_sensitive_action.setCheckable(True)

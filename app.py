@@ -338,14 +338,14 @@ class DialogueVisualEditor(
         self.audit_cache_generation = 0
         self.audit_result_batch_size = 16
         self.audit_render_batch_interval_ms = 8
-        self.audit_search_cache_key: Optional[tuple[int, str, str, bool]] = None
+        self.audit_search_cache_key: Optional[tuple[int, str, str, bool, bool]] = None
         self.audit_search_cache_records: list[dict[str, Any]] = []
         self.audit_search_render_records: list[dict[str, Any]] = []
         self.audit_search_render_index = 0
         self.audit_search_render_query = ""
         self.audit_search_render_scope = "original"
         self.audit_search_render_generation = 0
-        self.audit_search_displayed_key: Optional[tuple[int, str, str, bool]] = None
+        self.audit_search_displayed_key: Optional[tuple[int, str, str, bool, bool]] = None
         self.audit_search_display_complete = False
         self.audit_search_render_timer = QTimer(self)
         self.audit_search_render_timer.setSingleShot(True)

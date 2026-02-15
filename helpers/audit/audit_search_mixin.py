@@ -23,6 +23,23 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
     def _is_control_code_search_query(self, query: str) -> bool:
         return bool(self._CONTROL_QUERY_RE.search(query or ""))
 
+    def _audit_search_uses_natural_mode(self, query: str) -> bool:
+        if not query:
+            return False
+        if self._is_control_code_search_query(query):
+            return False
+        return not any(char.isspace() for char in query)
+
+    def _audit_search_needle(
+        self,
+        query: str,
+        case_sensitive: bool,
+    ) -> tuple[str, bool]:
+        natural_mode = self._audit_search_uses_natural_mode(query)
+        if natural_mode:
+            return self._normalize_text_for_natural_search(query, case_sensitive), True
+        return (query if case_sensitive else query.casefold()), False
+
     def _normalize_text_for_natural_search(self, text: str, case_sensitive: bool = False) -> str:
         without_codes = strip_control_tokens(text or "")
         normalized = "".join(without_codes.split())
@@ -325,17 +342,24 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             or self.audit_search_replace_all_btn is None
         ):
             return
-        current_query = self.audit_search_query_edit.text().strip()
+        current_query = self.audit_search_query_edit.text()
         current_scope = str(
             self.audit_search_scope_combo.currentData() or "original")
         current_case_sensitive = self._audit_search_case_sensitive_enabled()
+        current_needle, current_natural_mode = self._audit_search_needle(
+            current_query,
+            current_case_sensitive,
+        )
         if (
             current_query != query
             or current_scope != scope
             or current_case_sensitive != case_sensitive
+            or current_natural_mode != bool(running_request.get("natural_mode", False))
+            or current_needle != needle
         ):
             return
-        cache_key = (generation, scope, needle, case_sensitive)
+        natural_mode = bool(running_request.get("natural_mode", False))
+        cache_key = (generation, scope, needle, case_sensitive, natural_mode)
         self.audit_search_cache_key = cache_key
         self.audit_search_cache_records = list(records)
         if not records:
@@ -361,8 +385,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         self.audit_search_render_generation = generation
         self.audit_search_render_query = query
         self.audit_search_render_needle = needle
-        self.audit_search_render_natural_mode = bool(
-            running_request.get("natural_mode", False))
+        self.audit_search_render_natural_mode = natural_mode
         self.audit_search_render_case_sensitive = case_sensitive
         self.audit_search_render_scope = scope
         self.audit_search_display_complete = False
@@ -384,7 +407,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         if self.audit_search_timer is not None:
             self.audit_search_timer.stop()
 
-        query = self.audit_search_query_edit.text().strip()
+        query = self.audit_search_query_edit.text()
         scope = str(self.audit_search_scope_combo.currentData() or "original")
         case_sensitive = self._audit_search_case_sensitive_enabled()
 
@@ -413,12 +436,14 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self._refresh_audit_search_replace_preview()
             return
 
-        control_query = self._is_control_code_search_query(query)
-        if control_query:
-            needle = query if case_sensitive else query.casefold()
-        else:
-            needle = self._normalize_text_for_natural_search(query, case_sensitive)
-        requested_key = (self.audit_cache_generation, scope, needle, case_sensitive)
+        needle, natural_mode = self._audit_search_needle(query, case_sensitive)
+        requested_key = (
+            self.audit_cache_generation,
+            scope,
+            needle,
+            case_sensitive,
+            natural_mode,
+        )
         if (
             self.audit_search_display_complete
             and self.audit_search_displayed_key == requested_key
@@ -453,7 +478,13 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         self.audit_search_replace_all_btn.setEnabled(False)
         self.audit_search_display_complete = False
         self.audit_search_displayed_key = None
-        cache_key = (self.audit_cache_generation, scope, needle, case_sensitive)
+        cache_key = (
+            self.audit_cache_generation,
+            scope,
+            needle,
+            case_sensitive,
+            natural_mode,
+        )
         if self.audit_search_cache_key == cache_key:
             records = list(self.audit_search_cache_records)
             if not records:
@@ -480,7 +511,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             self.audit_search_render_generation = self.audit_cache_generation
             self.audit_search_render_query = query
             self.audit_search_render_needle = needle
-            self.audit_search_render_natural_mode = not control_query
+            self.audit_search_render_natural_mode = natural_mode
+            self.audit_search_render_case_sensitive = case_sensitive
             self.audit_search_render_scope = scope
             self.audit_search_replace_all_btn.setEnabled(True)
             self.audit_search_render_timer.start(
@@ -493,7 +525,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             "query": query,
             "scope": scope,
             "needle": needle,
-            "natural_mode": not control_query,
+            "natural_mode": natural_mode,
             "case_sensitive": case_sensitive,
             "path_sessions": self._audit_path_sessions_snapshot(),
         }
@@ -571,6 +603,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             scope,
             needle,
             case_sensitive,
+            natural_mode,
         )
         self.audit_search_display_complete = True
         match_label = "match" if total == 1 else "matches"
@@ -642,18 +675,12 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             return
         if self.audit_search_query_edit is None or self.audit_search_replace_edit is None:
             return
-        query = self.audit_search_query_edit.text().strip()
+        query = self.audit_search_query_edit.text()
         replace_text = self.audit_search_replace_edit.text()
         case_sensitive = (
             self._audit_search_case_sensitive_enabled()
         )
-        control_query = self._is_control_code_search_query(query)
-        natural_mode = not control_query
-        needle = (
-            query if case_sensitive else query.casefold()
-            if control_query
-            else self._normalize_text_for_natural_search(query, case_sensitive)
-        )
+        needle, natural_mode = self._audit_search_needle(query, case_sensitive)
 
         list_widget = self.audit_search_results_list
         for row in range(list_widget.count()):
