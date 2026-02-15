@@ -319,6 +319,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
     def _apply_translation_state_to_session(self, session: FileSession) -> None:
         rel_path = self._relative_path(session.path)
+        is_name_index_session = bool(getattr(session, "is_name_index_session", False))
         files_raw = self.translation_state.get("files")
         file_state: dict[str, Any] = {}
         if isinstance(files_raw, dict):
@@ -372,8 +373,9 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             # Keep positional fallback only for legacy state rows that don't have
             # source hashes; otherwise parser changes (e.g. added choice segments)
             # can shift IDs and misalign all following translations.
-            force_positional_match = bool(
-                getattr(self, "_translation_state_force_positional_match", False)
+            force_positional_match = (
+                bool(getattr(self, "_translation_state_force_positional_match", False))
+                and (not is_name_index_session)
             )
             if (
                 not chosen_uid
@@ -418,6 +420,17 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
             if speaker_en:
                 self.speaker_translation_map[speaker_key] = speaker_en
+
+        # Keep parser order for name-index sessions (e.g. System/MapInfos/etc.).
+        # Reordering by saved TL order is only needed for dialogue sessions that
+        # can contain translation-only inserted blocks.
+        if is_name_index_session:
+            setattr(
+                session,
+                "_original_tl_order",
+                [segment.tl_uid for segment in session.segments],
+            )
+            return
 
         source_segments_by_tl_uid: dict[str, DialogueSegment] = {}
         for segment in session.segments:

@@ -3692,9 +3692,9 @@ class DialogueVisualEditor(
         loaded_from_disk_count = 0
         total_blocks = 0
         translated_import_hydrated = False
-        self._translation_state_force_positional_match = bool(
-            force_disk_import and import_target_version == "working"
-        )
+        # Never force positional TL-state matching. Source-hash matching is safer
+        # for parser/order changes and avoids large desync cascades.
+        self._translation_state_force_positional_match = False
         for path in self.file_paths:
             try:
                 rel_path = self._relative_path(path)
