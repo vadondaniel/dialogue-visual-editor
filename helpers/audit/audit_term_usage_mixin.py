@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from html import escape
 import re
+import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
@@ -20,7 +21,7 @@ class _AuditTermUsageHostTypingFallback:
 
 class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
     _JP_TERM_RE = re.compile(r"[ぁ-ゟァ-ヿ一-龯々〆〤ー]{2,}")
-    _EN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’-]*")
+    _EN_WORD_RE = re.compile(r"[^\W\d_]+(?:['’\-–][^\W\d_]+)*", re.UNICODE)
     _EN_STOPWORDS = {
         "the", "and", "for", "that", "with", "from", "this", "have", "your",
         "you", "are", "was", "were", "will", "would", "could", "should",
@@ -28,6 +29,27 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         "is", "am", "be", "been", "being", "to", "of", "in", "on", "at", "as",
         "by", "or", "an", "a", "it", "we", "i", "me", "my", "mine",
     }
+
+    @staticmethod
+    def _is_latin_word_token(token: str) -> bool:
+        letters = [ch for ch in token if ch.isalpha()]
+        if not letters:
+            return False
+        for letter in letters:
+            if "LATIN" not in unicodedata.name(letter, ""):
+                return False
+        return True
+
+    def _translation_word_tokens_for_suggestions(self, text: str) -> list[str]:
+        tokens: list[str] = []
+        for raw_token in self._EN_WORD_RE.findall(text or ""):
+            candidate = raw_token.strip("'’-–").casefold()
+            if len(candidate) < 3:
+                continue
+            if not self._is_latin_word_token(candidate):
+                continue
+            tokens.append(candidate)
+        return tokens
 
     def _marker_text_to_rich_html(self, text: str) -> str:
         if not text:
@@ -142,11 +164,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                         )
                         if not plain:
                             continue
-                        words = [
-                            token.lower()
-                            for token in self._EN_WORD_RE.findall(plain)
-                            if len(token) >= 3
-                        ]
+                        words = self._translation_word_tokens_for_suggestions(plain)
                         filtered_words = [
                             token
                             for token in words
@@ -730,7 +748,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                 label = (
                     f"{relative} | {entry_label} | line {line_label}\n"
                     f"JP: {jp_preview}\n"
-                    f"EN: {display_en}"
+                    f"TL: {display_en}"
                 )
                 self._add_audit_term_hit_item(
                     label,

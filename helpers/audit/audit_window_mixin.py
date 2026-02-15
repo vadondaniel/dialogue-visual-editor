@@ -407,7 +407,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         term_suggest_en_layout = QVBoxLayout(term_suggest_en_panel)
         term_suggest_en_layout.setContentsMargins(0, 0, 0, 0)
         term_suggest_en_layout.setSpacing(6)
-        term_suggest_en_layout.addWidget(QLabel("EN frequent words/phrases"))
+        term_suggest_en_layout.addWidget(QLabel("TL frequent words/phrases"))
         term_suggest_en_list = QListWidget()
         term_suggest_en_layout.addWidget(term_suggest_en_list, 1)
         term_suggest_splitter.addWidget(term_suggest_en_panel)
