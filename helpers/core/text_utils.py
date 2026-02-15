@@ -629,14 +629,32 @@ def _starts_with_capital_visible_letter(text: str) -> bool:
     return False
 
 
+def _starts_with_noncapital_visible_letter(text: str) -> bool:
+    for unit in parse_units_for_measure(text):
+        if unit.get("is_newline"):
+            break
+        if _unit_visible_value(unit) <= 0:
+            continue
+        if _unit_is_space(unit):
+            continue
+        token_text = unit.get("text")
+        token = token_text if isinstance(token_text, str) else ""
+        if len(token) == 1 and token.isalpha() and (not token.isupper()):
+            return True
+        return False
+    return False
+
+
 def _should_force_break_after_line(
     line: str,
     line_width: int,
     *,
+    next_line: str = "",
     ending_policy: Literal["default", "allow_comma", "no_punctuation_only"] = "default",
     min_soft_ratio: float = 0.5,
     allow_comma_endings: bool = False,
     allow_colon_triplet_endings: bool = False,
+    allow_ellipsis_lowercase_continuation: bool = False,
     collapse_if_no_punctuation: bool = True,
 ) -> bool:
     if ending_policy == "no_punctuation_only":
@@ -649,10 +667,17 @@ def _should_force_break_after_line(
     if not _has_visible_nonspace_characters(line):
         return True
     visible_line = CONTROL_TOKEN_RE.sub("", line or "").rstrip()
-    if allow_colon_triplet_endings and (
+    ellipsis_ending = (
         visible_line.endswith("...")
         or visible_line.endswith("…")
         or visible_line.endswith("。。。")
+    )
+    if allow_colon_triplet_endings and ellipsis_ending:
+        return False
+    if (
+        allow_ellipsis_lowercase_continuation
+        and ellipsis_ending
+        and _starts_with_noncapital_visible_letter(next_line)
     ):
         return False
     last_char = _last_visible_nonspace_character(line)
@@ -677,6 +702,7 @@ def _build_smart_collapse_body_text(
     min_soft_ratio: float = 0.5,
     allow_comma_endings: bool = False,
     allow_colon_triplet_endings: bool = False,
+    allow_ellipsis_lowercase_continuation: bool = False,
     collapse_if_no_punctuation: bool = True,
 ) -> str:
     parts: list[str] = []
@@ -688,10 +714,12 @@ def _build_smart_collapse_body_text(
                 if _should_force_break_after_line(
                     previous_line,
                     line_width,
+                    next_line=line,
                     ending_policy=ending_policy,
                     min_soft_ratio=min_soft_ratio,
                     allow_comma_endings=allow_comma_endings,
                     allow_colon_triplet_endings=allow_colon_triplet_endings,
+                    allow_ellipsis_lowercase_continuation=allow_ellipsis_lowercase_continuation,
                     collapse_if_no_punctuation=collapse_if_no_punctuation,
                 )
                 else " "
@@ -898,6 +926,7 @@ def smart_collapse_lines(
     min_soft_ratio: float = 0.5,
     allow_comma_endings: bool = False,
     allow_colon_triplet_endings: bool = False,
+    allow_ellipsis_lowercase_continuation: bool = False,
     collapse_if_no_punctuation: bool = True,
 ) -> list[str]:
     safe_width = max(1, width)
@@ -922,6 +951,7 @@ def smart_collapse_lines(
         min_soft_ratio=min_soft_ratio,
         allow_comma_endings=allow_comma_endings,
         allow_colon_triplet_endings=allow_colon_triplet_endings,
+        allow_ellipsis_lowercase_continuation=allow_ellipsis_lowercase_continuation,
         collapse_if_no_punctuation=collapse_if_no_punctuation,
     )
     wrapped_body = wrap_text_word_aware(body_text, safe_width)

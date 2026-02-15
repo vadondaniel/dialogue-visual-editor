@@ -335,6 +335,9 @@ class RenderMixin(_RenderHostTypingFallback):
                 smart_collapse_allow_colon_triplet_endings=bool(
                     self.smart_collapse_allow_colon_triplet_endings
                 ),
+                smart_collapse_ellipsis_lowercase_rule=bool(
+                    self.smart_collapse_ellipsis_lowercase_rule
+                ),
                 smart_collapse_collapse_if_no_punctuation=bool(
                     self.smart_collapse_collapse_if_no_punctuation
                 ),
@@ -453,6 +456,9 @@ class RenderMixin(_RenderHostTypingFallback):
         )
         widget.smart_collapse_allow_colon_triplet_endings = bool(
             self.smart_collapse_allow_colon_triplet_endings
+        )
+        widget.smart_collapse_ellipsis_lowercase_rule = bool(
+            self.smart_collapse_ellipsis_lowercase_rule
         )
         widget.smart_collapse_collapse_if_no_punctuation = bool(
             self.smart_collapse_collapse_if_no_punctuation

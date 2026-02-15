@@ -51,7 +51,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
     def _prompt_smart_collapse_all_options(
         self,
-    ) -> Optional[tuple[bool, bool, bool, float, bool]]:
+    ) -> Optional[tuple[bool, bool, bool, bool, float, bool]]:
         dialog = QDialog(cast(QWidget, self))
         dialog.setWindowTitle("Smart Collapse All")
         dialog.resize(420, 220)
@@ -83,6 +83,14 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             bool(getattr(self, "smart_collapse_allow_colon_triplet_endings", False))
         )
         form.addRow(allow_colon_triplet_check)
+
+        ellipsis_lowercase_rule_check = QCheckBox(
+            "Collapse if previous line ends with ... and next starts lowercase"
+        )
+        ellipsis_lowercase_rule_check.setChecked(
+            bool(getattr(self, "smart_collapse_ellipsis_lowercase_rule", False))
+        )
+        form.addRow(ellipsis_lowercase_rule_check)
 
         no_punctuation_check = QCheckBox(
             "Collapse if previous line ends without punctuation"
@@ -120,6 +128,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         allow_comma_endings = bool(allow_comma_check.isChecked())
         allow_colon_triplet_endings = bool(allow_colon_triplet_check.isChecked())
+        ellipsis_lowercase_rule = bool(ellipsis_lowercase_rule_check.isChecked())
         collapse_if_no_punctuation = bool(no_punctuation_check.isChecked())
         min_soft_ratio = (
             float(int(threshold_spin.value())) / 100.0
@@ -129,6 +138,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         return (
             allow_comma_endings,
             allow_colon_triplet_endings,
+            ellipsis_lowercase_rule,
             collapse_if_no_punctuation,
             max(0.0, min(1.0, min_soft_ratio)),
             bool(scope_all_files_check.isChecked()),
@@ -145,6 +155,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         *,
         allow_comma_endings: bool,
         allow_colon_triplet_endings: bool,
+        ellipsis_lowercase_rule: bool,
         collapse_if_no_punctuation: bool,
         min_soft_ratio: float,
     ) -> list[str]:
@@ -162,6 +173,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             ),
             allow_comma_endings=allow_comma_endings,
             allow_colon_triplet_endings=allow_colon_triplet_endings,
+            allow_ellipsis_lowercase_continuation=ellipsis_lowercase_rule,
             collapse_if_no_punctuation=collapse_if_no_punctuation,
             min_soft_ratio=max(0.0, min(1.0, float(min_soft_ratio))),
         )
@@ -176,6 +188,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         *,
         allow_comma_endings: bool,
         allow_colon_triplet_endings: bool,
+        ellipsis_lowercase_rule: bool,
         collapse_if_no_punctuation: bool,
         min_soft_ratio: float,
     ) -> list[str]:
@@ -189,6 +202,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             ),
             allow_comma_endings=allow_comma_endings,
             allow_colon_triplet_endings=allow_colon_triplet_endings,
+            allow_ellipsis_lowercase_continuation=ellipsis_lowercase_rule,
             collapse_if_no_punctuation=collapse_if_no_punctuation,
             min_soft_ratio=max(0.0, min(1.0, float(min_soft_ratio))),
         )
@@ -204,6 +218,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         (
             allow_comma_endings,
             allow_colon_triplet_endings,
+            ellipsis_lowercase_rule,
             collapse_if_no_punctuation,
             min_soft_ratio,
             apply_all_files,
@@ -235,6 +250,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                     segment,
                     allow_comma_endings=allow_comma_endings,
                     allow_colon_triplet_endings=allow_colon_triplet_endings,
+                    ellipsis_lowercase_rule=ellipsis_lowercase_rule,
                     collapse_if_no_punctuation=collapse_if_no_punctuation,
                     min_soft_ratio=min_soft_ratio,
                 )
@@ -247,6 +263,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                     segment,
                     allow_comma_endings=allow_comma_endings,
                     allow_colon_triplet_endings=allow_colon_triplet_endings,
+                    ellipsis_lowercase_rule=ellipsis_lowercase_rule,
                     collapse_if_no_punctuation=collapse_if_no_punctuation,
                     min_soft_ratio=min_soft_ratio,
                 )

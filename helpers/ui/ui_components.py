@@ -1502,6 +1502,7 @@ class DialogueBlockWidget(QFrame):
         infer_name_from_first_line: bool,
         smart_collapse_allow_comma_endings: bool,
         smart_collapse_allow_colon_triplet_endings: bool,
+        smart_collapse_ellipsis_lowercase_rule: bool,
         smart_collapse_collapse_if_no_punctuation: bool,
         smart_collapse_min_soft_ratio: float,
         hide_control_codes_when_unfocused: bool,
@@ -1536,6 +1537,9 @@ class DialogueBlockWidget(QFrame):
         )
         self.smart_collapse_allow_colon_triplet_endings = bool(
             smart_collapse_allow_colon_triplet_endings
+        )
+        self.smart_collapse_ellipsis_lowercase_rule = bool(
+            smart_collapse_ellipsis_lowercase_rule
         )
         self.smart_collapse_collapse_if_no_punctuation = bool(
             smart_collapse_collapse_if_no_punctuation
@@ -2814,6 +2818,7 @@ class DialogueBlockWidget(QFrame):
             infer_name_from_first_line=infer_name_in_editor_lines,
             allow_comma_endings=self.smart_collapse_allow_comma_endings,
             allow_colon_triplet_endings=self.smart_collapse_allow_colon_triplet_endings,
+            allow_ellipsis_lowercase_continuation=self.smart_collapse_ellipsis_lowercase_rule,
             collapse_if_no_punctuation=self.smart_collapse_collapse_if_no_punctuation,
             min_soft_ratio=self.smart_collapse_min_soft_ratio,
         ) != lines
@@ -2868,6 +2873,7 @@ class DialogueBlockWidget(QFrame):
             infer_name_from_first_line=infer_name_in_editor_lines,
             allow_comma_endings=self.smart_collapse_allow_comma_endings,
             allow_colon_triplet_endings=self.smart_collapse_allow_colon_triplet_endings,
+            allow_ellipsis_lowercase_continuation=self.smart_collapse_ellipsis_lowercase_rule,
             collapse_if_no_punctuation=self.smart_collapse_collapse_if_no_punctuation,
             min_soft_ratio=self.smart_collapse_min_soft_ratio,
         )
