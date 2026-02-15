@@ -1,0 +1,11 @@
+{
+  "include": [
+    "app.py",
+    "dialogue_visual_editor.pyw",
+    "helpers",
+    "tests"
+  ],
+  "extraPaths": [
+    ".."
+  ]
+}
