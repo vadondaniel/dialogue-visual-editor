@@ -41,6 +41,29 @@ class _Harness(AuditTermUsageMixin):
 
 
 class AuditTermUsageMixinTests(unittest.TestCase):
+    def test_jp_suggestions_include_katakana_terms_inside_sentence(self) -> None:
+        harness = _Harness()
+        path = Path("MapJP001.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("jp1", "このポーションは高い。", "tl1"),
+                _segment("jp2", "古いポーションを捨てる。", "tl2"),
+                _segment("jp3", "ポーションがあれば安心だ。", "tl3"),
+            ],
+        )
+
+        jp_suggestions, _tl_suggestions = harness._collect_audit_term_suggestions(
+            dialogue_only=False
+        )
+        jp_suggestions_dict = dict(jp_suggestions)
+
+        self.assertIn("ポーション", jp_suggestions_dict)
+        self.assertGreaterEqual(jp_suggestions_dict["ポーション"], 3)
+
     def test_translation_suggestions_include_hungarian_accented_words(self) -> None:
         harness = _Harness()
         path = Path("Map001.json")

@@ -21,6 +21,7 @@ class _AuditTermUsageHostTypingFallback:
 
 class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
     _JP_TERM_RE = re.compile(r"[ぁ-ゟァ-ヿ一-龯々〆〤ー]{2,}")
+    _JP_KATAKANA_TERM_RE = re.compile(r"[ァ-ヿー]{2,}")
     _EN_WORD_RE = re.compile(r"[^\W\d_]+(?:['’\-–][^\W\d_]+)*", re.UNICODE)
     _EN_STOPWORDS = {
         "the", "and", "for", "that", "with", "from", "this", "have", "your",
@@ -49,6 +50,16 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             if not self._is_latin_word_token(candidate):
                 continue
             tokens.append(candidate)
+        return tokens
+
+    def _source_term_tokens_for_suggestions(self, text: str) -> list[str]:
+        tokens: list[str] = []
+        for raw_token in self._JP_TERM_RE.findall(text or ""):
+            if len(raw_token) >= 2:
+                tokens.append(raw_token)
+            for katakana_token in self._JP_KATAKANA_TERM_RE.findall(raw_token):
+                if len(katakana_token) >= 2:
+                    tokens.append(katakana_token)
         return tokens
 
     def _marker_text_to_rich_html(self, text: str) -> str:
@@ -154,9 +165,8 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                         )
                         if not plain:
                             continue
-                        for token in self._JP_TERM_RE.findall(plain):
-                            if len(token) >= 2:
-                                jp_counts[token] += 1
+                        for token in self._source_term_tokens_for_suggestions(plain):
+                            jp_counts[token] += 1
                 if isinstance(tl_lines, list):
                     for line in tl_lines:
                         plain = self._plain_text_for_suggestions(
