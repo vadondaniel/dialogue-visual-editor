@@ -314,6 +314,7 @@ class DialogueVisualEditor(
         self.audit_control_mismatch_progress_overlay: Optional[QLabel] = None
         self.audit_control_mismatch_only_translated_check: Optional[QCheckBox] = None
         self.audit_consistency_only_inconsistent_check: Optional[QCheckBox] = None
+        self.audit_consistency_dialogue_only_check: Optional[QCheckBox] = None
         self.audit_consistency_sort_combo: Optional[QComboBox] = None
         self.audit_consistency_groups_list: Optional[QListWidget] = None
         self.audit_consistency_entries_list: Optional[QListWidget] = None

@@ -253,6 +253,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_only_inconsistent_check = QCheckBox("Only inconsistent")
         consistency_only_inconsistent_check.setChecked(True)
         consistency_controls_row.addWidget(consistency_only_inconsistent_check)
+        consistency_dialogue_only_check = QCheckBox("Dialogue only")
+        consistency_dialogue_only_check.setChecked(True)
+        consistency_controls_row.addWidget(consistency_dialogue_only_check)
         consistency_controls_row.addWidget(QLabel("Sort"))
         consistency_sort_combo = QComboBox()
         consistency_sort_combo.addItem("Source order", "source_order")
@@ -516,6 +519,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_control_mismatch_progress_overlay = control_progress_overlay
         self.audit_control_mismatch_only_translated_check = control_only_translated_check
         self.audit_consistency_only_inconsistent_check = consistency_only_inconsistent_check
+        self.audit_consistency_dialogue_only_check = consistency_dialogue_only_check
         self.audit_consistency_sort_combo = consistency_sort_combo
         self.audit_consistency_groups_list = consistency_groups_list
         self.audit_consistency_entries_list = consistency_entries_list
@@ -656,6 +660,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         control_goto_btn.clicked.connect(
             self._go_to_selected_audit_control_mismatch)
         consistency_only_inconsistent_check.toggled.connect(
+            lambda _checked: self._refresh_audit_consistency_panel()
+        )
+        consistency_dialogue_only_check.toggled.connect(
             lambda _checked: self._refresh_audit_consistency_panel()
         )
         consistency_refresh_btn.clicked.connect(

@@ -105,6 +105,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     def _collect_audit_consistency_groups(
         self,
         only_inconsistent: bool,
+        dialogue_only: bool,
         sort_mode: str,
     ) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, str]]] = {}
@@ -115,6 +116,8 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             if session is None:
                 continue
             for idx, segment in enumerate(session.segments, start=1):
+                if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
+                    continue
                 source_text = "\n".join(
                     self._segment_source_lines_for_display(segment))
                 if not source_text.strip():
@@ -305,15 +308,21 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     def _refresh_audit_consistency_panel(self, preferred_source: Optional[str] = None) -> None:
         if (
             self.audit_consistency_only_inconsistent_check is None
+            or self.audit_consistency_dialogue_only_check is None
             or self.audit_consistency_sort_combo is None
             or self.audit_consistency_groups_list is None
             or self.audit_consistency_status_label is None
         ):
             return
         only_inconsistent = self.audit_consistency_only_inconsistent_check.isChecked()
+        dialogue_only = self.audit_consistency_dialogue_only_check.isChecked()
         sort_mode_raw = self.audit_consistency_sort_combo.currentData()
         sort_mode = sort_mode_raw if isinstance(sort_mode_raw, str) else "source_order"
-        groups = self._collect_audit_consistency_groups(only_inconsistent, sort_mode)
+        groups = self._collect_audit_consistency_groups(
+            only_inconsistent,
+            dialogue_only,
+            sort_mode,
+        )
         self.audit_consistency_groups_list.clear()
         selected_row = -1
         total_entries = 0
