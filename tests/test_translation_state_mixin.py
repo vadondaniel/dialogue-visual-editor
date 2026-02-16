@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -52,6 +53,48 @@ class _Harness(TranslationStateMixin):
 
 
 class TranslationStateMixinTests(unittest.TestCase):
+    def test_apply_state_script_message_legacy_hash_still_matches(self) -> None:
+        harness = _Harness()
+        segment = _segment("Map010.json:L0:0", "JP line", "Narrator")
+        segment.segment_kind = "script_message"
+        segment.code101["parameters"] = ["face", 0, 0, 2, "Narrator"]
+        session = FileSession(
+            path=Path("Map010.json"),
+            data=[],
+            bundles=[],
+            segments=[segment],
+        )
+        legacy_payload = "\n".join(
+            [
+                segment.segment_kind,
+                segment.context,
+                str(segment.background),
+                str(segment.position),
+                "",
+                "0",
+                segment.speaker_name,
+                "\n".join(segment.lines),
+            ]
+        )
+        legacy_hash = hashlib.sha1(legacy_payload.encode("utf-8")).hexdigest()
+        harness.translation_state["files"] = {
+            "Map010.json": {
+                "order": ["T_legacy"],
+                "entries": {
+                    "T_legacy": {
+                        "source_uid": segment.uid,
+                        "source_hash": legacy_hash,
+                        "translation_lines": ["TL line"],
+                    }
+                },
+            }
+        }
+
+        harness._apply_translation_state_to_session(session)
+
+        self.assertEqual(session.segments[0].translation_lines, ["TL line"])
+        self.assertEqual(session.segments[0].tl_uid, "T_legacy")
+
     def test_apply_state_name_index_prefers_source_uid_mapping(self) -> None:
         harness = _Harness()
         seg_a = _segment("States.json:S:1:message1", "JP A")

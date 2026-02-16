@@ -4,6 +4,8 @@ import re
 
 _GAME_MESSAGE_PREFIX_RE = re.compile(
     r"^\s*\$gameMessage\.(add|setSpeakerName)\s*\(")
+_GAME_MESSAGE_FACE_PREFIX_RE = re.compile(
+    r"^\s*\$gameMessage\.setFaceImage\s*\(")
 _HEX_DIGITS = set("0123456789abcdefABCDEF")
 
 
@@ -153,6 +155,107 @@ def parse_game_message_call(line: str) -> tuple[str, str, str] | None:
     raw_value = "".join(raw_value_chars)
     decoded_value = _decode_js_string_literal(raw_value)
     return call_kind, decoded_value, quote_char
+
+
+def parse_game_message_set_face_image_call(line: str) -> tuple[str, str] | None:
+    match = _GAME_MESSAGE_FACE_PREFIX_RE.match(line)
+    if match is None:
+        return None
+    idx = match.end()
+    line_len = len(line)
+    args_chars: list[str] = []
+    depth = 1
+    quote_char = ""
+    escape_next = False
+
+    while idx < line_len:
+        ch = line[idx]
+        idx += 1
+        if escape_next:
+            args_chars.append(ch)
+            escape_next = False
+            continue
+        if quote_char:
+            args_chars.append(ch)
+            if ch == "\\":
+                escape_next = True
+                continue
+            if ch == quote_char:
+                quote_char = ""
+            continue
+        if ch in {'"', "'"}:
+            quote_char = ch
+            args_chars.append(ch)
+            continue
+        if ch == "(":
+            depth += 1
+            args_chars.append(ch)
+            continue
+        if ch == ")":
+            depth -= 1
+            if depth == 0:
+                break
+            args_chars.append(ch)
+            continue
+        args_chars.append(ch)
+    if depth != 0:
+        return None
+
+    while idx < line_len and line[idx].isspace():
+        idx += 1
+    if idx < line_len and line[idx] == ";":
+        idx += 1
+    while idx < line_len and line[idx].isspace():
+        idx += 1
+    if idx != line_len:
+        return None
+
+    args_raw = "".join(args_chars).strip()
+    if not args_raw:
+        return None
+
+    split_index = -1
+    nested_depth = 0
+    current_quote = ""
+    escaped = False
+    for arg_idx, ch in enumerate(args_raw):
+        if escaped:
+            escaped = False
+            continue
+        if current_quote:
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == current_quote:
+                current_quote = ""
+            continue
+        if ch in {'"', "'"}:
+            current_quote = ch
+            continue
+        if ch == "(":
+            nested_depth += 1
+            continue
+        if ch == ")":
+            nested_depth = max(0, nested_depth - 1)
+            continue
+        if ch == "," and nested_depth == 0:
+            split_index = arg_idx
+            break
+    if split_index < 0:
+        return None
+
+    face_raw = args_raw[:split_index].strip()
+    index_raw = args_raw[split_index + 1:].strip()
+    if not face_raw:
+        return None
+    if not index_raw:
+        return None
+
+    if len(face_raw) >= 2 and face_raw[0] in {'"', "'"} and face_raw[-1] == face_raw[0]:
+        face_name = _decode_js_string_literal(face_raw[1:-1])
+    else:
+        face_name = face_raw
+    return face_name, index_raw
 
 
 def build_game_message_call(kind: str, text: str, quote_char: str = '"') -> str:

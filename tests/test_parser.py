@@ -70,6 +70,27 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(segment.lines, ["One", "Two"])
         self.assertEqual(segment.speaker_name, "Narrator")
 
+    def test_parse_script_message_block_reads_face_from_set_face_image(self) -> None:
+        data = [
+            {
+                "code": 355,
+                "indent": 0,
+                "parameters": ['$gameMessage.setSpeakerName("Narrator");'],
+            },
+            {
+                "code": 655,
+                "indent": 0,
+                "parameters": ['$gameMessage.setFaceImage(face,$gameVariables.value(37));'],
+            },
+            {"code": 655, "indent": 0, "parameters": ['$gameMessage.add("One");']},
+        ]
+        session = parse_dialogue_data(Path("Map004.json"), data)
+        self.assertEqual(len(session.segments), 1)
+        segment = session.segments[0]
+        self.assertEqual(segment.segment_kind, "script_message")
+        self.assertEqual(segment.face_name, "face")
+        self.assertTrue(segment.has_face)
+
     def test_map_display_name_segment_is_inserted(self) -> None:
         data = {"displayName": "Town Square"}
         session = parse_dialogue_data(Path("Map010.json"), data)

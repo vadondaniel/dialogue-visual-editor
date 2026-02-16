@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from .models import CommandBundle, CommandToken, DialogueSegment, FileSession
-from .script_message_utils import parse_game_message_call
+from .script_message_utils import (
+    parse_game_message_call,
+    parse_game_message_set_face_image_call,
+)
 from .text_utils import first_parameter_text, is_command_entry, split_lines_preserve_empty
 
 
@@ -501,11 +504,26 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                             script_quotes: list[str] = []
                             script_lines: list[str] = []
                             speaker_text = ""
+                            face_name = ""
+                            face_index = 0
                             line_template: dict[str, Any] = {}
                             for script_entry in script_entries:
                                 text = first_parameter_text(script_entry)
                                 parsed = parse_game_message_call(text)
                                 if parsed is None:
+                                    face_parsed = parse_game_message_set_face_image_call(
+                                        text
+                                    )
+                                    if face_parsed is not None:
+                                        script_roles.append("face")
+                                        script_quotes.append('"')
+                                        parsed_face_name, parsed_face_index_raw = face_parsed
+                                        face_name = parsed_face_name.strip()
+                                        try:
+                                            face_index = int(parsed_face_index_raw)
+                                        except Exception:
+                                            face_index = 0
+                                        continue
                                     script_roles.append("other")
                                     script_quotes.append('"')
                                     continue
@@ -540,7 +558,7 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                 synthetic_code101 = {
                                     "code": 101,
                                     "indent": indent,
-                                    "parameters": ["", 0, 0, 2, speaker_text],
+                                    "parameters": [face_name, face_index, 0, 2, speaker_text],
                                 }
                                 uid = f"{path.name}:{list_id}:{segment_counter}"
                                 segment_counter += 1

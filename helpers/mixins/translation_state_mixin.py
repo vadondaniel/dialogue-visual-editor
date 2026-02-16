@@ -158,6 +158,29 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         )
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
+    def _segment_source_hash_candidates(self, segment: DialogueSegment) -> list[str]:
+        current_hash = self._segment_source_hash(segment)
+        candidates = [current_hash]
+        # Backward compatibility: older script-message parsing did not capture face
+        # info, so saved state hashes used empty face values.
+        if segment.segment_kind == "script_message":
+            legacy_payload = "\n".join(
+                [
+                    segment.segment_kind,
+                    segment.context,
+                    str(segment.background),
+                    str(segment.position),
+                    "",
+                    "0",
+                    segment.speaker_name,
+                    self._segment_source_text_for_mapping(segment),
+                ]
+            )
+            legacy_hash = hashlib.sha1(legacy_payload.encode("utf-8")).hexdigest()
+            if legacy_hash not in candidates:
+                candidates.append(legacy_hash)
+        return candidates
+
     def _translation_only_segment_uid(self, session: FileSession, tl_uid: str) -> str:
         safe_uid = tl_uid if tl_uid else self._new_translation_uid()
         return f"{session.path.name}:TI:{safe_uid}"
@@ -697,7 +720,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         for idx, segment in enumerate(session.segments):
             segment.source_lines = list(
                 segment.lines) if segment.lines else [""]
-            source_hash = self._segment_source_hash(segment)
+            source_hash_candidates = self._segment_source_hash_candidates(segment)
             chosen_uid = ""
             preferred_uid = order[idx] if idx < len(order) else ""
             preferred_hash = ""
@@ -718,15 +741,22 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 preferred_hash_raw = preferred_entry.get("source_hash")
                 preferred_hash = preferred_hash_raw.strip() if isinstance(
                     preferred_hash_raw, str) else ""
-                if preferred_hash == source_hash:
+                if preferred_hash and preferred_hash in source_hash_candidates:
                     chosen_uid = preferred_uid
                     unused.remove(preferred_uid)
 
             if not chosen_uid:
-                for candidate_uid in hash_buckets.get(source_hash, []):
-                    if candidate_uid in unused:
-                        chosen_uid = candidate_uid
-                        unused.remove(candidate_uid)
+                seen_candidate_uids: set[str] = set()
+                for source_hash in source_hash_candidates:
+                    for candidate_uid in hash_buckets.get(source_hash, []):
+                        if candidate_uid in seen_candidate_uids:
+                            continue
+                        seen_candidate_uids.add(candidate_uid)
+                        if candidate_uid in unused:
+                            chosen_uid = candidate_uid
+                            unused.remove(candidate_uid)
+                            break
+                    if chosen_uid:
                         break
 
             # Keep positional fallback only for legacy state rows that don't have
