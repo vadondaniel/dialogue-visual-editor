@@ -957,7 +957,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
             self._refresh_dirty_state(session)
             if refresh_current_view and self.current_path == session.path:
-                self._render_session(session, preserve_scroll=True)
+                refresh_visuals = getattr(self, "_refresh_block_visual_states", None)
+                if callable(refresh_visuals):
+                    refresh_visuals()
+                refresh_detail = getattr(self, "_refresh_translator_detail_panel", None)
+                if callable(refresh_detail):
+                    refresh_detail()
 
             if show_status_message:
                 if translator_mode and not source_dirty_before_save:

@@ -117,6 +117,79 @@ class _BatchSaveHarness(PersistenceExportMixin):
         return self._status_bar
 
 
+class _VersionDbStub:
+    def __init__(self) -> None:
+        self.working_calls: list[tuple[str, Any]] = []
+        self.translated_calls: list[tuple[str, Any, str]] = []
+
+    def save_working_snapshot(self, rel_path: str, data: Any) -> None:
+        self.working_calls.append((rel_path, data))
+
+    def save_translated_snapshot(self, rel_path: str, data: Any, profile_id: str) -> None:
+        self.translated_calls.append((rel_path, data, profile_id))
+
+
+class _SaveSessionHarness(PersistenceExportMixin):
+    def __init__(self) -> None:
+        self.version_db = _VersionDbStub()
+        self.index_db = None
+        self.current_path: Path | None = None
+        self.active_translation_profile_id = "default"
+        self._status_bar = _StatusBarHarness()
+        self.render_session_calls = 0
+        self.refresh_visual_calls = 0
+        self.refresh_detail_calls = 0
+        self.translation_state_calls: list[list[Path]] = []
+        self.session_source_dirty = False
+
+    def _is_translator_mode(self) -> bool:
+        return True
+
+    def _save_translation_state(self, changed_paths: list[Path] | None = None) -> bool:
+        self.translation_state_calls.append(list(changed_paths or []))
+        return True
+
+    def _session_has_source_changes(self, _session: FileSession) -> bool:
+        return self.session_source_dirty
+
+    def _collect_change_log(self, _session: FileSession) -> list[dict[str, Any]]:
+        return []
+
+    def _build_source_data_for_session(self, _session: FileSession) -> Any:
+        return {"working": True}
+
+    def _export_translated_data_for_session(self, _session: FileSession) -> Any:
+        return {"translated": True}
+
+    def _relative_path(self, path: Path) -> str:
+        return path.name
+
+    def _mark_session_source_saved(self, _session: FileSession) -> None:
+        return
+
+    def _mark_session_translation_saved(self, _session: FileSession) -> None:
+        return
+
+    def _clear_structural_history_for_path(self, _path: Path) -> None:
+        return
+
+    def _refresh_dirty_state(self, _session: FileSession) -> None:
+        return
+
+    def _render_session(self, _session: FileSession, preserve_scroll: bool = False) -> None:
+        _ = preserve_scroll
+        self.render_session_calls += 1
+
+    def _refresh_block_visual_states(self) -> None:
+        self.refresh_visual_calls += 1
+
+    def _refresh_translator_detail_panel(self) -> None:
+        self.refresh_detail_calls += 1
+
+    def statusBar(self) -> _StatusBarHarness:
+        return self._status_bar
+
+
 def _dialogue_segment(uid: str, text: str) -> DialogueSegment:
     return DialogueSegment(
         uid=uid,
@@ -384,6 +457,18 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(harness.translation_state_calls, [[session_a.path]])
         self.assertEqual(harness.save_session_calls, [])
+
+    def test_save_session_does_not_rerender_current_view(self) -> None:
+        harness = _SaveSessionHarness()
+        session = FileSession(path=Path("A.json"), data={}, bundles=[], segments=[])
+        harness.current_path = session.path
+
+        ok = harness._save_session(session, refresh_current_view=True)
+
+        self.assertTrue(ok)
+        self.assertEqual(harness.render_session_calls, 0)
+        self.assertEqual(harness.refresh_visual_calls, 1)
+        self.assertEqual(harness.refresh_detail_calls, 1)
 
 
 if __name__ == "__main__":
