@@ -451,7 +451,7 @@ class DialogueVisualEditor(
         self.structural_undo_stack: list[StructuralAction] = []
         self.structural_redo_stack: list[StructuralAction] = []
         self._pending_render_state: Optional[dict[str, Any]] = None
-        self._render_batch_size = 1
+        self._render_batch_size = 2
         self._render_blocks_timer = QTimer(self)
         self._render_blocks_timer.setSingleShot(True)
         self._render_blocks_timer.timeout.connect(
