@@ -180,6 +180,7 @@ def _build_plugins_text_segments(path: Path, data: dict[str, Any]) -> list[Dialo
                 lines=list(description_lines),
                 original_lines=list(description_lines),
                 source_lines=list(description_lines),
+                segment_kind="plugin_text",
             )
             setattr(
                 segment,
@@ -208,6 +209,7 @@ def _build_plugins_text_segments(path: Path, data: dict[str, Any]) -> list[Dialo
                 lines=list(lines),
                 original_lines=list(lines),
                 source_lines=list(lines),
+                segment_kind="plugin_text",
             )
             setattr(
                 segment,
@@ -338,6 +340,7 @@ def _build_system_text_segments(path: Path, data: dict[str, Any]) -> list[Dialog
             lines=list(lines),
             original_lines=list(lines),
             source_lines=list(lines),
+            segment_kind="system_text",
         )
         setattr(segment, "system_text_path", path_tokens)
         segments.append(segment)
@@ -615,6 +618,7 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                     lines=list(combined_lines),
                     original_lines=list(combined_lines),
                     source_lines=list(combined_lines),
+                    segment_kind="name_index",
                 )
                 setattr(segment, "name_index_combined_fields",
                         ("name", "description"))
@@ -643,6 +647,7 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                         lines=list(lines),
                         original_lines=list(lines),
                         source_lines=list(lines),
+                        segment_kind="name_index",
                     )
                 )
         if index_segments:

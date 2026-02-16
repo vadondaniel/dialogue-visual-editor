@@ -9,7 +9,12 @@ from dialogue_visual_editor.helpers.audit.audit_term_usage_mixin import (
 from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
 
 
-def _segment(uid: str, source_text: str, tl_text: str) -> DialogueSegment:
+def _segment(
+    uid: str,
+    source_text: str,
+    tl_text: str,
+    segment_kind: str = "dialogue",
+) -> DialogueSegment:
     return DialogueSegment(
         uid=uid,
         context="ctx",
@@ -17,6 +22,7 @@ def _segment(uid: str, source_text: str, tl_text: str) -> DialogueSegment:
         lines=[source_text],
         original_lines=[source_text],
         source_lines=[source_text],
+        segment_kind=segment_kind,
         translation_lines=[tl_text],
         original_translation_lines=[tl_text],
     )
@@ -26,6 +32,13 @@ class _Harness(AuditTermUsageMixin):
     def __init__(self) -> None:
         self.file_paths: list[Path] = []
         self.sessions: dict[Path, FileSession] = {}
+
+    def _audit_path_sessions_snapshot(self) -> list[tuple[Path, FileSession]]:
+        return [(path, session) for path, session in self.sessions.items()]
+
+    @staticmethod
+    def _is_name_index_session(_session: FileSession) -> bool:
+        return False
 
     @staticmethod
     def _segment_source_lines_for_display(segment: DialogueSegment) -> list[str]:
@@ -41,6 +54,27 @@ class _Harness(AuditTermUsageMixin):
 
 
 class AuditTermUsageMixinTests(unittest.TestCase):
+    def test_collect_hits_dialogue_only_excludes_non_dialogue_segments(self) -> None:
+        harness = _Harness()
+        path = Path("Mixed.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("d1", "ポーションを使う", "Use potion", segment_kind="dialogue"),
+                _segment("n1", "ポーションの説明", "Potion description", segment_kind="name_index"),
+            ],
+        )
+
+        dialogue_only_hits = harness._collect_audit_term_hits("ポーション", dialogue_only=True)
+        all_hits = harness._collect_audit_term_hits("ポーション", dialogue_only=False)
+
+        self.assertEqual(len(dialogue_only_hits), 1)
+        self.assertEqual(dialogue_only_hits[0]["uid"], "d1")
+        self.assertEqual(len(all_hits), 2)
+
     def test_jp_suggestions_include_katakana_terms_inside_sentence(self) -> None:
         harness = _Harness()
         path = Path("MapJP001.json")

@@ -94,6 +94,7 @@ class ParserTests(unittest.TestCase):
         self.assertIn("System.json > system.currencyUnit", contexts)
         self.assertIn("System.json > system.elements[1]", contexts)
         self.assertIn("System.json > system.terms.messages.actionFailure", contexts)
+        self.assertTrue(all(segment.segment_kind == "system_text" for segment in session.segments))
 
     def test_name_index_file_has_stable_uids(self) -> None:
         data = [
@@ -115,6 +116,7 @@ class ParserTests(unittest.TestCase):
         self.assertIn("States.json:S:1:message2", uids)
         self.assertIn("States.json:S:1:message3", uids)
         self.assertIn("States.json:S:1:message4", uids)
+        self.assertTrue(all(segment.segment_kind == "name_index" for segment in session.segments))
 
     def test_parse_plugins_js_file(self) -> None:
         plugins_source = (
@@ -138,6 +140,7 @@ class ParserTests(unittest.TestCase):
         contexts = [segment.context for segment in session.segments]
         self.assertIn("plugins.js > plugin[1].description", contexts)
         self.assertIn("plugins.js > plugin[1].parameters.mode", contexts)
+        self.assertTrue(all(segment.segment_kind == "plugin_text" for segment in session.segments))
 
 
 if __name__ == "__main__":
