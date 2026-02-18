@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import sys
+import ctypes
 from pathlib import Path
 from time import monotonic
 from typing import Any, Optional, cast
@@ -22,6 +23,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QMouseEvent,
     QShortcut,
+    QIcon,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -173,6 +175,7 @@ DB_FILENAME = ".dialogue_editor_index.sqlite3"
 VERSION_DB_FILENAME = ".dialogue_version_state.sqlite3"
 TRANSLATION_STATE_FILENAME = ".dialogue_translation_state.json"
 UI_STATE_FILENAME = ".dialogue_visual_editor_ui_state.json"
+APP_ID = "com.ceavan.dialoguevisualeditor"
 APP_TITLE = "Dialogue Visual Editor"
 DEFAULT_TRANSLATION_PROFILE_ID = "default"
 DEFAULT_TRANSLATION_PROFILE_NAME = "Default"
@@ -5314,7 +5317,17 @@ class DialogueVisualEditor(
         super().closeEvent(event)
 
 
+def _set_windows_app_id(app_id: str) -> None:
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+        except Exception:
+            pass  # don’t crash if it fails
+
+
 def main() -> int:
+    _set_windows_app_id(APP_ID)
+    
     log_path: Optional[Path] = None
     try:
         log_path = configure_file_logging()
@@ -5328,7 +5341,15 @@ def main() -> int:
         logger.warning("Starting %s without file logging.", APP_TITLE)
 
     app = QApplication(sys.argv)
+    
+    icon_path = Path(__file__).resolve().parent / "icon.ico"
+    icon = QIcon(str(icon_path))
+    if icon.isNull():
+        raise FileNotFoundError(f"Icon not found/invalid: {icon_path}")
+    
+    app.setWindowIcon(icon)
     window = DialogueVisualEditor()
+    window.setWindowIcon(icon)
     window.show()
     exit_code = app.exec()
     logger.info("Exited %s with code %s.", APP_TITLE, exit_code)
