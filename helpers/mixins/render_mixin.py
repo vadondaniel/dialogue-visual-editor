@@ -105,6 +105,7 @@ class RenderMixin(_RenderHostTypingFallback):
             scroll_bar.setValue(preserve_scroll_value)
         already_visible = self._target_widget_visible_in_viewport(target_widget)
         target_widget.focus_editor()
+        self._schedule_dialogue_editor_visibility_update()
         if preserve_scroll_value is not None and already_visible:
             scroll_bar.setValue(preserve_scroll_value)
             QTimer.singleShot(
@@ -113,6 +114,42 @@ class RenderMixin(_RenderHostTypingFallback):
             return
         if not already_visible:
             self.scroll_area.ensureWidgetVisible(target_widget, 20, 20)
+
+    def _ensure_dialogue_editor_visibility_tracking(self) -> None:
+        if bool(getattr(self, "_dialogue_editor_visibility_tracking_ready", False)):
+            return
+        self.scroll_area.verticalScrollBar().valueChanged.connect(
+            self._schedule_dialogue_editor_visibility_update
+        )
+        self.scroll_area.horizontalScrollBar().valueChanged.connect(
+            self._schedule_dialogue_editor_visibility_update
+        )
+        setattr(self, "_dialogue_editor_visibility_tracking_ready", True)
+
+    def _schedule_dialogue_editor_visibility_update(self) -> None:
+        self._ensure_dialogue_editor_visibility_tracking()
+        timer = cast(
+            Optional[QTimer],
+            getattr(self, "_dialogue_editor_visibility_timer", None),
+        )
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._update_visible_dialogue_editors)
+            setattr(self, "_dialogue_editor_visibility_timer", timer)
+        timer.start(15)
+
+    def _update_visible_dialogue_editors(self) -> None:
+        if not self.block_widgets:
+            return
+        viewport = self.scroll_area.viewport()
+        expanded_viewport = viewport.rect().adjusted(0, -800, 0, 800)
+        for widget in self.block_widgets.values():
+            if not isinstance(widget, DialogueBlockWidget):
+                continue
+            top_left = widget.mapTo(viewport, QPoint(0, 0))
+            widget_rect = QRect(top_left, widget.size())
+            widget.set_editor_active(expanded_viewport.intersects(widget_rect))
 
     def _block_view_meta(
         self,
@@ -222,6 +259,7 @@ class RenderMixin(_RenderHostTypingFallback):
         self._hide_audit_progress_overlay(self.main_render_progress_overlay)
         self.scroll_area.setEnabled(True)
         self._refresh_translator_detail_panel()
+        self._schedule_dialogue_editor_visibility_update()
 
         target_widget = (
             self.block_widgets.get(focus_uid)
@@ -893,6 +931,7 @@ class RenderMixin(_RenderHostTypingFallback):
         )
         self._cancel_pending_block_build()
         self._refresh_translator_detail_panel()
+        self._schedule_dialogue_editor_visibility_update()
 
         if preserve_scroll and previous_scroll_value is not None:
             def restore_scroll_and_focus() -> None:
@@ -1052,6 +1091,7 @@ class RenderMixin(_RenderHostTypingFallback):
             self._hide_audit_progress_overlay(
                 self.main_render_progress_overlay)
             self._refresh_translator_detail_panel()
+            self._schedule_dialogue_editor_visibility_update()
             target_widget = (
                 self.block_widgets.get(focus_uid)
                 if focus_uid and focus_uid in self.block_widgets
@@ -1144,6 +1184,7 @@ class RenderMixin(_RenderHostTypingFallback):
             self._hide_audit_progress_overlay(
                 self.main_render_progress_overlay)
             self._refresh_translator_detail_panel()
+            self._schedule_dialogue_editor_visibility_update()
             target_widget = (
                 self.block_widgets.get(focus_uid)
                 if focus_uid and focus_uid in self.block_widgets

@@ -1588,6 +1588,8 @@ class DialogueBlockWidget(QFrame):
         self._masked_color_spans: list[list[tuple[int, int, str, float]]] = []
         self._source_hint_lines: list[str] = []
         self._source_hint_overlay: Optional[QLabel] = None
+        self.editor: Optional[QPlainTextEdit] = None
+        self._control_code_highlighter: Optional[ControlCodeHighlighter] = None
         self._selected = False
         self._audit_pinned = False
         self._flash_timer: Optional[QTimer] = None
@@ -1716,46 +1718,34 @@ class DialogueBlockWidget(QFrame):
         editor_row.setContentsMargins(0, 0, 0, 0)
         editor_row.setSpacing(8)
 
+        self._raw_lines = [""]
+        self._load_editor_lines_from_segment()
+        if self._uses_translation_storage():
+            source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
+                ""]
+            self._source_hint_lines = list(source_lines)
+
         mono = QFont("Consolas")
         if not mono.exactMatch():
             mono = QFont("Courier New")
         mono.setStyleHint(QFont.StyleHint.Monospace)
         mono.setPointSize(10)
+        self._editor_font = mono
 
-        self.editor = QPlainTextEdit()
-        self.editor.setFont(mono)
-        _set_hard_newline_markers(self.editor, False)
-        self._raw_lines = [""]
-        self._load_editor_lines_from_segment()
-        self._set_editor_text_lines(self._raw_lines)
-        if self._uses_translation_storage():
-            source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
-                ""]
-            self._source_hint_lines = list(source_lines)
-        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        self._control_code_highlighter = ControlCodeHighlighter(
-            self.editor.document(),
-            self._dark_theme,
-            color_code_resolver=self.color_code_resolver,
-        )
-        self._source_hint_overlay = QLabel(self.editor.viewport())
-        self._source_hint_overlay.setTextFormat(Qt.TextFormat.RichText)
-        self._source_hint_overlay.setWordWrap(True)
-        self._source_hint_overlay.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-        )
-        self._source_hint_overlay.setAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents,
-            True,
-        )
-        self._source_hint_overlay.setStyleSheet("background: transparent;")
-        self._source_hint_overlay.setFont(mono)
-        self.editor.viewport().setMouseTracking(True)
-        self.editor.viewport().installEventFilter(self)
-        self._apply_editor_width()
-        self.editor.installEventFilter(self)
-        self.editor.textChanged.connect(self._on_text_changed)
-        editor_row.addWidget(self.editor)
+        self._editor_container = QWidget(self)
+        self._editor_layout = QHBoxLayout(self._editor_container)
+        self._editor_layout.setContentsMargins(0, 0, 0, 0)
+        self._editor_layout.setSpacing(0)
+        self._preview = QLabel(self._editor_container)
+        self._preview.setWordWrap(True)
+        self._preview.setTextFormat(Qt.TextFormat.PlainText)
+        self._preview.setObjectName("EditorPreview")
+        self._preview.setFont(self._editor_font)
+        self._preview.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self._preview.installEventFilter(self)
+        self._editor_container.installEventFilter(self)
+        self._editor_layout.addWidget(self._preview, 1)
+        editor_row.addWidget(self._editor_container, 1)
         editor_row.addStretch(1)
         root.addLayout(editor_row)
 
@@ -1800,12 +1790,110 @@ class DialogueBlockWidget(QFrame):
         footer_row.addWidget(self.reset_button, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(footer_row)
 
+        self._preview.setText(self._preview_text())
+        self._apply_editor_width()
         self._sync_control_code_visibility(force=True)
         self._refresh_meta_label()
         self._refresh_status()
 
     def focus_editor(self) -> None:
-        self.editor.setFocus()
+        self._mount_editor()
+        if self.editor is not None:
+            self.editor.setFocus()
+
+    def set_editor_active(self, active: bool) -> None:
+        if active:
+            self._mount_editor()
+            return
+        self._unmount_editor()
+
+    def _preview_text(self) -> str:
+        lines = self._raw_lines if self._raw_lines else self._segment_storage_lines()
+        if not lines:
+            return ""
+        visible = lines[: self.max_lines]
+        preview = "\n".join(visible)
+        if len(lines) > self.max_lines:
+            preview += "\n..."
+        return preview
+
+    def _mount_editor(self) -> None:
+        if self.editor is not None:
+            return
+        ed = QPlainTextEdit(self._editor_container)
+        ed.setFont(self._editor_font)
+        _set_hard_newline_markers(ed, False)
+        self._load_editor_lines_from_segment()
+        self._suppress_text_changed = True
+        ed.setPlainText("\n".join(self._raw_lines or [""]))
+        self._suppress_text_changed = False
+        ed.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self._control_code_highlighter = ControlCodeHighlighter(
+            ed.document(),
+            self._dark_theme,
+            color_code_resolver=self.color_code_resolver,
+        )
+
+        overlay = QLabel(ed.viewport())
+        overlay.setTextFormat(Qt.TextFormat.RichText)
+        overlay.setWordWrap(True)
+        overlay.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        overlay.setStyleSheet("background: transparent;")
+        overlay.setFont(self._editor_font)
+
+        ed.viewport().setMouseTracking(True)
+        ed.viewport().installEventFilter(self)
+        ed.installEventFilter(self)
+        ed.textChanged.connect(self._on_text_changed)
+
+        self.editor = ed
+        self._source_hint_overlay = overlay
+        self._preview.setVisible(False)
+        self._editor_layout.addWidget(ed, 1)
+        self._apply_editor_width()
+        self._apply_editor_style(self._has_warning)
+        self._sync_control_code_visibility(force=True)
+        self._refresh_source_hint_overlay()
+        self._apply_overflow_highlighting()
+
+    def _unmount_editor(self) -> None:
+        ed = self.editor
+        if ed is None:
+            return
+        if ed.hasFocus():
+            return
+        if not self._displaying_masked_text:
+            self._raw_lines = split_lines_preserve_empty(ed.toPlainText())
+            storage_lines = self._storage_lines_from_editor_lines(self._raw_lines)
+            if self._uses_translation_storage():
+                self.segment.translation_lines = list(storage_lines)
+            else:
+                self.segment.lines = list(storage_lines)
+                self.segment.source_lines = list(storage_lines)
+        try:
+            ed.textChanged.disconnect(self._on_text_changed)
+        except (RuntimeError, TypeError):
+            pass
+        ed.removeEventFilter(self)
+        ed.viewport().removeEventFilter(self)
+        self._editor_layout.removeWidget(ed)
+
+        if self._source_hint_overlay is not None:
+            self._source_hint_overlay.setParent(None)
+            self._source_hint_overlay.deleteLater()
+            self._source_hint_overlay = None
+
+        ed.setParent(None)
+        ed.deleteLater()
+        self.editor = None
+        self._control_code_highlighter = None
+        self._displaying_masked_text = False
+        self._masked_color_spans = []
+        self._preview.setText(self._preview_text())
+        self._preview.setVisible(True)
+        self._apply_editor_width()
+        self._refresh_status()
 
     def set_selected_state(self, selected: bool) -> None:
         new_value = bool(selected)
@@ -1854,7 +1942,16 @@ class DialogueBlockWidget(QFrame):
             self._flash_timer.stop()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self.editor:
+        editor = self.editor
+        if watched is self._preview or watched is self._editor_container:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                self._mount_editor()
+                self.activated.emit(self.segment.uid)
+                if self.editor is not None:
+                    self.editor.setFocus()
+                return True
+            return super().eventFilter(watched, event)
+        if editor is not None and watched is editor:
             if event.type() == QEvent.Type.FocusIn:
                 self._sync_control_code_visibility(force=True)
                 self.activated.emit(self.segment.uid)
@@ -1862,7 +1959,7 @@ class DialogueBlockWidget(QFrame):
                 self._sync_control_code_visibility(force=True)
             elif event.type() == QEvent.Type.MouseButtonPress:
                 self.activated.emit(self.segment.uid)
-        elif watched is self.editor.viewport():
+        elif editor is not None and watched is editor.viewport():
             if self._handle_variable_tooltip_event(event):
                 return True
             if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
@@ -1870,7 +1967,10 @@ class DialogueBlockWidget(QFrame):
         return super().eventFilter(watched, event)
 
     def _variable_tooltip_text(self, event_pos: QPoint) -> str:
-        variable_id = _variable_token_id_at_editor_position(self.editor, event_pos)
+        editor = self.editor
+        if editor is None:
+            return ""
+        variable_id = _variable_token_id_at_editor_position(editor, event_pos)
         if variable_id is not None:
             details = (
                 self.variable_label_resolver(variable_id).strip()
@@ -1880,17 +1980,20 @@ class DialogueBlockWidget(QFrame):
             if details:
                 return f"\\V[{variable_id}] -> {details}"
             return f"\\V[{variable_id}] -> system.variables[{variable_id}]"
-        icon_id = _icon_token_id_at_editor_position(self.editor, event_pos)
+        icon_id = _icon_token_id_at_editor_position(editor, event_pos)
         if icon_id is not None:
             return f"\\I[{icon_id}] -> icon[{icon_id}]"
-        party_id = _party_token_id_at_editor_position(self.editor, event_pos)
+        party_id = _party_token_id_at_editor_position(editor, event_pos)
         if party_id is not None:
             return f"\\P[{party_id}] -> party member[{party_id}]"
-        if _currency_token_at_editor_position(self.editor, event_pos):
+        if _currency_token_at_editor_position(editor, event_pos):
             return r"\G -> currency unit"
         return ""
 
     def _handle_variable_tooltip_event(self, event: QEvent) -> bool:
+        editor = self.editor
+        if editor is None:
+            return False
         if event.type() == QEvent.Type.MouseMove:
             mouse_event = cast(QMouseEvent, event)
             local_pos = mouse_event.position().toPoint()
@@ -1898,8 +2001,8 @@ class DialogueBlockWidget(QFrame):
             if not text:
                 QToolTip.hideText()
                 return False
-            global_pos = self.editor.viewport().mapToGlobal(local_pos)
-            QToolTip.showText(global_pos, text, self.editor.viewport())
+            global_pos = editor.viewport().mapToGlobal(local_pos)
+            QToolTip.showText(global_pos, text, editor.viewport())
             return False
         if event.type() != QEvent.Type.ToolTip:
             return False
@@ -1908,10 +2011,11 @@ class DialogueBlockWidget(QFrame):
         if not text:
             QToolTip.hideText()
             return False
-        QToolTip.showText(help_event.globalPos(), text, self.editor.viewport())
+        QToolTip.showText(help_event.globalPos(), text, editor.viewport())
         return True
 
     def mousePressEvent(self, event: Any) -> None:
+        self._mount_editor()
         self.activated.emit(self.segment.uid)
         super().mousePressEvent(event)
 
@@ -2101,22 +2205,24 @@ class DialogueBlockWidget(QFrame):
         )
 
     def _apply_editor_width(self) -> None:
+        editor = self.editor
+        target_widget = editor if editor is not None else self._editor_container
         if self.actor_mode:
-            metrics = QFontMetrics(self.editor.font())
-            self.editor.setMinimumWidth(
+            metrics = QFontMetrics(self._editor_font)
+            target_widget.setMinimumWidth(
                 max(420, metrics.horizontalAdvance("M") * 24))
-            self.editor.setMaximumWidth(16777215)
+            target_widget.setMaximumWidth(16777215)
             if self.name_index_kind == "item" and self._name_index_field == "description":
-                self.editor.setFixedHeight(max(164, metrics.lineSpacing() * 8))
+                target_widget.setFixedHeight(max(164, metrics.lineSpacing() * 8))
             else:
-                self.editor.setFixedHeight(max(96, metrics.lineSpacing() * 3))
+                target_widget.setFixedHeight(max(96, metrics.lineSpacing() * 3))
             return
         char_width = self._width_chars()
-        metrics = QFontMetrics(self.editor.font())
+        metrics = QFontMetrics(self._editor_font)
         pixel_width = metrics.horizontalAdvance("M") * (char_width + 2)
-        self.editor.setMinimumWidth(pixel_width)
-        self.editor.setMaximumWidth(pixel_width + 36)
-        self.editor.setFixedHeight(
+        target_widget.setMinimumWidth(pixel_width)
+        target_widget.setMaximumWidth(pixel_width + 36)
+        target_widget.setFixedHeight(
             max(130, metrics.lineSpacing() * (self.max_lines + 2)))
 
     def _refresh_block_style(self) -> None:
@@ -2194,6 +2300,8 @@ class DialogueBlockWidget(QFrame):
         )
 
     def _apply_editor_style(self, has_warning: bool) -> None:
+        if self.editor is None:
+            return
         if self.actor_mode:
             bg = self._actor_editor_bg
             if has_warning:
@@ -2240,6 +2348,9 @@ class DialogueBlockWidget(QFrame):
 
     def _set_editor_text_lines(self, lines: list[str]) -> None:
         text = "\n".join(lines or [""])
+        if self.editor is None:
+            self._preview.setText(self._preview_text())
+            return
         if self.editor.toPlainText() == text:
             return
         self._suppress_text_changed = True
@@ -2279,7 +2390,8 @@ class DialogueBlockWidget(QFrame):
         return "<br/>".join(rows)
 
     def _refresh_source_hint_overlay(self) -> None:
-        if self._source_hint_overlay is None:
+        editor = self.editor
+        if self._source_hint_overlay is None or editor is None:
             return
         has_user_text = any(line.strip() for line in self._raw_lines)
         show_source_hint = (
@@ -2298,7 +2410,7 @@ class DialogueBlockWidget(QFrame):
             else:
                 self._source_hint_overlay.setText(self._masked_preview_html())
             self._source_hint_overlay.setGeometry(
-                self.editor.viewport().rect().adjusted(6, 4, -6, -4)
+                editor.viewport().rect().adjusted(6, 4, -6, -4)
             )
             self._source_hint_overlay.raise_()
         self._source_hint_overlay.setVisible(should_show)
@@ -2329,6 +2441,8 @@ class DialogueBlockWidget(QFrame):
 
     def _should_show_raw_codes(self) -> bool:
         if not self.hide_control_codes_when_unfocused:
+            return True
+        if self.editor is None:
             return True
         return self.editor.hasFocus()
 
@@ -2395,6 +2509,9 @@ class DialogueBlockWidget(QFrame):
         )
 
     def _control_mismatch_selections(self) -> list[QTextEdit.ExtraSelection]:
+        editor = self.editor
+        if editor is None:
+            return []
         if not self._uses_translation_storage():
             return []
         if not self.control_mismatch_highlighting_enabled:
@@ -2406,7 +2523,7 @@ class DialogueBlockWidget(QFrame):
             return []
         source_text = "\n".join(self._source_lines_for_control_mismatch())
         return build_control_mismatch_selections(
-            self.editor,
+            editor,
             source_text=source_text,
             translation_text=translation_text,
             highlight_side="translation",
@@ -2414,6 +2531,12 @@ class DialogueBlockWidget(QFrame):
         )
 
     def _sync_control_code_visibility(self, force: bool = False) -> None:
+        if self.editor is None:
+            self._displaying_masked_text = False
+            self._masked_color_spans = []
+            self._refresh_source_hint_overlay()
+            self._refresh_status()
+            return
         show_raw = self._should_show_raw_codes()
         _set_hard_newline_markers(self.editor, self.editor.hasFocus())
         currently_showing_raw = not self._displaying_masked_text
@@ -2432,6 +2555,8 @@ class DialogueBlockWidget(QFrame):
         self._refresh_status()
 
     def _masked_color_selections(self) -> list[QTextEdit.ExtraSelection]:
+        if self.editor is None:
+            return []
         if not self._masked_color_spans:
             return []
         selections: list[QTextEdit.ExtraSelection] = []
@@ -2468,6 +2593,8 @@ class DialogueBlockWidget(QFrame):
         return selections
 
     def _current_lines(self) -> list[str]:
+        if self.editor is None:
+            return list(self._raw_lines if self._raw_lines else [""])
         if self._displaying_masked_text:
             return list(self._raw_lines)
         return split_lines_preserve_empty(self.editor.toPlainText())
@@ -2638,6 +2765,8 @@ class DialogueBlockWidget(QFrame):
         self.meta_label.setText(meta_html)
 
     def _apply_overflow_highlighting(self) -> None:
+        if self.editor is None:
+            return
         selections: list[QTextEdit.ExtraSelection] = []
         can_highlight_overflow = (
             (not self.actor_mode)
@@ -2670,6 +2799,8 @@ class DialogueBlockWidget(QFrame):
 
     def _refresh_status(self) -> None:
         lines = self._current_lines()
+        if self.editor is None:
+            self._preview.setText(self._preview_text())
         storage_lines = self._storage_lines_from_editor_lines(lines)
         max_rows_budget = float(max(1, self.max_lines))
         control_mismatch_problem = self._has_control_mismatch_problem()
