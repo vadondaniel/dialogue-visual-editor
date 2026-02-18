@@ -139,6 +139,7 @@ class _SaveSessionHarness(PersistenceExportMixin):
         self.render_session_calls = 0
         self.refresh_visual_calls = 0
         self.refresh_detail_calls = 0
+        self.rerender_nearby_calls = 0
         self.translation_state_calls: list[list[Path]] = []
         self.session_source_dirty = False
 
@@ -185,6 +186,10 @@ class _SaveSessionHarness(PersistenceExportMixin):
 
     def _refresh_translator_detail_panel(self) -> None:
         self.refresh_detail_calls += 1
+
+    def _rerender_blocks_near_viewport(self, overscan_px: int = 800) -> None:
+        _ = overscan_px
+        self.rerender_nearby_calls += 1
 
     def statusBar(self) -> _StatusBarHarness:
         return self._status_bar
@@ -458,7 +463,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual(harness.translation_state_calls, [[session_a.path]])
         self.assertEqual(harness.save_session_calls, [])
 
-    def test_save_session_does_not_rerender_current_view(self) -> None:
+    def test_save_session_refreshes_nearby_blocks_for_current_view(self) -> None:
         harness = _SaveSessionHarness()
         session = FileSession(path=Path("A.json"), data={}, bundles=[], segments=[])
         harness.current_path = session.path
@@ -467,6 +472,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertEqual(harness.render_session_calls, 0)
+        self.assertEqual(harness.rerender_nearby_calls, 1)
         self.assertEqual(harness.refresh_visual_calls, 1)
         self.assertEqual(harness.refresh_detail_calls, 1)
 

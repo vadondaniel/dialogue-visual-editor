@@ -957,6 +957,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
             self._refresh_dirty_state(session)
             if refresh_current_view and self.current_path == session.path:
+                rerender_nearby = getattr(
+                    self, "_rerender_blocks_near_viewport", None)
+                if callable(rerender_nearby):
+                    rerender_nearby()
                 refresh_visuals = getattr(self, "_refresh_block_visual_states", None)
                 if callable(refresh_visuals):
                     refresh_visuals()

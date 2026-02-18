@@ -151,6 +151,51 @@ class RenderMixin(_RenderHostTypingFallback):
             widget_rect = QRect(top_left, widget.size())
             widget.set_editor_active(expanded_viewport.intersects(widget_rect))
 
+    def _rerender_blocks_near_viewport(self, overscan_px: int = 800) -> None:
+        current_path = self.current_path
+        if current_path is None:
+            return
+        session = self.sessions.get(current_path)
+        if session is None:
+            return
+        if not self.block_widgets:
+            return
+        actor_mode = self._is_name_index_session(session)
+        translator_mode = self._is_translator_mode()
+        display_segments = self._display_segments_for_session(
+            session,
+            translator_mode=translator_mode,
+            actor_mode=actor_mode,
+        )
+        block_numbers = self._display_block_numbers(
+            display_segments,
+            actor_mode=actor_mode,
+        )
+        segment_lookup = {segment.uid: segment for segment in display_segments}
+        name_index_label = self._name_index_label(session)
+        viewport = self.scroll_area.viewport()
+        expanded_viewport = viewport.rect().adjusted(
+            0, -max(0, overscan_px), 0, max(0, overscan_px)
+        )
+        for uid in self.rendered_block_uid_order:
+            segment = segment_lookup.get(uid)
+            widget = self.block_widgets.get(uid)
+            if segment is None or widget is None:
+                continue
+            top_left = widget.mapTo(viewport, QPoint(0, 0))
+            widget_rect = QRect(top_left, widget.size())
+            if not expanded_viewport.intersects(widget_rect):
+                continue
+            self._sync_reused_block_widget(
+                widget,
+                segment=segment,
+                block_number=block_numbers.get(uid, 1),
+                name_index_label=name_index_label,
+            )
+            self._apply_block_visual_state(uid, widget)
+        self._refresh_translator_detail_panel()
+        self._schedule_dialogue_editor_visibility_update()
+
     def _block_view_meta(
         self,
         *,
