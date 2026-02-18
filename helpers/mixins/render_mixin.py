@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer
-from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ..core.models import DialogueSegment, FileSession
 from ..ui.ui_components import DialogueBlockWidget, ItemNameDescriptionWidget
@@ -773,189 +773,9 @@ class RenderMixin(_RenderHostTypingFallback):
                     pairs.add((left_segment.uid, right_segment.uid))
         return pairs
 
-    def _estimated_block_placeholder_height(self, actor_mode: bool, translator_mode: bool) -> int:
-        editor_height = max(130, 18 * (self.max_lines_spin.value() + 2))
-        if actor_mode:
-            chrome = 140
-        elif translator_mode:
-            chrome = 180
-        else:
-            chrome = 195
-        return editor_height + chrome
-
-    def _new_height_placeholder(self, height: int) -> QWidget:
-        placeholder = QWidget()
-        placeholder.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        placeholder.setMinimumHeight(height)
-        placeholder.setMaximumHeight(height)
-        return placeholder
-
     def _render_next_block_batch(self) -> None:
-        state = self._pending_render_state
-        if state is None:
-            return
-
-        session = cast(FileSession, state["session"])
-        session_path = cast(Path, state["session_path"])
-        current_session = self.sessions.get(session_path)
-        if current_session is None or current_session is not session:
-            self._cancel_pending_block_build()
-            return
-        if self.current_path != session_path:
-            self._cancel_pending_block_build()
-            return
-
-        segment_count = cast(int, state["segment_count"])
-        start_idx = cast(int, state["index"])
-        end_idx = min(segment_count, start_idx + self._render_batch_size)
-        segments = cast(list[DialogueSegment], state["segments"])
-        block_numbers = cast(dict[str, int], state.get("block_numbers", {}))
-        translator_mode = bool(state["translator_mode"])
-        actor_mode = bool(state["actor_mode"])
-        name_index_kind = cast(str, state.get("name_index_kind", ""))
-        name_index_label = cast(str, state.get("name_index_label", "Entry"))
-        merge_pairs = cast(set[tuple[str, str]], state["merge_pairs"])
-        block_placeholders = cast(list[QWidget], state["block_placeholders"])
-        connector_placeholders = cast(
-            dict[int, QWidget], state["connector_placeholders"])
-        reuse_pool = cast(dict[str, BlockWidgetType],
-                          state.get("reuse_pool", {}))
-        focus_uid = cast(Optional[str], state["focus_uid"])
-
-        for idx in range(start_idx, end_idx):
-            segment = segments[idx]
-            reused_widget = reuse_pool.pop(segment.uid, None)
-            if (
-                reused_widget is not None
-                and self._can_reuse_block_widget(
-                    reused_widget,
-                    segment=segment,
-                    translator_mode=translator_mode,
-                    actor_mode=actor_mode,
-                    name_index_kind=name_index_kind,
-                    name_index_label=name_index_label,
-                )
-            ):
-                widget = reused_widget
-                self._sync_reused_block_widget(
-                    widget,
-                    segment=segment,
-                    block_number=block_numbers.get(segment.uid, idx + 1),
-                    name_index_label=name_index_label,
-                )
-            else:
-                if reused_widget is not None:
-                    reused_widget.deleteLater()
-                widget = self._create_block_widget(
-                    segment=segment,
-                    block_number=block_numbers.get(segment.uid, idx + 1),
-                    translator_mode=translator_mode,
-                    actor_mode=actor_mode,
-                    name_index_kind=name_index_kind,
-                    name_index_label=name_index_label,
-                )
-            placeholder = block_placeholders[idx] if idx < len(
-                block_placeholders) else None
-            placeholder_index = (
-                self.blocks_layout.indexOf(placeholder)
-                if placeholder is not None
-                else -1
-            )
-            insert_index = (
-                placeholder_index
-                if placeholder_index >= 0
-                else max(0, self.blocks_layout.count() - 1)
-            )
-            self.blocks_layout.insertWidget(insert_index, widget)
-            widget.show()
-            if placeholder is not None:
-                self.blocks_layout.removeWidget(placeholder)
-                placeholder.deleteLater()
-            self.block_widgets[segment.uid] = widget
-            self._apply_block_visual_state(segment.uid, widget)
-
-            if focus_uid and focus_uid == segment.uid:
-                state["target_widget"] = widget
-
-            if (not actor_mode) and idx < segment_count - 1:
-                next_segment = segments[idx + 1]
-                if (segment.uid, next_segment.uid) in merge_pairs:
-                    connector_placeholder = connector_placeholders.get(idx)
-                    connector_index = (
-                        self.blocks_layout.indexOf(connector_placeholder)
-                        if connector_placeholder is not None
-                        else -1
-                    )
-                    insert_index = (
-                        connector_index
-                        if connector_index >= 0
-                        else max(0, self.blocks_layout.count() - 1)
-                    )
-                    connector_widget = self._build_merge_connector_widget(
-                        session,
-                        segment,
-                        next_segment,
-                    )
-                    self.blocks_layout.insertWidget(
-                        insert_index, connector_widget)
-                    if connector_placeholder is not None:
-                        self.blocks_layout.removeWidget(connector_placeholder)
-                        connector_placeholder.deleteLater()
-
-        state["index"] = end_idx
-        if end_idx < segment_count:
-            self._set_audit_progress_overlay(
-                self.scroll_area,
-                self.main_render_progress_overlay,
-                f"Rendering {end_idx}/{segment_count}",
-            )
-            self._render_blocks_timer.start(1)
-            return
-
-        preserve_scroll = bool(state["preserve_scroll"])
-        previous_scroll_value = cast(
-            Optional[int], state["previous_scroll_value"])
-        start_at_top = bool(state.get("start_at_top", False))
-        target_widget = cast(
-            Optional[BlockWidgetType], state.get("target_widget"))
-        self._flash_pending_audit_target(
-            cast(Optional[str], state.get("focus_uid")),
-            target_widget,
-        )
-        self.rendered_blocks_path = session_path
-        self.rendered_block_uid_order = [segment.uid for segment in segments]
-        self.rendered_block_view_meta = cast(
-            Optional[tuple[Any, ...]],
-            state.get("view_meta"),
-        )
+        # Block batching is disabled. Rendering now happens in one pass.
         self._cancel_pending_block_build()
-        self._refresh_translator_detail_panel()
-        self._schedule_dialogue_editor_visibility_update()
-
-        if preserve_scroll and previous_scroll_value is not None:
-            def restore_scroll_and_focus() -> None:
-                if target_widget is not None:
-                    self._focus_target_widget(
-                        target_widget,
-                        preserve_scroll_value=previous_scroll_value,
-                    )
-                else:
-                    self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
-
-            QTimer.singleShot(0, restore_scroll_and_focus)
-            return
-
-        if start_at_top and target_widget is None:
-            QTimer.singleShot(
-                0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
-            return
-
-        if target_widget is not None:
-            def focus_and_reveal() -> None:
-                self._focus_target_widget(target_widget)
-
-            QTimer.singleShot(0, focus_and_reveal)
 
     def _render_session(
         self,
@@ -1230,63 +1050,85 @@ class RenderMixin(_RenderHostTypingFallback):
         )
         self.block_widgets = {}
 
-        block_placeholder_height = self._estimated_block_placeholder_height(
-            actor_mode=actor_mode,
-            translator_mode=translator_mode,
-        )
-        connector_placeholder_height = 30
-        block_placeholders: list[QWidget] = []
-        connector_placeholders: dict[int, QWidget] = {}
+        target_widget: Optional[BlockWidgetType] = None
         for idx, segment in enumerate(display_segments):
-            _ = segment
-            block_placeholder = self._new_height_placeholder(
-                block_placeholder_height)
-            self.blocks_layout.addWidget(block_placeholder)
-            block_placeholders.append(block_placeholder)
-            if idx < segment_count - 1:
+            reused_widget = reuse_pool.pop(segment.uid, None)
+            if (
+                reused_widget is not None
+                and self._can_reuse_block_widget(
+                    reused_widget,
+                    segment=segment,
+                    translator_mode=translator_mode,
+                    actor_mode=actor_mode,
+                    name_index_kind=name_index_kind,
+                    name_index_label=name_index_label,
+                )
+            ):
+                widget = reused_widget
+                self._sync_reused_block_widget(
+                    widget,
+                    segment=segment,
+                    block_number=block_numbers.get(segment.uid, idx + 1),
+                    name_index_label=name_index_label,
+                )
+            else:
+                if reused_widget is not None:
+                    reused_widget.deleteLater()
+                widget = self._create_block_widget(
+                    segment=segment,
+                    block_number=block_numbers.get(segment.uid, idx + 1),
+                    translator_mode=translator_mode,
+                    actor_mode=actor_mode,
+                    name_index_kind=name_index_kind,
+                    name_index_label=name_index_label,
+                )
+            self.blocks_layout.addWidget(widget)
+            widget.show()
+            self.block_widgets[segment.uid] = widget
+            self._apply_block_visual_state(segment.uid, widget)
+            if focus_uid and focus_uid == segment.uid:
+                target_widget = widget
+
+            if (not actor_mode) and idx < segment_count - 1:
                 next_segment = display_segments[idx + 1]
                 if (segment.uid, next_segment.uid) in merge_pairs:
-                    connector_placeholder = self._new_height_placeholder(
-                        connector_placeholder_height
+                    connector_widget = self._build_merge_connector_widget(
+                        session,
+                        segment,
+                        next_segment,
                     )
-                    self.blocks_layout.addWidget(connector_placeholder)
-                    connector_placeholders[idx] = connector_placeholder
-
-        previous_v_scroll_policy = self.scroll_area.verticalScrollBarPolicy()
-        previous_h_scroll_policy = self.scroll_area.horizontalScrollBarPolicy()
-        self.scroll_area.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self.scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                    self.blocks_layout.addWidget(connector_widget)
         self.blocks_layout.addStretch(1)
-        self.scroll_area.setEnabled(False)
-        self._pending_render_state = {
-            "session": session,
-            "session_path": session.path,
-            "segments": display_segments,
-            "block_numbers": block_numbers,
-            "segment_count": segment_count,
-            "index": 0,
-            "translator_mode": translator_mode,
-            "actor_mode": actor_mode,
-            "name_index_kind": name_index_kind,
-            "name_index_label": name_index_label,
-            "merge_pairs": merge_pairs,
-            "block_placeholders": block_placeholders,
-            "connector_placeholders": connector_placeholders,
-            "focus_uid": focus_uid,
-            "preserve_scroll": preserve_scroll,
-            "previous_scroll_value": previous_scroll_value,
-            "start_at_top": start_at_top,
-            "previous_v_scroll_policy": previous_v_scroll_policy,
-            "previous_h_scroll_policy": previous_h_scroll_policy,
-            "target_widget": None,
-            "reuse_pool": reuse_pool,
-            "view_meta": view_meta,
-        }
-        self._set_audit_progress_overlay(
-            self.scroll_area,
-            self.main_render_progress_overlay,
-            f"Rendering 0/{segment_count}",
-        )
-        self._render_blocks_timer.start(0)
+        for leftover in reuse_pool.values():
+            leftover.deleteLater()
+
+        self.rendered_blocks_path = session.path
+        self.rendered_block_uid_order = [
+            segment.uid for segment in display_segments]
+        self.rendered_block_view_meta = view_meta
+        self._hide_audit_progress_overlay(self.main_render_progress_overlay)
+        self.scroll_area.setEnabled(True)
+        self._refresh_translator_detail_panel()
+        self._schedule_dialogue_editor_visibility_update()
+        self._flash_pending_audit_target(focus_uid, target_widget)
+        if preserve_scroll and previous_scroll_value is not None:
+            def restore_scroll_and_focus_immediate() -> None:
+                if target_widget is not None:
+                    self._focus_target_widget(
+                        target_widget,
+                        preserve_scroll_value=previous_scroll_value,
+                    )
+                else:
+                    self.scroll_area.verticalScrollBar().setValue(previous_scroll_value)
+
+            QTimer.singleShot(0, restore_scroll_and_focus_immediate)
+            return
+        if start_at_top and target_widget is None:
+            QTimer.singleShot(
+                0, lambda: self.scroll_area.verticalScrollBar().setValue(0))
+            return
+        if target_widget is not None:
+            def focus_and_reveal_immediate() -> None:
+                self._focus_target_widget(target_widget)
+
+            QTimer.singleShot(0, focus_and_reveal_immediate)
