@@ -538,6 +538,33 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         self._refresh_translation_profiles_meta()
         return target_language_code
 
+    def _language_code_display_label(self, language_code: str, default: str) -> str:
+        normalized = self._normalize_language_code(language_code, default)
+        return normalized.upper()
+
+    def _translation_project_source_language_label(self) -> str:
+        return self._language_code_display_label(
+            self._translation_project_source_language_code(),
+            _DEFAULT_SOURCE_LANGUAGE_CODE,
+        )
+
+    def _translation_profile_target_language_label(
+        self,
+        profile_id: Optional[str] = None,
+    ) -> str:
+        return self._language_code_display_label(
+            self._translation_profile_target_language_code(profile_id),
+            _DEFAULT_TARGET_LANGUAGE_CODE,
+        )
+
+    def _empty_exact_reference_summary(self) -> str:
+        source_label = self._translation_project_source_language_label()
+        return f"Exact {source_label} matches: none."
+
+    def _empty_similar_reference_summary(self) -> str:
+        source_label = self._translation_project_source_language_label()
+        return f"Similar {source_label} phrases: none."
+
     def _translation_profile_prompt_template(
         self,
         profile_id: Optional[str] = None,
@@ -1100,8 +1127,10 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             own_uid=own_uid,
             exact_groups=exact_groups,
         )
+        source_label = self._translation_project_source_language_label()
+        target_label = self._translation_profile_target_language_label()
         if not exact_pool:
-            return "Exact JP matches: none."
+            return self._empty_exact_reference_summary()
 
         translated_rows: list[dict[str, Any]] = []
         variant_counts: dict[str, int] = {}
@@ -1121,10 +1150,10 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
         scope = "other files" if is_cross_file else "this file/folder"
         block_label = "block" if len(exact_pool) == 1 else "blocks"
-        summary = f"Exact JP matches in {scope}: {len(exact_pool)} {block_label}."
+        summary = f"Exact {source_label} matches in {scope}: {len(exact_pool)} {block_label}."
 
         if not translated_rows:
-            return summary + " No EN translations in matches yet."
+            return summary + f" No {target_label} translations in matches yet."
 
         ranked_variants = sorted(
             variant_counts.keys(),
@@ -1136,7 +1165,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
         variant_label = "variant" if len(ranked_variants) == 1 else "variants"
         summary += (
-            f" Filled EN: {len(translated_rows)}/{len(exact_pool)}."
+            f" Filled {target_label}: {len(translated_rows)}/{len(exact_pool)}."
             f" {len(ranked_variants)} {variant_label}."
         )
 
@@ -1148,16 +1177,102 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                 f"x{count} {preview_text(translation, 64)} ({sample_ref})"
             )
         if top_variants:
-            summary += " Top EN: " + " | ".join(top_variants)
+            summary += f" Top {target_label}: " + " | ".join(top_variants)
 
         empty_count = len(exact_pool) - len(translated_rows)
         if empty_count > 0:
             empty_label = "entry" if empty_count == 1 else "entries"
-            summary += f" Empty EN: {empty_count} {empty_label}."
+            summary += f" Empty {target_label}: {empty_count} {empty_label}."
         return summary
+
+    def _other_profile_translation_rows_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> list[tuple[str, str, str]]:
+        own_source = self._segment_reference_source_text(segment).strip()
+        if not own_source:
+            return []
+
+        current_translation = self._segment_reference_translation_text(segment).strip()
+        rows: list[tuple[str, str, str]] = []
+
+        profiles_raw = self.translation_state.get("profiles")
+        profiles = profiles_raw if isinstance(profiles_raw, dict) else {}
+        rel_path = self._relative_path(session.path)
+        source_hash_candidates = self._segment_source_hash_candidates(segment)
+        active_profile_id = self._normalize_translation_profile_id(
+            getattr(self, "active_translation_profile_id", "")
+        )
+
+        for raw_profile_id, raw_profile_state in profiles.items():
+            if not isinstance(raw_profile_id, str) or not raw_profile_id.strip():
+                continue
+            profile_id = self._normalize_translation_profile_id(raw_profile_id)
+            if profile_id == active_profile_id:
+                continue
+            if not isinstance(raw_profile_state, dict):
+                continue
+            files_raw = raw_profile_state.get("files")
+            files = files_raw if isinstance(files_raw, dict) else {}
+            file_state_raw = files.get(rel_path)
+            if not isinstance(file_state_raw, dict):
+                continue
+            entries_raw = file_state_raw.get("entries")
+            entries = entries_raw if isinstance(entries_raw, dict) else {}
+            chosen_translation = ""
+            for entry_raw in entries.values():
+                if not isinstance(entry_raw, dict):
+                    continue
+                source_uid_raw = entry_raw.get("source_uid")
+                source_uid = source_uid_raw.strip() if isinstance(source_uid_raw, str) else ""
+                if source_uid != segment.uid:
+                    continue
+                translation_lines_raw = entry_raw.get("translation_lines")
+                translation_lines = self._normalize_translation_lines(translation_lines_raw)
+                candidate_text = "\n".join(translation_lines).strip()
+                if candidate_text:
+                    chosen_translation = candidate_text
+                    break
+            if not chosen_translation:
+                for entry_raw in entries.values():
+                    if not isinstance(entry_raw, dict):
+                        continue
+                    source_hash_raw = entry_raw.get("source_hash")
+                    source_hash = source_hash_raw.strip() if isinstance(source_hash_raw, str) else ""
+                    if not source_hash or source_hash not in source_hash_candidates:
+                        continue
+                    translation_lines_raw = entry_raw.get("translation_lines")
+                    translation_lines = self._normalize_translation_lines(translation_lines_raw)
+                    candidate_text = "\n".join(translation_lines).strip()
+                    if candidate_text:
+                        chosen_translation = candidate_text
+                        break
+            if not chosen_translation:
+                continue
+            if current_translation and chosen_translation == current_translation:
+                continue
+            profile_name = ""
+            meta_raw = self.translation_profiles_meta.get(profile_id)
+            if isinstance(meta_raw, dict):
+                meta_name = meta_raw.get("name")
+                if isinstance(meta_name, str):
+                    profile_name = meta_name.strip()
+            if not profile_name:
+                profile_name_raw = raw_profile_state.get("name")
+                if isinstance(profile_name_raw, str):
+                    profile_name = profile_name_raw.strip()
+            if not profile_name:
+                profile_name = self._default_translation_profile_name(profile_id)
+            rows.append((profile_id, profile_name, chosen_translation))
+
+        rows.sort(key=lambda item: natural_sort_key(item[1]))
+        return rows
 
     def _build_reference_summary_for_session(self, session: FileSession) -> dict[str, tuple[str, str]]:
         rows: list[dict[str, Any]] = []
+        source_label = self._translation_project_source_language_label()
+        target_label = self._translation_profile_target_language_label()
         for row_path, row_session in self.sessions.items():
             for block_number, segment in enumerate(row_session.segments, start=1):
                 source_text = self._segment_reference_source_text(
@@ -1221,17 +1336,17 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                     sample_parts = []
                     for ratio, row in scored[:3]:
                         sample_tl = cast(
-                            str, row["translation_text"]) or "(no EN yet)"
+                            str, row["translation_text"]) or f"(no {target_label} yet)"
                         sample_parts.append(
                             f"{row['file']}#{row['block_number']} ({ratio:.2f}): {preview_text(sample_tl, 44)}"
                         )
                     candidate_label = "candidate" if len(scored) == 1 else "candidates"
-                    similar_summary = f"Similar JP phrases: {len(scored)} {candidate_label}. " + " | ".join(
+                    similar_summary = f"Similar {source_label} phrases: {len(scored)} {candidate_label}. " + " | ".join(
                         sample_parts)
                 else:
-                    similar_summary = "Similar JP phrases: none."
+                    similar_summary = self._empty_similar_reference_summary()
             else:
-                similar_summary = "Similar JP phrases: none."
+                similar_summary = self._empty_similar_reference_summary()
 
             summaries[segment.uid] = (exact_summary, similar_summary)
         return summaries

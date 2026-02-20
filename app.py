@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QSpinBox,
     QSplitter,
+    QTabBar,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -231,6 +232,8 @@ class DialogueVisualEditor(
         self.rendered_block_uid_order: list[str] = []
         self.selected_segment_uid: Optional[str] = None
         self.current_reference_map: dict[str, tuple[str, str]] = {}
+        self._translator_other_selected_profile_id = ""
+        self._translator_other_profile_text_by_id: dict[str, str] = {}
         self.segment_uid_counter = 0
         self.translation_uid_counter = 0
         default_prompt_template = self._default_translation_prompt_template()
@@ -415,6 +418,7 @@ class DialogueVisualEditor(
         self.audit_term_render_timer.timeout.connect(
             self._render_next_audit_term_group_batch
         )
+        self.translator_other_translations_highlighter: Optional[ControlCodeHighlighter] = None
         self.audit_term_hits_render_entries: list[dict[str, Any]] = []
         self.audit_term_hits_render_index = 0
         self.audit_term_hits_render_group_key = ""
@@ -697,7 +701,9 @@ class DialogueVisualEditor(
         self.translator_speaker_jp_row = QWidget()
         speaker_jp_row = QHBoxLayout(self.translator_speaker_jp_row)
         speaker_jp_row.setContentsMargins(0, 0, 0, 0)
-        self.translator_speaker_jp_label = QLabel("Speaker JP")
+        self.translator_speaker_jp_label = QLabel(
+            f"Speaker {self._translation_project_source_language_label()}"
+        )
         speaker_jp_row.addWidget(self.translator_speaker_jp_label)
         self.translator_speaker_jp_edit = QLabel("")
         self.translator_speaker_jp_edit.setTextFormat(Qt.TextFormat.RichText)
@@ -711,7 +717,9 @@ class DialogueVisualEditor(
         self.translator_speaker_en_row = QWidget()
         speaker_en_row = QHBoxLayout(self.translator_speaker_en_row)
         speaker_en_row.setContentsMargins(0, 0, 0, 0)
-        self.translator_speaker_en_label = QLabel("Speaker EN")
+        self.translator_speaker_en_label = QLabel(
+            f"Speaker {self._translation_profile_target_language_label()}"
+        )
         speaker_en_row.addWidget(self.translator_speaker_en_label)
         self.translator_speaker_en_edit = QLabel("")
         self.translator_speaker_en_edit.setTextFormat(Qt.TextFormat.RichText)
@@ -727,7 +735,9 @@ class DialogueVisualEditor(
         speaker_en_row.addWidget(self.translator_open_speakers_btn)
         detail_content_layout.addWidget(self.translator_speaker_en_row)
 
-        self.translator_source_label = QLabel("Source (JP)")
+        self.translator_source_label = QLabel(
+            f"Source ({self._translation_project_source_language_label()})"
+        )
         translator_layout_font = self.translator_source_label.font()
         translator_layout_font.setBold(True)
         self.translator_source_label.setFont(translator_layout_font)
@@ -751,6 +761,38 @@ class DialogueVisualEditor(
             resolve_color_flow=True,
         )
         detail_content_layout.addWidget(self.translator_source_view, 1)
+
+        self.translator_other_translations_label = QLabel("Other translations")
+        other_label_font = self.translator_other_translations_label.font()
+        other_label_font.setBold(True)
+        self.translator_other_translations_label.setFont(other_label_font)
+        detail_content_layout.addWidget(self.translator_other_translations_label)
+
+        self.translator_other_translations_tabs = QTabBar()
+        self.translator_other_translations_tabs.setExpanding(False)
+        self.translator_other_translations_tabs.setUsesScrollButtons(True)
+        self.translator_other_translations_tabs.setElideMode(
+            Qt.TextElideMode.ElideRight
+        )
+        self.translator_other_translations_tabs.currentChanged.connect(
+            self._on_translator_other_profile_tab_changed
+        )
+        detail_content_layout.addWidget(self.translator_other_translations_tabs)
+
+        self.translator_other_translations_view = QPlainTextEdit()
+        self.translator_other_translations_view.setReadOnly(True)
+        self.translator_other_translations_view.setFont(mono)
+        self.translator_other_translations_view.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.WidgetWidth
+        )
+        self.translator_other_translations_view.setMaximumHeight(180)
+        self.translator_other_translations_highlighter = ControlCodeHighlighter(
+            self.translator_other_translations_view.document(),
+            is_dark_palette(),
+            color_code_resolver=self._color_for_rpgm_code,
+            resolve_color_flow=True,
+        )
+        detail_content_layout.addWidget(self.translator_other_translations_view)
 
         self.translator_reference_exact_label = QLabel("")
         self.translator_reference_exact_label.setWordWrap(True)
@@ -1898,6 +1940,11 @@ class DialogueVisualEditor(
         )
         self._save_translation_state()
         self._rebuild_translation_profile_menu()
+        self.reference_summary_cache_by_path.clear()
+        if self.current_path is not None:
+            self._rerender_current_file()
+        else:
+            self._refresh_translator_detail_panel()
         self.statusBar().showMessage(
             (
                 f"Updated profile settings for '{profile_name}' "
@@ -1937,6 +1984,11 @@ class DialogueVisualEditor(
             return
         self._set_translation_project_source_language_code(source_language_code)
         self._save_translation_state()
+        self.reference_summary_cache_by_path.clear()
+        if self.current_path is not None:
+            self._rerender_current_file()
+        else:
+            self._refresh_translator_detail_panel()
         self.statusBar().showMessage(
             (
                 "Set project source language to "
@@ -2837,6 +2889,9 @@ class DialogueVisualEditor(
         if self.translator_source_highlighter is not None:
             self.translator_source_highlighter.set_dark_theme(dark_theme)
             self.translator_source_highlighter.rehighlight()
+        if self.translator_other_translations_highlighter is not None:
+            self.translator_other_translations_highlighter.set_dark_theme(dark_theme)
+            self.translator_other_translations_highlighter.rehighlight()
         if self.audit_consistency_source_highlighter is not None:
             self.audit_consistency_source_highlighter.set_dark_theme(dark_theme)
             self.audit_consistency_source_highlighter.rehighlight()
@@ -3032,12 +3087,68 @@ class DialogueVisualEditor(
         )
         self.translator_source_view.setExtraSelections(selections)
 
+    def _on_translator_other_profile_tab_changed(self, index: int) -> None:
+        if index < 0:
+            self.translator_other_translations_view.setPlainText("")
+            return
+        profile_id_raw = self.translator_other_translations_tabs.tabData(index)
+        profile_id = profile_id_raw if isinstance(profile_id_raw, str) else ""
+        if profile_id:
+            self._translator_other_selected_profile_id = profile_id
+        translation_text = self._translator_other_profile_text_by_id.get(profile_id, "")
+        self.translator_other_translations_view.setPlainText(translation_text)
+        if self.translator_other_translations_highlighter is not None:
+            self.translator_other_translations_highlighter.set_initial_active_color_code(0)
+            self.translator_other_translations_highlighter.rehighlight()
+
+    def _set_translator_other_profile_rows(
+        self,
+        rows: list[tuple[str, str, str]],
+    ) -> None:
+        def clear_tabs() -> None:
+            while self.translator_other_translations_tabs.count() > 0:
+                self.translator_other_translations_tabs.removeTab(0)
+
+        self._translator_other_profile_text_by_id = {
+            profile_id: translation_text
+            for profile_id, _profile_name, translation_text in rows
+        }
+        has_rows = bool(rows)
+        self.translator_other_translations_label.setVisible(has_rows)
+        self.translator_other_translations_tabs.setVisible(has_rows)
+        self.translator_other_translations_view.setVisible(has_rows)
+        if not has_rows:
+            self.translator_other_translations_tabs.blockSignals(True)
+            clear_tabs()
+            self.translator_other_translations_tabs.blockSignals(False)
+            self.translator_other_translations_view.setPlainText("")
+            return
+
+        selected_profile_id = self._translator_other_selected_profile_id
+        selected_index = 0
+        self.translator_other_translations_tabs.blockSignals(True)
+        clear_tabs()
+        for idx, (profile_id, profile_name, _translation_text) in enumerate(rows):
+            self.translator_other_translations_tabs.addTab(profile_name)
+            self.translator_other_translations_tabs.setTabData(idx, profile_id)
+            if profile_id == selected_profile_id:
+                selected_index = idx
+        self.translator_other_translations_tabs.setCurrentIndex(selected_index)
+        self.translator_other_translations_tabs.blockSignals(False)
+        self._on_translator_other_profile_tab_changed(selected_index)
+
     def _refresh_translator_detail_panel(self) -> None:
         translator_mode = self._is_translator_mode()
         self.translator_detail_panel.setVisible(translator_mode)
         if not translator_mode:
             self.translator_source_view.setExtraSelections([])
+            self._set_translator_other_profile_rows([])
             return
+
+        source_language_label = self._translation_project_source_language_label()
+        target_language_label = self._translation_profile_target_language_label()
+        self.translator_speaker_jp_label.setText(f"Speaker {source_language_label}")
+        self.translator_speaker_en_label.setText(f"Speaker {target_language_label}")
 
         current_session = (
             self.sessions.get(self.current_path)
@@ -3083,7 +3194,10 @@ class DialogueVisualEditor(
         self.translator_review_exact_matches_btn.setVisible(not actor_mode)
         self.translator_reference_similar_label.setVisible(not actor_mode)
         self.translator_source_label.setText(
-            f"{field_label} (JP)" if actor_mode else "Source (JP)")
+            f"{field_label} ({source_language_label})"
+            if actor_mode
+            else f"Source ({source_language_label})"
+        )
 
         has_segment = segment is not None
         self.translator_detail_empty_label.setVisible(not has_segment)
@@ -3112,6 +3226,7 @@ class DialogueVisualEditor(
             self.translator_reference_similar_label.setText("")
             self.translator_review_exact_matches_btn.setEnabled(False)
             self.translator_source_view.setExtraSelections([])
+            self._set_translator_other_profile_rows([])
             return
 
         block_number = self._block_number_for_uid(segment.uid)
@@ -3177,15 +3292,23 @@ class DialogueVisualEditor(
             exact, similar = self.current_reference_map.get(
                 segment.uid,
                 (
-                    "Exact JP matches: none.",
-                    "Similar JP phrases: none.",
+                    self._empty_exact_reference_summary(),
+                    self._empty_similar_reference_summary(),
                 ),
             )
             self.translator_reference_exact_label.setText(exact)
             self.translator_reference_similar_label.setText(similar)
             self.translator_review_exact_matches_btn.setEnabled(
-                not exact.startswith("Exact JP matches: none.")
+                exact != self._empty_exact_reference_summary()
             )
+        if current_session is not None:
+            other_rows = self._other_profile_translation_rows_for_segment(
+                current_session,
+                segment,
+            )
+        else:
+            other_rows = []
+        self._set_translator_other_profile_rows(other_rows)
         self._apply_translator_source_mismatch_highlighting(
             segment,
             actor_mode=actor_mode,
@@ -3433,10 +3556,11 @@ class DialogueVisualEditor(
             current_segment,
         )
         if not review_rows:
+            source_language_label = self._translation_project_source_language_label()
             QMessageBox.information(
                 self,
                 "No exact matches",
-                "No exact JP matches were found for the selected block.",
+                f"No exact {source_language_label} matches were found for the selected block.",
             )
             return
 
@@ -3584,8 +3708,12 @@ class DialogueVisualEditor(
 
     def _set_speaker_translation_everywhere(self, speaker_key: str, translated_name: str) -> int:
         key = self._normalize_speaker_key(speaker_key)
+        source_language_label = self._translation_project_source_language_label()
+        target_language_label = self._translation_profile_target_language_label()
         if key == NO_SPEAKER_KEY:
-            self.statusBar().showMessage("No JP speaker key selected.")
+            self.statusBar().showMessage(
+                f"No {source_language_label} speaker key selected."
+            )
             return 0
         cleaned = translated_name.strip()
         previous = self._speaker_translation_for_key(key)
@@ -3628,16 +3756,16 @@ class DialogueVisualEditor(
             value_display = cleaned if cleaned else "(blank)"
             block_label = "block" if changed_blocks == 1 else "blocks"
             self.statusBar().showMessage(
-                f"Set Speaker EN for '{key}' to '{value_display}' in {changed_blocks} {block_label}."
+                f"Set Speaker {target_language_label} for '{key}' to '{value_display}' in {changed_blocks} {block_label}."
             )
         elif map_changed:
             value_display = cleaned if cleaned else "(blank)"
             self.statusBar().showMessage(
-                f"Set Speaker EN for '{key}' to '{value_display}'."
+                f"Set Speaker {target_language_label} for '{key}' to '{value_display}'."
             )
         else:
             self.statusBar().showMessage(
-                f"No speaker EN changes needed for '{key}'."
+                f"No speaker {target_language_label} changes needed for '{key}'."
             )
         return changed_blocks
 
@@ -3884,7 +4012,11 @@ class DialogueVisualEditor(
             QMessageBox.information(
                 self, "No data loaded", "Load a data folder before opening Speaker Manager.")
             return
-        dialog = SpeakerManagerDialog(self)
+        dialog = SpeakerManagerDialog(
+            self,
+            source_language_code=self._translation_project_source_language_label(),
+            target_language_code=self._translation_profile_target_language_label(),
+        )
         dialog.exec()
         self._refresh_translator_detail_panel()
 

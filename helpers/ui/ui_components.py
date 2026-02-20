@@ -573,15 +573,24 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
 
 
 class SpeakerManagerDialog(QDialog):
-    def __init__(self, editor: QWidget):
+    def __init__(
+        self,
+        editor: QWidget,
+        *,
+        source_language_code: str = "JP",
+        target_language_code: str = "EN",
+    ):
         super().__init__(editor)
         self.editor: SpeakerManagerHost = cast(SpeakerManagerHost, editor)
+        self.source_language_code = source_language_code.strip() or "JP"
+        self.target_language_code = target_language_code.strip() or "EN"
         self.setWindowTitle("Speaker Manager")
         self.resize(460, 420)
 
         root = QVBoxLayout(self)
         info = QLabel(
-            "Manage speakers globally: rename, set EN translation, pick custom colors, or revert to auto colors.\n"
+            f"Manage {self.source_language_code} speakers globally: rename, set "
+            f"{self.target_language_code} translation, pick custom colors, or revert to auto colors.\n"
             "Blank names are treated as '(none)'."
         )
         info.setWordWrap(True)
@@ -595,8 +604,8 @@ class SpeakerManagerDialog(QDialog):
 
         actions = QHBoxLayout()
         self.rename_btn = QPushButton("Rename...")
-        self.translate_btn = QPushButton("Set EN...")
-        self.clear_translate_btn = QPushButton("Clear EN")
+        self.translate_btn = QPushButton(f"Set {self.target_language_code}...")
+        self.clear_translate_btn = QPushButton(f"Clear {self.target_language_code}")
         self.color_btn = QPushButton("Pick Color...")
         self.auto_btn = QPushButton("Auto Color")
         self.rename_btn.clicked.connect(self._on_rename_clicked)
@@ -723,8 +732,8 @@ class SpeakerManagerDialog(QDialog):
         default_text = self._rename_prefill_text(current)
         new_name, ok = QInputDialog.getText(
             self,
-            "Rename Speaker",
-            f"Rename speaker '{current}' to:",
+            f"Rename Speaker {self.source_language_code}",
+            f"Rename {self.source_language_code} speaker '{current}' to:",
             text=default_text,
         )
         if not ok:
@@ -762,8 +771,8 @@ class SpeakerManagerDialog(QDialog):
         existing = self._translation_prefill_text(current)
         translated_name, ok = QInputDialog.getText(
             self,
-            "Set Speaker EN",
-            f"Set EN translation for '{current}':",
+            f"Set Speaker {self.target_language_code}",
+            f"Set {self.target_language_code} translation for '{current}':",
             text=existing,
         )
         if not ok:

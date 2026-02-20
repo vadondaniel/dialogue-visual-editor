@@ -53,6 +53,172 @@ class _Harness(TranslationStateMixin):
 
 
 class TranslationStateMixinTests(unittest.TestCase):
+    def test_other_profile_translations_include_other_profiles_for_same_segment(self) -> None:
+        harness = _Harness()
+        current = _segment("Map001.json:L0:0", "JP line")
+        current.translation_lines = ["Szia"]
+        source_hash = harness._segment_source_hash(current)
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[current],
+        )
+        harness.sessions = {session.path: session}
+        harness.active_translation_profile_id = "hu"
+        harness.translation_state = {
+            "version": 2,
+            "active_profile_id": "hu",
+            "profiles": {
+                "hu": {
+                    "name": "Hungarian",
+                    "uid_counter": 1,
+                    "target_language_code": "hu",
+                    "prompt_template": harness._default_translation_prompt_template(),
+                    "speaker_map": {},
+                    "files": {
+                        "Map001.json": {
+                            "order": ["T_hu"],
+                            "entries": {
+                                "T_hu": {
+                                    "source_uid": current.uid,
+                                    "source_hash": source_hash,
+                                    "translation_lines": ["Szia"],
+                                }
+                            },
+                        }
+                    },
+                },
+                "en": {
+                    "name": "English",
+                    "uid_counter": 1,
+                    "target_language_code": "en",
+                    "prompt_template": harness._default_translation_prompt_template(),
+                    "speaker_map": {},
+                    "files": {
+                        "Map001.json": {
+                            "order": ["T_en"],
+                            "entries": {
+                                "T_en": {
+                                    "source_uid": current.uid,
+                                    "source_hash": source_hash,
+                                    "translation_lines": ["Hello"],
+                                }
+                            },
+                        }
+                    },
+                },
+            },
+        }
+
+        rows = harness._other_profile_translation_rows_for_segment(
+            session,
+            current,
+        )
+
+        self.assertEqual(rows, [("en", "English", "Hello")])
+
+    def test_other_profile_translations_include_other_profiles_for_non_dialogue(self) -> None:
+        harness = _Harness()
+        current = _segment("Map001.json:M:1:displayName", "JP map name")
+        current.segment_kind = "map_display_name"
+        current.translation_lines = ["HU map name"]
+        source_hash = harness._segment_source_hash(current)
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[current],
+        )
+        harness.sessions = {session.path: session}
+        harness.active_translation_profile_id = "hu"
+        harness.translation_state = {
+            "version": 2,
+            "active_profile_id": "hu",
+            "profiles": {
+                "hu": {
+                    "name": "Hungarian",
+                    "uid_counter": 1,
+                    "target_language_code": "hu",
+                    "prompt_template": harness._default_translation_prompt_template(),
+                    "speaker_map": {},
+                    "files": {"Map001.json": {"order": [], "entries": {}}},
+                },
+                "en": {
+                    "name": "English",
+                    "uid_counter": 1,
+                    "target_language_code": "en",
+                    "prompt_template": harness._default_translation_prompt_template(),
+                    "speaker_map": {},
+                    "files": {
+                        "Map001.json": {
+                            "order": ["T_en_map"],
+                            "entries": {
+                                "T_en_map": {
+                                    "source_uid": current.uid,
+                                    "source_hash": source_hash,
+                                    "translation_lines": ["EN map name"],
+                                }
+                            },
+                        }
+                    },
+                },
+            },
+        }
+
+        rows = harness._other_profile_translation_rows_for_segment(
+            session,
+            current,
+        )
+
+        self.assertEqual(rows, [("en", "English", "EN map name")])
+
+    def test_other_profile_translations_ignore_same_profile_matches(self) -> None:
+        harness = _Harness()
+        current = _segment("Map001.json:L0:0", "JP line")
+        current.translation_lines = ["Current TL"]
+        same_source_other = _segment("Map001.json:L0:1", "JP line")
+        same_source_other.translation_lines = ["Alt TL A"]
+
+        session_current = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[current, same_source_other],
+        )
+        harness.sessions = {
+            session_current.path: session_current,
+        }
+
+        rows = harness._other_profile_translation_rows_for_segment(
+            session_current,
+            current,
+        )
+
+        self.assertEqual(rows, [])
+
+    def test_other_profile_translations_none_when_no_alternatives(self) -> None:
+        harness = _Harness()
+        current = _segment("Map001.json:L0:0", "JP line")
+        current.translation_lines = ["Same TL"]
+        same_translation = _segment("Map001.json:L0:1", "JP line")
+        same_translation.translation_lines = ["Same TL"]
+
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[current, same_translation],
+        )
+        harness.sessions = {session.path: session}
+
+        rows = harness._other_profile_translation_rows_for_segment(
+            session,
+            current,
+        )
+
+        self.assertEqual(rows, [])
+
     def test_apply_state_script_message_legacy_hash_still_matches(self) -> None:
         harness = _Harness()
         segment = _segment("Map010.json:L0:0", "JP line", "Narrator")
