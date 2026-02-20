@@ -9,6 +9,7 @@ from typing import Any, Callable, Literal, Optional, Protocol, cast
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
+    QFocusEvent,
     QFont,
     QFontMetrics,
     QHelpEvent,
@@ -356,6 +357,44 @@ def _split_masked_text_and_spans(
                 (start - line_start, end - line_start, color_hex, font_scale)
             )
     return lines, spans_per_line
+
+
+def _cursor_line_col(cursor: QTextCursor) -> tuple[int, int]:
+    block = cursor.block()
+    if not block.isValid():
+        return 0, 0
+    line_index = max(0, int(block.blockNumber()))
+    col = max(0, cursor.position() - block.position())
+    return line_index, col
+
+
+def _raw_col_for_masked_col(raw_line: str, masked_col: int) -> int:
+    target = max(0, int(masked_col))
+    masked_seen = 0
+    cursor = 0
+    for match in CONTROL_TOKEN_RE.finditer(raw_line):
+        start, end = match.span()
+        plain_len = max(0, start - cursor)
+        if masked_seen + plain_len >= target:
+            return cursor + (target - masked_seen)
+        masked_seen += plain_len
+        cursor = end
+    tail_len = max(0, len(raw_line) - cursor)
+    if masked_seen + tail_len >= target:
+        return cursor + (target - masked_seen)
+    return len(raw_line)
+
+
+def _doc_pos_from_line_col(lines: list[str], line_index: int, col: int) -> int:
+    if not lines:
+        return 0
+    safe_line = max(0, min(len(lines) - 1, int(line_index)))
+    pos = 0
+    for idx in range(safe_line):
+        pos += len(lines[idx]) + 1
+    line_len = len(lines[safe_line])
+    safe_col = max(0, min(line_len, int(col)))
+    return pos + safe_col
 
 
 def _token_id_at_editor_position(
@@ -1220,6 +1259,8 @@ class ItemNameDescriptionWidget(QFrame):
         self._suppress_desc_changed = False
         self._showing_raw_name = True
         self._showing_raw_desc = True
+        self._pending_mouse_reveal_name = False
+        self._pending_mouse_reveal_desc = False
         self._selected = False
         self._audit_pinned = False
         self._flash_timer: Optional[QTimer] = None
@@ -1374,10 +1415,76 @@ class ItemNameDescriptionWidget(QFrame):
         else:
             self._suppress_desc_changed = False
 
+    def _pending_mouse_reveal_for_editor(self, editor: QPlainTextEdit) -> bool:
+        if editor is self.name_editor:
+            return bool(self._pending_mouse_reveal_name)
+        return bool(self._pending_mouse_reveal_desc)
+
+    def _set_pending_mouse_reveal_for_editor(self, editor: QPlainTextEdit, pending: bool) -> None:
+        if editor is self.name_editor:
+            self._pending_mouse_reveal_name = bool(pending)
+            return
+        self._pending_mouse_reveal_desc = bool(pending)
+
+    def _editor_shows_raw_codes(self, editor: QPlainTextEdit) -> bool:
+        if editor is self.name_editor:
+            return bool(self._showing_raw_name)
+        return bool(self._showing_raw_desc)
+
+    def _raw_lines_for_editor(self, editor: QPlainTextEdit) -> list[str]:
+        if editor is self.name_editor:
+            return list(self._raw_name_lines if self._raw_name_lines else [""])
+        return list(self._raw_desc_lines if self._raw_desc_lines else [""])
+
+    def _reveal_raw_editor_now(self, editor: QPlainTextEdit) -> None:
+        if editor is self.name_editor:
+            self._showing_raw_name = True
+            _set_hard_newline_markers(editor, True)
+            self._set_editor_lines(editor, self._raw_name_lines, suppress_name=True)
+            return
+        self._showing_raw_desc = True
+        _set_hard_newline_markers(editor, True)
+        self._set_editor_lines(editor, self._raw_desc_lines, suppress_name=False)
+
+    def _should_defer_mouse_focus_reveal(self, editor: QPlainTextEdit, event: QEvent) -> bool:
+        if not self.hide_control_codes_when_unfocused:
+            return False
+        if self._editor_shows_raw_codes(editor):
+            return False
+        if event.type() != QEvent.Type.FocusIn:
+            return False
+        try:
+            focus_event = cast(QFocusEvent, event)
+            return focus_event.reason() == Qt.FocusReason.MouseFocusReason
+        except Exception:
+            return False
+
+    def _apply_deferred_mouse_reveal_for_editor(self, editor: QPlainTextEdit) -> None:
+        if not self._pending_mouse_reveal_for_editor(editor):
+            return
+        cursor = editor.textCursor()
+        line_index, masked_col = _cursor_line_col(cursor)
+        self._set_pending_mouse_reveal_for_editor(editor, False)
+        self._reveal_raw_editor_now(editor)
+        if not self._editor_shows_raw_codes(editor):
+            return
+        raw_lines = self._raw_lines_for_editor(editor)
+        if not raw_lines:
+            return
+        safe_line = max(0, min(len(raw_lines) - 1, line_index))
+        raw_col = _raw_col_for_masked_col(raw_lines[safe_line], masked_col)
+        target_pos = _doc_pos_from_line_col(raw_lines, safe_line, raw_col)
+        remapped = editor.textCursor()
+        remapped.setPosition(target_pos)
+        editor.setTextCursor(remapped)
+        self._refresh_status()
+
     def _sync_single_editor_visibility(self, editor: QPlainTextEdit, force: bool = False) -> None:
         if editor is self.name_editor:
             show_raw = (
                 not self.hide_control_codes_when_unfocused) or self.name_editor.hasFocus()
+            if self._pending_mouse_reveal_name:
+                show_raw = False
             _set_hard_newline_markers(self.name_editor, self.name_editor.hasFocus())
             if (not force) and show_raw == self._showing_raw_name:
                 return
@@ -1389,6 +1496,8 @@ class ItemNameDescriptionWidget(QFrame):
 
         show_raw = (
             not self.hide_control_codes_when_unfocused) or self.desc_editor.hasFocus()
+        if self._pending_mouse_reveal_desc:
+            show_raw = False
         _set_hard_newline_markers(self.desc_editor, self.desc_editor.hasFocus())
         if (not force) and show_raw == self._showing_raw_desc:
             return
@@ -1407,6 +1516,8 @@ class ItemNameDescriptionWidget(QFrame):
         if self.hide_control_codes_when_unfocused == new_value:
             return
         self.hide_control_codes_when_unfocused = new_value
+        self._pending_mouse_reveal_name = False
+        self._pending_mouse_reveal_desc = False
         self._sync_control_code_visibility(force=True)
 
     def refresh_theme_palette(self) -> None:
@@ -1471,19 +1582,33 @@ class ItemNameDescriptionWidget(QFrame):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.name_editor or watched is self.desc_editor:
+            editor = cast(QPlainTextEdit, watched)
             if event.type() == QEvent.Type.FocusIn:
-                self._sync_single_editor_visibility(
-                    cast(QPlainTextEdit, watched), force=True)
+                if self._should_defer_mouse_focus_reveal(editor, event):
+                    self._set_pending_mouse_reveal_for_editor(editor, True)
+                    _set_hard_newline_markers(editor, True)
+                else:
+                    self._set_pending_mouse_reveal_for_editor(editor, False)
+                    self._reveal_raw_editor_now(editor)
+                    self._refresh_status()
                 self.activated.emit(self.segment.uid)
             elif event.type() == QEvent.Type.FocusOut:
-                self._sync_single_editor_visibility(
-                    cast(QPlainTextEdit, watched), force=True)
+                self._set_pending_mouse_reveal_for_editor(editor, False)
+                self._sync_single_editor_visibility(editor, force=True)
             elif event.type() == QEvent.Type.MouseButtonPress:
                 self.activated.emit(self.segment.uid)
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                self._apply_deferred_mouse_reveal_for_editor(editor)
+            elif event.type() == QEvent.Type.KeyPress:
+                self._apply_deferred_mouse_reveal_for_editor(editor)
         elif watched is self.name_editor.viewport():
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                self._apply_deferred_mouse_reveal_for_editor(self.name_editor)
             if self._handle_variable_tooltip_event(self.name_editor, event):
                 return True
         elif watched is self.desc_editor.viewport():
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                self._apply_deferred_mouse_reveal_for_editor(self.desc_editor)
             if self._handle_variable_tooltip_event(self.desc_editor, event):
                 return True
         return super().eventFilter(watched, event)
@@ -1752,6 +1877,7 @@ class DialogueBlockWidget(QFrame):
         self._width_limit_marker: Optional[QFrame] = None
         self.editor: Optional[QPlainTextEdit] = None
         self._control_code_highlighter: Optional[ControlCodeHighlighter] = None
+        self._pending_mouse_reveal = False
         self._selected = False
         self._audit_pinned = False
         self._flash_timer: Optional[QTimer] = None
@@ -2021,6 +2147,7 @@ class DialogueBlockWidget(QFrame):
         self.editor = None
         self._control_code_highlighter = None
         self._displaying_masked_text = False
+        self._pending_mouse_reveal = False
         self._masked_color_spans = []
         self._preview.setText(self._preview_text())
         self._preview.setVisible(True)
@@ -2073,6 +2200,54 @@ class DialogueBlockWidget(QFrame):
         if self._flash_level == 0 and self._flash_timer is not None:
             self._flash_timer.stop()
 
+    def _reveal_raw_now(self) -> None:
+        editor = self.editor
+        if editor is None:
+            return
+        self._displaying_masked_text = False
+        self._masked_color_spans = []
+        _set_hard_newline_markers(editor, True)
+        self._set_editor_text_lines(self._raw_lines)
+        self._refresh_source_hint_overlay()
+        self._refresh_status()
+
+    def _should_defer_mouse_focus_reveal(self, event: QEvent) -> bool:
+        if not self.hide_control_codes_when_unfocused:
+            return False
+        if not self._displaying_masked_text:
+            return False
+        if event.type() != QEvent.Type.FocusIn:
+            return False
+        try:
+            focus_event = cast(QFocusEvent, event)
+            return focus_event.reason() == Qt.FocusReason.MouseFocusReason
+        except Exception:
+            return False
+
+    def _apply_deferred_mouse_reveal(self) -> None:
+        editor = self.editor
+        if editor is None:
+            self._pending_mouse_reveal = False
+            return
+        if not self._pending_mouse_reveal:
+            return
+        cursor = editor.textCursor()
+        line_index, masked_col = _cursor_line_col(cursor)
+        self._pending_mouse_reveal = False
+        self._reveal_raw_now()
+        editor = self.editor
+        if editor is None or self._displaying_masked_text:
+            return
+        raw_lines = list(self._raw_lines if self._raw_lines else [""])
+        if not raw_lines:
+            return
+        safe_line = max(0, min(len(raw_lines) - 1, line_index))
+        raw_col = _raw_col_for_masked_col(raw_lines[safe_line], masked_col)
+        target_pos = _doc_pos_from_line_col(raw_lines, safe_line, raw_col)
+        remapped = editor.textCursor()
+        remapped.setPosition(target_pos)
+        editor.setTextCursor(remapped)
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         editor = self.editor
         if watched is self._preview or watched is self._editor_container:
@@ -2085,13 +2260,25 @@ class DialogueBlockWidget(QFrame):
             return super().eventFilter(watched, event)
         if editor is not None and watched is editor:
             if event.type() == QEvent.Type.FocusIn:
-                self._sync_control_code_visibility(force=True)
+                if self._should_defer_mouse_focus_reveal(event):
+                    self._pending_mouse_reveal = True
+                    _set_hard_newline_markers(editor, True)
+                else:
+                    self._pending_mouse_reveal = False
+                    self._reveal_raw_now()
                 self.activated.emit(self.segment.uid)
             elif event.type() == QEvent.Type.FocusOut:
+                self._pending_mouse_reveal = False
                 self._sync_control_code_visibility(force=True)
             elif event.type() == QEvent.Type.MouseButtonPress:
                 self.activated.emit(self.segment.uid)
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                self._apply_deferred_mouse_reveal()
+            elif event.type() == QEvent.Type.KeyPress:
+                self._apply_deferred_mouse_reveal()
         elif editor is not None and watched is editor.viewport():
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                self._apply_deferred_mouse_reveal()
             if self._handle_variable_tooltip_event(event):
                 return True
             if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
@@ -2734,6 +2921,7 @@ class DialogueBlockWidget(QFrame):
         if self.hide_control_codes_when_unfocused == new_value:
             return
         self.hide_control_codes_when_unfocused = new_value
+        self._pending_mouse_reveal = False
         self._sync_control_code_visibility(force=True)
 
     def _apply_theme_palette_colors(self, dark_theme: bool) -> None:
@@ -2920,6 +3108,8 @@ class DialogueBlockWidget(QFrame):
             self._refresh_status()
             return
         show_raw = self._should_show_raw_codes()
+        if self._pending_mouse_reveal:
+            show_raw = False
         _set_hard_newline_markers(self.editor, self.editor.hasFocus())
         currently_showing_raw = not self._displaying_masked_text
         if not force and show_raw == currently_showing_raw:

@@ -7,6 +7,8 @@ from typing import Any, Callable, Optional, cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QFocusEvent, QKeyEvent
 from PySide6.QtWidgets import QApplication
 
 from dialogue_visual_editor.helpers.core.models import DialogueSegment
@@ -124,6 +126,98 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         widget.set_editor_active(False)
         self.assertIsNone(widget.editor)
         self.assertFalse(widget._preview.isHidden())
+        widget.deleteLater()
+
+    def test_mouse_focus_deferred_reveal_preserves_cursor_position(self) -> None:
+        segment = _segment([r"\C[2]Hello"])
+        widget = _widget(segment)
+        widget.set_editor_active(True)
+        editor = widget.editor
+        assert editor is not None
+
+        widget.set_hide_control_codes_when_unfocused(True)
+        editor.clearFocus()
+        widget._sync_control_code_visibility(force=True)
+        self.assertTrue(widget._displaying_masked_text)
+
+        cursor = editor.textCursor()
+        cursor.setPosition(3)
+        editor.setTextCursor(cursor)
+
+        widget.eventFilter(
+            editor,
+            QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.MouseFocusReason),
+        )
+        self.assertTrue(widget._pending_mouse_reveal)
+        self.assertTrue(widget._displaying_masked_text)
+
+        widget._apply_deferred_mouse_reveal()
+        self.assertFalse(widget._pending_mouse_reveal)
+        self.assertFalse(widget._displaying_masked_text)
+        self.assertEqual(editor.textCursor().position(), len(r"\C[2]") + 3)
+        widget.deleteLater()
+
+    def test_non_mouse_focus_reveals_immediately(self) -> None:
+        segment = _segment([r"\C[2]Hello"])
+        widget = _widget(segment)
+        widget.set_editor_active(True)
+        editor = widget.editor
+        assert editor is not None
+
+        widget.set_hide_control_codes_when_unfocused(True)
+        editor.clearFocus()
+        widget._sync_control_code_visibility(force=True)
+        self.assertTrue(widget._displaying_masked_text)
+
+        widget.eventFilter(
+            editor,
+            QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.TabFocusReason),
+        )
+        self.assertFalse(widget._pending_mouse_reveal)
+        self.assertFalse(widget._displaying_masked_text)
+        widget.deleteLater()
+
+    def test_mouse_focus_deferred_reveal_works_from_viewport_release(self) -> None:
+        segment = _segment([r"\C[2]Hello"])
+        widget = _widget(segment)
+        widget.set_editor_active(True)
+        editor = widget.editor
+        assert editor is not None
+
+        widget.set_hide_control_codes_when_unfocused(True)
+        editor.clearFocus()
+        widget._sync_control_code_visibility(force=True)
+        widget.eventFilter(
+            editor,
+            QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.MouseFocusReason),
+        )
+        self.assertTrue(widget._pending_mouse_reveal)
+        widget.eventFilter(editor.viewport(), QEvent(QEvent.Type.MouseButtonRelease))
+        self.assertFalse(widget._pending_mouse_reveal)
+        self.assertFalse(widget._displaying_masked_text)
+        widget.deleteLater()
+
+    def test_pending_mouse_reveal_also_reveals_on_keypress(self) -> None:
+        segment = _segment([r"\C[2]Hello"])
+        widget = _widget(segment)
+        widget.set_editor_active(True)
+        editor = widget.editor
+        assert editor is not None
+
+        widget.set_hide_control_codes_when_unfocused(True)
+        editor.clearFocus()
+        widget._sync_control_code_visibility(force=True)
+        widget.eventFilter(
+            editor,
+            QFocusEvent(QEvent.Type.FocusIn, Qt.FocusReason.MouseFocusReason),
+        )
+        self.assertTrue(widget._pending_mouse_reveal)
+        widget.eventFilter(
+            editor,
+            QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier, "a"),
+        )
+        self.assertFalse(widget._pending_mouse_reveal)
+        self.assertFalse(widget._displaying_masked_text)
         widget.deleteLater()
 
     def test_set_editor_lines_while_unmounted_updates_segment(self) -> None:
