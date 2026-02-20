@@ -572,6 +572,12 @@ class DialogueVisualEditor(
         self.problem_contains_japanese_check.toggled.connect(
             self._on_project_setting_changed
         )
+        self.hide_non_meaningful_entries_check.toggled.connect(
+            self._on_hide_non_meaningful_toggled
+        )
+        self.hide_non_meaningful_entries_check.toggled.connect(
+            self._on_project_setting_changed
+        )
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter, 1)
@@ -849,6 +855,12 @@ class DialogueVisualEditor(
             "Treat translated text that still contains Japanese characters as a problem."
         )
 
+        self.hide_non_meaningful_entries_check = QCheckBox(self)
+        self.hide_non_meaningful_entries_check.setChecked(False)
+        self.hide_non_meaningful_entries_check.setToolTip(
+            "Hide empty map displayName entries and plugins.js parameters that are bool/on-off/none/number-list values."
+        )
+
         self.apply_version_combo = QComboBox(self)
         self.apply_version_combo.addItem("Original", "original")
         self.apply_version_combo.addItem("Working", "working")
@@ -888,6 +900,7 @@ class DialogueVisualEditor(
             self.problem_trailing_color_code_check,
             self.problem_missing_translation_check,
             self.problem_contains_japanese_check,
+            self.hide_non_meaningful_entries_check,
             self.apply_version_combo,
         )
         for control in hidden_controls:
@@ -1162,6 +1175,17 @@ class DialogueVisualEditor(
         problem_checks_menu.addAction(problem_contains_japanese_action)
 
         settings_menu.addSeparator()
+        hide_non_meaningful_action = QAction(
+            "Hide non-meaningful entries",
+            self,
+        )
+        self._bind_toggle_menu_action(
+            hide_non_meaningful_action,
+            self.hide_non_meaningful_entries_check,
+        )
+        settings_menu.addAction(hide_non_meaningful_action)
+
+        settings_menu.addSeparator()
         auto_split_action = QAction("Auto-split overflow on save", self)
         self._bind_toggle_menu_action(auto_split_action, self.auto_split_check)
         settings_menu.addAction(auto_split_action)
@@ -1390,16 +1414,9 @@ class DialogueVisualEditor(
                         continue
                     if bool(entry_raw.get("translation_only", False)):
                         continue
-                    source_preview_raw = entry_raw.get("source_preview", "")
-                    source_preview = (
-                        source_preview_raw
-                        if isinstance(source_preview_raw, str)
-                        else ""
-                    )
-                    visible_source = strip_control_tokens(
-                        source_preview
-                    ).replace("\u3000", " ").strip()
-                    if not visible_source:
+                    if not self._translation_state_entry_is_meaningful_for_display(
+                        entry_raw
+                    ):
                         continue
 
                     total_count += 1
@@ -4183,6 +4200,9 @@ class DialogueVisualEditor(
             "problem_contains_japanese": bool(
                 self.problem_contains_japanese_check.isChecked()
             ),
+            "hide_non_meaningful_entries": bool(
+                self.hide_non_meaningful_entries_check.isChecked()
+            ),
             "show_empty_files": bool(self.show_empty_files_check.isChecked()),
             "default_variable_length": int(self.default_variable_length_estimate),
             "variable_length_overrides": {
@@ -4222,6 +4242,7 @@ class DialogueVisualEditor(
         self.problem_trailing_color_code_check.blockSignals(True)
         self.problem_missing_translation_check.blockSignals(True)
         self.problem_contains_japanese_check.blockSignals(True)
+        self.hide_non_meaningful_entries_check.blockSignals(True)
         self.show_empty_files_check.blockSignals(True)
         try:
             editor_mode = settings.get("editor_mode")
@@ -4335,6 +4356,13 @@ class DialogueVisualEditor(
                 self.problem_contains_japanese_check.setChecked(
                     problem_contains_japanese
                 )
+            hide_non_meaningful_entries = settings.get(
+                "hide_non_meaningful_entries"
+            )
+            if isinstance(hide_non_meaningful_entries, bool):
+                self.hide_non_meaningful_entries_check.setChecked(
+                    hide_non_meaningful_entries
+                )
             show_empty_files = settings.get("show_empty_files")
             if isinstance(show_empty_files, bool):
                 self.show_empty_files_check.setChecked(show_empty_files)
@@ -4379,6 +4407,7 @@ class DialogueVisualEditor(
             self.problem_trailing_color_code_check.blockSignals(False)
             self.problem_missing_translation_check.blockSignals(False)
             self.problem_contains_japanese_check.blockSignals(False)
+            self.hide_non_meaningful_entries_check.blockSignals(False)
             self.show_empty_files_check.blockSignals(False)
             self._applying_project_ui_state = False
 
@@ -4637,14 +4666,26 @@ class DialogueVisualEditor(
     def _on_show_empty_toggled(self, _checked: bool) -> None:
         self._rebuild_file_list(preferred_path=self.current_path)
 
+    def _on_hide_non_meaningful_toggled(self, _checked: bool) -> None:
+        self._rebuild_file_list(preferred_path=self.current_path)
+        if self.current_path is not None:
+            self._rerender_current_file()
+
     def _visible_file_paths(self) -> list[Path]:
         visible_paths: list[Path] = []
         show_empty = self.show_empty_files_check.isChecked()
+        translator_mode = self._is_translator_mode()
         for path in self.file_paths:
             session = self.sessions.get(path)
             if session is None:
                 continue
-            if not show_empty and not session.segments:
+            actor_mode = self._is_name_index_session(session)
+            display_segments = self._display_segments_for_session(
+                session,
+                translator_mode=translator_mode,
+                actor_mode=actor_mode,
+            )
+            if not show_empty and not display_segments:
                 continue
             visible_paths.append(path)
         return visible_paths
@@ -4708,9 +4749,14 @@ class DialogueVisualEditor(
             self.block_widgets.clear()
             self.selected_segment_uid = None
             self.current_reference_map = {}
-            self.file_header_label.setText(
+            no_visible_message = (
                 "No visible files. Enable 'Show empty' to include files without dialogue blocks."
             )
+            if self.hide_non_meaningful_entries_check.isChecked():
+                no_visible_message += (
+                    " You can also disable 'Hide non-meaningful entries'."
+                )
+            self.file_header_label.setText(no_visible_message)
             self._update_reset_json_button(None)
             self._refresh_translator_detail_panel()
             return

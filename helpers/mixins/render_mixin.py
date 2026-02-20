@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any, Optional, cast
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
+from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ..core.models import DialogueSegment, FileSession
+from ..core.text_utils import strip_control_tokens
 from ..ui.ui_components import DialogueBlockWidget, ItemNameDescriptionWidget
 
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
@@ -18,8 +20,105 @@ class _RenderHostTypingFallback:
 
 
 class RenderMixin(_RenderHostTypingFallback):
+    _PLUGIN_NUMBER_RE = re.compile(
+        r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"
+    )
+
+    @classmethod
+    def _text_is_non_meaningful_parameter_value(cls, text: str) -> bool:
+        stripped = text.strip()
+        if not stripped:
+            return True
+        lowered = stripped.lower()
+        if lowered in {"true", "false", "on", "off", "none"}:
+            return True
+        if bool(cls._PLUGIN_NUMBER_RE.fullmatch(stripped)):
+            return True
+        candidate = stripped
+        if candidate.startswith("[") and candidate.endswith("]"):
+            candidate = candidate[1:-1].strip()
+        if "," not in candidate:
+            return False
+        parts = [part.strip() for part in candidate.split(",")]
+        if not parts or any(not part for part in parts):
+            return False
+        return all(bool(cls._PLUGIN_NUMBER_RE.fullmatch(part)) for part in parts)
+
     def _is_map_display_name_segment(self, segment: DialogueSegment) -> bool:
         return segment.segment_kind == "map_display_name"
+
+    @staticmethod
+    def _source_uid_is_plugins_parameter_entry(source_uid: str) -> bool:
+        normalized = source_uid.strip().lower()
+        if not normalized:
+            return False
+        return normalized.startswith("plugins.js:j:") and ":param_" in normalized
+
+    def _hide_non_meaningful_entries_enabled(self) -> bool:
+        checkbox = getattr(self, "hide_non_meaningful_entries_check", None)
+        if checkbox is None:
+            return False
+        checker = getattr(checkbox, "isChecked", None)
+        if not callable(checker):
+            return False
+        try:
+            return bool(checker())
+        except Exception:
+            return False
+
+    def _segment_source_text_for_meaningful_check(self, segment: DialogueSegment) -> str:
+        lines = segment.source_lines or segment.original_lines or segment.lines or [""]
+        return "\n".join(lines)
+
+    def _is_empty_map_display_name_segment(self, segment: DialogueSegment) -> bool:
+        if not self._is_map_display_name_segment(segment):
+            return False
+        source_text = self._segment_source_text_for_meaningful_check(segment)
+        visible = strip_control_tokens(source_text).replace("\u3000", " ").strip()
+        return not bool(visible)
+
+    def _is_plugin_non_meaningful_parameter_segment(self, segment: DialogueSegment) -> bool:
+        if segment.segment_kind != "plugin_text":
+            return False
+        path_tokens_raw = getattr(segment, "plugin_text_path", ())
+        path_tokens = (
+            path_tokens_raw
+            if isinstance(path_tokens_raw, tuple)
+            else tuple(path_tokens_raw) if isinstance(path_tokens_raw, list) else ()
+        )
+        if len(path_tokens) < 4:
+            return False
+        if path_tokens[2] != "parameters":
+            return False
+        source_text = self._segment_source_text_for_meaningful_check(segment)
+        return self._text_is_non_meaningful_parameter_value(source_text)
+
+    def _is_meaningful_segment_for_display(self, segment: DialogueSegment) -> bool:
+        if self._is_empty_map_display_name_segment(segment):
+            return False
+        if self._is_plugin_non_meaningful_parameter_segment(segment):
+            return False
+        return True
+
+    def _translation_state_entry_is_meaningful_for_display(
+        self,
+        entry: dict[str, Any],
+    ) -> bool:
+        source_preview_raw = entry.get("source_preview", "")
+        source_preview = source_preview_raw if isinstance(source_preview_raw, str) else ""
+        visible_source = strip_control_tokens(source_preview).replace("\u3000", " ").strip()
+        if not visible_source:
+            return False
+        if not self._hide_non_meaningful_entries_enabled():
+            return True
+        source_uid_raw = entry.get("source_uid", "")
+        source_uid = source_uid_raw if isinstance(source_uid_raw, str) else ""
+        if (
+            self._source_uid_is_plugins_parameter_entry(source_uid)
+            and self._text_is_non_meaningful_parameter_value(visible_source)
+        ):
+            return False
+        return True
 
     def _display_block_count(
         self,
@@ -133,7 +232,7 @@ class RenderMixin(_RenderHostTypingFallback):
             getattr(self, "_dialogue_editor_visibility_timer", None),
         )
         if timer is None:
-            timer = QTimer(self)
+            timer = QTimer(cast(QObject, self))
             timer.setSingleShot(True)
             timer.timeout.connect(self._update_visible_dialogue_editors)
             setattr(self, "_dialogue_editor_visibility_timer", timer)
@@ -214,6 +313,7 @@ class RenderMixin(_RenderHostTypingFallback):
             self.max_lines_spin.value(),
             bool(self.hide_control_codes_check.isChecked()),
             bool(self.infer_speaker_check.isChecked()),
+            bool(self._hide_non_meaningful_entries_enabled()),
         )
 
     def _display_segments_for_session(
@@ -224,8 +324,16 @@ class RenderMixin(_RenderHostTypingFallback):
         actor_mode: bool,
     ) -> list[DialogueSegment]:
         if actor_mode or translator_mode:
-            return list(session.segments)
-        return [segment for segment in session.segments if not segment.translation_only]
+            segments = list(session.segments)
+        else:
+            segments = [segment for segment in session.segments if not segment.translation_only]
+        if not self._hide_non_meaningful_entries_enabled():
+            return segments
+        return [
+            segment
+            for segment in segments
+            if self._is_meaningful_segment_for_display(segment)
+        ]
 
     def _create_blocks_container(self) -> tuple[QWidget, QVBoxLayout]:
         container = QWidget()
@@ -777,7 +885,8 @@ class RenderMixin(_RenderHostTypingFallback):
         if state is not None:
             reuse_pool_raw = state.get("reuse_pool")
             if isinstance(reuse_pool_raw, dict):
-                for widget in reuse_pool_raw.values():
+                reuse_pool = cast(dict[str, Any], reuse_pool_raw)
+                for widget in reuse_pool.values():
                     if isinstance(widget, QWidget):
                         widget.deleteLater()
         self._pending_render_state = None
