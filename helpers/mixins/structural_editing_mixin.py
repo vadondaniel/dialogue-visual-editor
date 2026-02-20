@@ -50,6 +50,58 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     _COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]")
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
     _TRAILING_RESET_COLOR_RE = re.compile(r"\\[Cc]\[0\]\s*$")
+
+    def _refresh_after_text_reset_without_full_rerender(
+        self,
+        session: FileSession,
+        *,
+        uid: str,
+    ) -> bool:
+        if self.current_path != session.path:
+            return False
+        if self._pending_render_state is not None:
+            return False
+        if self.rendered_blocks_path != session.path:
+            return False
+        if self._is_name_index_session(session):
+            return False
+
+        segment = self.current_segment_lookup.get(uid)
+        if segment is None:
+            return False
+        widget = self.block_widgets.get(uid)
+        if widget is None:
+            return False
+
+        block_number_raw = getattr(widget, "block_number", None)
+        if isinstance(block_number_raw, int) and (not isinstance(block_number_raw, bool)) and block_number_raw > 0:
+            block_number = block_number_raw
+        else:
+            try:
+                block_number = self.rendered_block_uid_order.index(uid) + 1
+            except ValueError:
+                block_number = 1
+
+        self._sync_reused_block_widget(
+            widget,
+            segment=segment,
+            block_number=block_number,
+            name_index_label=self._name_index_label(session),
+        )
+        self._apply_block_visual_state(uid, widget)
+
+        if self._is_translator_mode():
+            refreshed_reference_map = self._build_reference_summary_for_session(
+                session
+            )
+            self.reference_summary_cache_by_path[session.path] = refreshed_reference_map
+            self.current_reference_map = refreshed_reference_map
+        else:
+            self.current_reference_map = {}
+
+        self._refresh_translator_detail_panel()
+        return True
+
     def _prompt_smart_collapse_all_options(
         self,
     ) -> Optional[tuple[bool, bool, bool, bool, float, bool]]:
@@ -1785,12 +1837,16 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                     self._normalize_speaker_key(segment.speaker_name)
                 ] = speaker_after
             self._refresh_dirty_state(session)
-            if not self._refresh_after_structure_change_without_full_rerender(
+            if not self._refresh_after_text_reset_without_full_rerender(
                 session,
-                focus_uid=uid,
-                preserve_scroll=True,
+                uid=uid,
             ):
-                self._render_session(session, focus_uid=uid, preserve_scroll=True)
+                if not self._refresh_after_structure_change_without_full_rerender(
+                    session,
+                    focus_uid=uid,
+                    preserve_scroll=True,
+                ):
+                    self._render_session(session, focus_uid=uid, preserve_scroll=True)
             self.statusBar().showMessage("Reset translation block.")
             return
 
@@ -1841,12 +1897,22 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             )
             self.structural_redo_stack.clear()
         self._refresh_dirty_state(session)
-        if not self._refresh_after_structure_change_without_full_rerender(
-            session,
-            focus_uid=uid,
-            preserve_scroll=True,
-        ):
-            self._render_session(session, focus_uid=uid, preserve_scroll=True)
+        fast_path_ok = (
+            changed
+            and (not bool(merged_before))
+            and restored_count == 0
+            and self._refresh_after_text_reset_without_full_rerender(
+                session,
+                uid=uid,
+            )
+        )
+        if not fast_path_ok:
+            if not self._refresh_after_structure_change_without_full_rerender(
+                session,
+                focus_uid=uid,
+                preserve_scroll=True,
+            ):
+                self._render_session(session, focus_uid=uid, preserve_scroll=True)
         if restored_count > 0:
             block_label = "block" if restored_count == 1 else "blocks"
             self.statusBar().showMessage(
