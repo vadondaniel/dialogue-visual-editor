@@ -270,6 +270,67 @@ class AuditTermUsageMixinTests(unittest.TestCase):
         self.assertIn("Block 1", entries)
         self.assertNotIn("Block 2", entries)
 
+    def test_term_hits_match_name_code_query_without_backslash(self) -> None:
+        harness = _Harness()
+        path = Path("Map004.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("d1", "\\N[3]が来た", "Name arrived", segment_kind="dialogue"),
+            ],
+        )
+
+        hits = harness._collect_audit_term_hits("N[3]", dialogue_only=False)
+
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["uid"], "d1")
+
+    def test_candidate_name_codes_match_translation_with_backslash(self) -> None:
+        harness = _Harness()
+        path = Path("Map005.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("d1", "勇者", "\\N[7] is ready", segment_kind="dialogue"),
+            ],
+        )
+
+        groups = harness._compute_audit_term_groups_worker(
+            [(path, harness.sessions[path])],
+            term="勇者",
+            candidates_text="N[7], N[8]",
+            dialogue_only=False,
+        )
+        keys = [str(group["group_key"]) for group in groups]
+
+        self.assertIn("N[7]", keys)
+        self.assertNotIn("__unmatched__", keys)
+
+    def test_parse_candidates_normalizes_name_code_with_optional_backslash(self) -> None:
+        harness = _Harness()
+
+        parsed = harness._parse_audit_term_candidates("\\N[7] | n[7] | N[8]")
+
+        self.assertEqual(parsed, ["N[7]", "N[8]"])
+
+    def test_replace_case_insensitive_handles_name_code_input_without_backslash(self) -> None:
+        harness = _Harness()
+
+        replaced, count = harness._replace_case_insensitive(
+            r"A \N[2] B",
+            "N[2]",
+            "N[1]",
+        )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(replaced, r"A \N[1] B")
+
     def test_refresh_panel_fast_path_keeps_existing_variants_list(self) -> None:
         harness = _RefreshHarness()
 

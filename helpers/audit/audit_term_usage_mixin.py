@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QListWidgetItem
 
 from ..core.models import DialogueSegment, FileSession
-from ..core.text_utils import preview_text, strip_control_tokens
+from ..core.text_utils import CONTROL_TOKEN_RE, preview_text, strip_control_tokens
 
 
 class _AuditTermUsageHostTypingFallback:
@@ -30,6 +30,33 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         "is", "am", "be", "been", "being", "to", "of", "in", "on", "at", "as",
         "by", "or", "an", "a", "it", "we", "i", "me", "my", "mine",
     }
+    _NAME_CODE_INPUT_RE = re.compile(r"^(?:\\)?[Nn]\[(\d+)\]$")
+    _NAME_CODE_TOKEN_RE = re.compile(r"^\\[Nn]\[(\d+)\]$")
+
+    @classmethod
+    def _canonical_name_code_input(cls, value: str) -> Optional[str]:
+        token = value.strip()
+        match = cls._NAME_CODE_INPUT_RE.fullmatch(token)
+        if match is None:
+            return None
+        actor_id = match.group(1)
+        return f"N[{actor_id}]"
+
+    @classmethod
+    def _name_code_control_replacement(cls, token: str) -> str:
+        match = cls._NAME_CODE_TOKEN_RE.fullmatch(token)
+        if match is None:
+            return ""
+        actor_id = match.group(1)
+        return f"N[{actor_id}]"
+
+    def _strip_control_tokens_for_term_match(self, value: str) -> str:
+        if not value:
+            return ""
+        return CONTROL_TOKEN_RE.sub(
+            lambda match: self._name_code_control_replacement(match.group(0)),
+            value,
+        )
 
     @staticmethod
     def _is_latin_word_token(token: str) -> bool:
@@ -105,7 +132,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         self.audit_term_hits_list.setItemWidget(item, rich_label)
 
     def _normalize_text_for_block_match(self, value: str) -> str:
-        base = strip_control_tokens(value or "").replace("\u3000", " ")
+        base = self._visible_text_for_match(value)
         squashed = re.sub(r"\s+", "", base)
         return squashed.casefold()
 
@@ -286,6 +313,9 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             token = part.strip()
             if not token:
                 continue
+            normalized_name_code = self._canonical_name_code_input(token)
+            if normalized_name_code is not None:
+                token = normalized_name_code
             folded = token.casefold()
             if folded in seen:
                 continue
@@ -307,7 +337,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         return f"{text[:start]}[[{text[start:end]}]]{text[end:]}"
 
     def _visible_text_for_match(self, value: str) -> str:
-        base = strip_control_tokens(value or "").replace("\u3000", " ")
+        base = self._strip_control_tokens_for_term_match(value).replace("\u3000", " ")
         return re.sub(r"\s+", " ", base).strip()
 
     def _normalized_no_space_with_map(self, value: str) -> tuple[str, list[int]]:
@@ -889,6 +919,16 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
     def _replace_case_insensitive(self, text: str, source: str, target: str) -> tuple[str, int]:
         if not text or not source:
             return text, 0
+        source_name_code = self._canonical_name_code_input(source)
+        if source_name_code is not None:
+            actor_id = source_name_code[2:-1]
+            pattern = re.compile(rf"(?:\\)?[Nn]\[{re.escape(actor_id)}\]")
+            target_name_code = self._canonical_name_code_input(target)
+            replacement = (
+                f"\\{target_name_code}" if target_name_code is not None else target
+            )
+            replaced, count = pattern.subn(lambda _match: replacement, text)
+            return replaced, count
         pattern = re.compile(re.escape(source), flags=re.IGNORECASE)
         replaced, count = pattern.subn(target, text)
         return replaced, count
