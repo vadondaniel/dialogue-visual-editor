@@ -179,6 +179,101 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
             harness._translation_state_entry_is_meaningful_for_display(empty_entry)
         )
 
+    def test_plugin_group_key_and_title_detected_for_plugin_text_segment(self) -> None:
+        harness = _Harness(hide_non_meaningful=True)
+        segment = _segment("pdesc", "Main plugin", segment_kind="plugin_text")
+        segment.code101["parameters"] = ["", 0, 0, 2, "QuestCore"]
+        setattr(
+            segment,
+            "plugin_text_path",
+            ("__dve_plugins_js_array__", 2, "description"),
+        )
+
+        info = harness._plugin_group_key_and_title_for_segment(
+            Path("js/plugins.js"),
+            segment,
+        )
+
+        self.assertIsNotNone(info)
+        assert info is not None
+        group_key, title = info
+        self.assertEqual(group_key, "js/plugins.js::plugin::2")
+        self.assertEqual(title, "Plugin 3: QuestCore")
+
+    def test_plugin_group_key_not_created_for_non_plugin_segment(self) -> None:
+        harness = _Harness(hide_non_meaningful=True)
+        segment = _segment("d1", "Hello", segment_kind="dialogue")
+
+        info = harness._plugin_group_key_and_title_for_segment(
+            Path("Map001.json"),
+            segment,
+        )
+
+        self.assertIsNone(info)
+
+    def test_plugin_group_collapsed_state_can_toggle_without_name_collision(self) -> None:
+        harness = _Harness(hide_non_meaningful=True)
+        key = "js/plugins.js::plugin::0"
+
+        self.assertTrue(harness._is_plugin_group_collapsed(key))
+        harness._set_plugin_group_collapsed(key, True)
+        self.assertTrue(harness._is_plugin_group_collapsed(key))
+        harness._set_plugin_group_collapsed(key, False)
+        self.assertFalse(harness._is_plugin_group_collapsed(key))
+
+    def test_plugin_group_description_hint_uses_description_segment(self) -> None:
+        harness = _Harness(hide_non_meaningful=True)
+        segment = _segment(
+            "pdesc",
+            "Main plugin for quest flow management.",
+            segment_kind="plugin_text",
+        )
+        setattr(
+            segment,
+            "plugin_text_path",
+            ("__dve_plugins_js_array__", 0, "description"),
+        )
+
+        hint = harness._plugin_group_description_hint_for_segment(
+            segment,
+            translator_mode=False,
+        )
+
+        self.assertEqual(hint, "Main plugin for quest flow management.")
+
+    def test_plugin_group_description_hint_is_none_for_non_description_field(self) -> None:
+        harness = _Harness(hide_non_meaningful=True)
+        segment = _segment("p1", "true", segment_kind="plugin_text")
+        setattr(
+            segment,
+            "plugin_text_path",
+            ("__dve_plugins_js_array__", 0, "parameters", "enabled"),
+        )
+
+        hint = harness._plugin_group_description_hint_for_segment(
+            segment,
+            translator_mode=False,
+        )
+
+        self.assertIsNone(hint)
+
+    def test_plugin_group_description_hint_prefers_translation_in_translator_mode(self) -> None:
+        harness = _Harness(hide_non_meaningful=True)
+        segment = _segment("pdesc", "JP source", segment_kind="plugin_text")
+        setattr(
+            segment,
+            "plugin_text_path",
+            ("__dve_plugins_js_array__", 0, "description"),
+        )
+        segment.translation_lines = ["EN translated description"]
+
+        hint = harness._plugin_group_description_hint_for_segment(
+            segment,
+            translator_mode=True,
+        )
+
+        self.assertEqual(hint, "EN translated description")
+
 
 if __name__ == "__main__":
     unittest.main()

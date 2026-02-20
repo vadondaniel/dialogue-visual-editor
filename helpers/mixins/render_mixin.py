@@ -5,7 +5,14 @@ import re
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..core.models import DialogueSegment, FileSession
 from ..core.text_utils import strip_control_tokens
@@ -53,6 +60,193 @@ class RenderMixin(_RenderHostTypingFallback):
         if not normalized:
             return False
         return normalized.startswith("plugins.js:j:") and ":param_" in normalized
+
+    def _plugin_group_key_and_title_for_segment(
+        self,
+        session_path: Path,
+        segment: DialogueSegment,
+    ) -> Optional[tuple[str, str]]:
+        if segment.segment_kind != "plugin_text":
+            return None
+        path_tokens_raw = getattr(segment, "plugin_text_path", ())
+        path_tokens = (
+            path_tokens_raw
+            if isinstance(path_tokens_raw, tuple)
+            else tuple(path_tokens_raw) if isinstance(path_tokens_raw, list) else ()
+        )
+        if len(path_tokens) < 2:
+            return None
+        list_marker = path_tokens[0]
+        if not isinstance(list_marker, str) or "plugins_js_array" not in list_marker:
+            return None
+        plugin_index_raw = path_tokens[1]
+        if not isinstance(plugin_index_raw, int) or plugin_index_raw < 0:
+            return None
+        plugin_index = plugin_index_raw
+        plugin_name = ""
+        if len(segment.params) > 4 and isinstance(segment.params[4], str):
+            plugin_name = segment.params[4].strip()
+        title = f"Plugin {plugin_index + 1}"
+        if plugin_name:
+            title = f"{title}: {plugin_name}"
+        group_key = f"{session_path.as_posix()}::plugin::{plugin_index}"
+        return group_key, title
+
+    def _plugin_group_collapsed_state(self) -> dict[str, bool]:
+        raw = getattr(self, "_plugin_group_collapsed_state_map", None)
+        if isinstance(raw, dict):
+            return cast(dict[str, bool], raw)
+        created: dict[str, bool] = {}
+        setattr(self, "_plugin_group_collapsed_state_map", created)
+        return created
+
+    def _is_plugin_group_collapsed(self, group_key: str) -> bool:
+        state_map = self._plugin_group_collapsed_state()
+        value = state_map.get(group_key)
+        if isinstance(value, bool):
+            return value
+        return True
+
+    def _set_plugin_group_collapsed(self, group_key: str, collapsed: bool) -> None:
+        state_map = self._plugin_group_collapsed_state()
+        state_map[group_key] = bool(collapsed)
+
+    def _plugin_group_description_hint_for_segment(
+        self,
+        segment: DialogueSegment,
+        *,
+        translator_mode: bool,
+    ) -> Optional[str]:
+        if segment.segment_kind != "plugin_text":
+            return None
+        path_tokens_raw = getattr(segment, "plugin_text_path", ())
+        path_tokens = (
+            path_tokens_raw
+            if isinstance(path_tokens_raw, tuple)
+            else tuple(path_tokens_raw) if isinstance(path_tokens_raw, list) else ()
+        )
+        if len(path_tokens) < 3:
+            return None
+        if path_tokens[2] != "description":
+            return None
+        source_text = self._segment_source_text_for_meaningful_check(segment)
+        chosen_text = source_text
+        if translator_mode:
+            translation_lines: list[str] = []
+            translation_resolver = getattr(
+                self,
+                "_segment_translation_lines_for_translation",
+                None,
+            )
+            if callable(translation_resolver):
+                try:
+                    resolved = translation_resolver(segment)
+                    if isinstance(resolved, list):
+                        translation_lines = [
+                            line if isinstance(line, str) else str(line)
+                            for line in resolved
+                        ]
+                except Exception:
+                    translation_lines = []
+            elif isinstance(segment.translation_lines, list):
+                translation_lines = [
+                    line if isinstance(line, str) else str(line)
+                    for line in segment.translation_lines
+                ]
+            translation_text = "\n".join(translation_lines)
+            visible_translation = strip_control_tokens(
+                translation_text
+            ).replace("\u3000", " ").strip()
+            if visible_translation:
+                chosen_text = translation_text
+        visible = strip_control_tokens(chosen_text).replace("\u3000", " ").strip()
+        if not visible:
+            return None
+        compact = " ".join(part.strip() for part in visible.splitlines() if part.strip())
+        if not compact:
+            return None
+        max_len = 80
+        if len(compact) > max_len:
+            compact = compact[: max_len - 3].rstrip() + "..."
+        return compact
+
+    def _update_plugin_group_header_counts(
+        self,
+        count_labels: dict[str, QLabel],
+        member_widgets_by_group: dict[str, list[QWidget]],
+        description_hints_by_group: dict[str, str],
+    ) -> None:
+        for group_key, count_label in count_labels.items():
+            members = member_widgets_by_group.get(group_key, [])
+            count = len(members)
+            label = "entry" if count == 1 else "entries"
+            text = f"{count} {label}"
+            hint = description_hints_by_group.get(group_key, "").strip()
+            if hint:
+                text = f"{text}  |  {hint}"
+            count_label.setText(text)
+
+    def _build_plugin_group_header_widget(
+        self,
+        *,
+        group_key: str,
+        title: str,
+        member_widgets: list[QWidget],
+    ) -> tuple[QWidget, QLabel]:
+        header = QFrame(self.scroll_container)
+        header.setObjectName("pluginGroupHeader")
+        header.setStyleSheet(
+            "QFrame#pluginGroupHeader {"
+            "background: rgba(148, 163, 184, 0.12);"
+            "border: 1px solid rgba(100, 116, 139, 0.35);"
+            "border-radius: 6px;"
+            "}"
+            "QToolButton {"
+            "border: 0;"
+            "font-weight: 600;"
+            "padding: 2px 4px;"
+            "text-align: left;"
+            "}"
+            "QLabel#pluginGroupCount {"
+            "color: #64748b;"
+            "}"
+        )
+        row = QHBoxLayout(header)
+        row.setContentsMargins(8, 4, 8, 4)
+        row.setSpacing(8)
+
+        toggle = QToolButton(header)
+        toggle.setCheckable(True)
+        toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toggle.setText(title)
+        toggle.setAutoRaise(True)
+        row.addWidget(toggle, 1)
+
+        count_label = QLabel("", header)
+        count_label.setObjectName("pluginGroupCount")
+        row.addWidget(count_label)
+
+        collapsed = self._is_plugin_group_collapsed(group_key)
+        toggle.blockSignals(True)
+        toggle.setChecked(not collapsed)
+        toggle.blockSignals(False)
+        toggle.setArrowType(
+            Qt.ArrowType.DownArrow if not collapsed else Qt.ArrowType.RightArrow
+        )
+        self._set_plugin_group_collapsed(group_key, collapsed)
+
+        def on_toggled(expanded: bool) -> None:
+            collapsed_now = not expanded
+            toggle.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+            )
+            self._set_plugin_group_collapsed(group_key, collapsed_now)
+            for member_widget in member_widgets:
+                member_widget.setVisible(expanded)
+            self._schedule_dialogue_editor_visibility_update()
+
+        toggle.toggled.connect(on_toggled)
+        return header, count_label
 
     def _hide_non_meaningful_entries_enabled(self) -> bool:
         checkbox = getattr(self, "hide_non_meaningful_entries_check", None)
@@ -808,6 +1002,7 @@ class RenderMixin(_RenderHostTypingFallback):
         display_segments: list[DialogueSegment],
         pool: dict[str, BlockWidgetType],
         *,
+        translator_mode: bool,
         actor_mode: bool,
         name_index_label: str,
         merge_pairs: set[tuple[str, str]],
@@ -818,7 +1013,40 @@ class RenderMixin(_RenderHostTypingFallback):
             display_segments,
             actor_mode=actor_mode,
         )
+        plugin_group_members: dict[str, list[QWidget]] = {}
+        plugin_group_count_labels: dict[str, QLabel] = {}
+        plugin_group_description_hints: dict[str, str] = {}
+        active_plugin_group_key: Optional[str] = None
         for idx, segment in enumerate(display_segments):
+            group_info = self._plugin_group_key_and_title_for_segment(
+                session.path,
+                segment,
+            )
+            if group_info is None:
+                active_plugin_group_key = None
+            else:
+                group_key, group_title = group_info
+                if group_key != active_plugin_group_key:
+                    members = plugin_group_members.get(group_key)
+                    if members is None:
+                        members = []
+                        plugin_group_members[group_key] = members
+                    header_widget, count_label = self._build_plugin_group_header_widget(
+                        group_key=group_key,
+                        title=group_title,
+                        member_widgets=members,
+                    )
+                    plugin_group_count_labels[group_key] = count_label
+                    self.blocks_layout.addWidget(header_widget)
+                active_plugin_group_key = group_key
+                if group_key not in plugin_group_description_hints:
+                    hint = self._plugin_group_description_hint_for_segment(
+                        segment,
+                        translator_mode=translator_mode,
+                    )
+                    if hint:
+                        plugin_group_description_hints[group_key] = hint
+
             widget = pool.pop(segment.uid, None)
             if widget is None:
                 continue
@@ -832,6 +1060,11 @@ class RenderMixin(_RenderHostTypingFallback):
             widget.show()
             self.block_widgets[segment.uid] = widget
             self._apply_block_visual_state(segment.uid, widget)
+            if active_plugin_group_key is not None:
+                members = plugin_group_members.setdefault(active_plugin_group_key, [])
+                members.append(widget)
+                if self._is_plugin_group_collapsed(active_plugin_group_key):
+                    widget.hide()
 
             if (not actor_mode) and idx < segment_count - 1:
                 next_segment = display_segments[idx + 1]
@@ -842,6 +1075,11 @@ class RenderMixin(_RenderHostTypingFallback):
                         next_segment,
                     )
                     self.blocks_layout.addWidget(connector_widget)
+        self._update_plugin_group_header_counts(
+            plugin_group_count_labels,
+            plugin_group_members,
+            plugin_group_description_hints,
+        )
         self.blocks_layout.addStretch(1)
         for leftover in pool.values():
             leftover.deleteLater()
@@ -1146,6 +1384,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 session,
                 display_segments,
                 cached_pool,
+                translator_mode=translator_mode,
                 actor_mode=actor_mode,
                 name_index_label=name_index_label,
                 merge_pairs=merge_pairs,
@@ -1203,9 +1442,42 @@ class RenderMixin(_RenderHostTypingFallback):
             preserve_widgets=preserve_widget_set if preserve_widget_set else None
         )
         self.block_widgets = {}
+        plugin_group_members: dict[str, list[QWidget]] = {}
+        plugin_group_count_labels: dict[str, QLabel] = {}
+        plugin_group_description_hints: dict[str, str] = {}
+        active_plugin_group_key: Optional[str] = None
 
         target_widget: Optional[BlockWidgetType] = None
         for idx, segment in enumerate(display_segments):
+            group_info = self._plugin_group_key_and_title_for_segment(
+                session.path,
+                segment,
+            )
+            if group_info is None:
+                active_plugin_group_key = None
+            else:
+                group_key, group_title = group_info
+                if group_key != active_plugin_group_key:
+                    members = plugin_group_members.get(group_key)
+                    if members is None:
+                        members = []
+                        plugin_group_members[group_key] = members
+                    header_widget, count_label = self._build_plugin_group_header_widget(
+                        group_key=group_key,
+                        title=group_title,
+                        member_widgets=members,
+                    )
+                    plugin_group_count_labels[group_key] = count_label
+                    self.blocks_layout.addWidget(header_widget)
+                active_plugin_group_key = group_key
+                if group_key not in plugin_group_description_hints:
+                    hint = self._plugin_group_description_hint_for_segment(
+                        segment,
+                        translator_mode=translator_mode,
+                    )
+                    if hint:
+                        plugin_group_description_hints[group_key] = hint
+
             reused_widget = reuse_pool.pop(segment.uid, None)
             if (
                 reused_widget is not None
@@ -1242,6 +1514,11 @@ class RenderMixin(_RenderHostTypingFallback):
             self._apply_block_visual_state(segment.uid, widget)
             if focus_uid and focus_uid == segment.uid:
                 target_widget = widget
+            if active_plugin_group_key is not None:
+                members = plugin_group_members.setdefault(active_plugin_group_key, [])
+                members.append(widget)
+                if self._is_plugin_group_collapsed(active_plugin_group_key):
+                    widget.hide()
 
             if (not actor_mode) and idx < segment_count - 1:
                 next_segment = display_segments[idx + 1]
@@ -1252,6 +1529,11 @@ class RenderMixin(_RenderHostTypingFallback):
                         next_segment,
                     )
                     self.blocks_layout.addWidget(connector_widget)
+        self._update_plugin_group_header_counts(
+            plugin_group_count_labels,
+            plugin_group_members,
+            plugin_group_description_hints,
+        )
         self.blocks_layout.addStretch(1)
         for leftover in reuse_pool.values():
             leftover.deleteLater()
