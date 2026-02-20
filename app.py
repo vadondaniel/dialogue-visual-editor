@@ -3137,10 +3137,10 @@ class DialogueVisualEditor(
         elif speaker_key != NO_SPEAKER_KEY:
             speaker_jp = speaker_key
         else:
-            speaker_jp = ""
+            speaker_jp = NO_SPEAKER_KEY
 
         if speaker_key == NO_SPEAKER_KEY:
-            return speaker_jp, ""
+            return speaker_jp, NO_SPEAKER_KEY
 
         speaker_en = self._speaker_translation_for_key(speaker_key)
         if not speaker_en:
