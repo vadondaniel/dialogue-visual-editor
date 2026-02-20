@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from .audit_constants import SANITIZE_CHAR_RULES
 from ..mixins.presentation_mixins import is_dark_palette
+from ..ui.ui_components import ControlCodeHighlighter
 
 
 class _AuditWindowHostTypingFallback:
@@ -295,6 +296,12 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             "Selected duplicate group's source text."
         )
         consistency_source_edit.setFixedHeight(84)
+        consistency_source_highlighter = ControlCodeHighlighter(
+            consistency_source_edit.document(),
+            is_dark_palette(),
+            color_code_resolver=self._color_for_rpgm_code,
+            resolve_color_flow=True,
+        )
         consistency_entries_layout.addWidget(consistency_source_edit)
         consistency_entries_layout.addWidget(QLabel("Sync Translation Target"))
         consistency_target_edit = QPlainTextEdit()
@@ -302,6 +309,12 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             "Type translation to apply to all entries in selected group."
         )
         consistency_target_edit.setFixedHeight(84)
+        consistency_target_highlighter = ControlCodeHighlighter(
+            consistency_target_edit.document(),
+            is_dark_palette(),
+            color_code_resolver=self._color_for_rpgm_code,
+            resolve_color_flow=True,
+        )
         consistency_entries_layout.addWidget(consistency_target_edit)
         consistency_actions_row = QHBoxLayout()
         consistency_actions_row.setContentsMargins(0, 0, 0, 0)
@@ -525,6 +538,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_consistency_entries_list = consistency_entries_list
         self.audit_consistency_source_edit = consistency_source_edit
         self.audit_consistency_target_edit = consistency_target_edit
+        self.audit_consistency_source_highlighter = consistency_source_highlighter
+        self.audit_consistency_target_highlighter = consistency_target_highlighter
         self.audit_consistency_status_label = consistency_status_label
         self.audit_consistency_goto_btn = consistency_goto_btn
         self.audit_consistency_apply_btn = consistency_apply_btn

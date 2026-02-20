@@ -325,6 +325,8 @@ class DialogueVisualEditor(
         self.audit_consistency_entries_list: Optional[QListWidget] = None
         self.audit_consistency_source_edit: Optional[QPlainTextEdit] = None
         self.audit_consistency_target_edit: Optional[QPlainTextEdit] = None
+        self.audit_consistency_source_highlighter: Optional[ControlCodeHighlighter] = None
+        self.audit_consistency_target_highlighter: Optional[ControlCodeHighlighter] = None
         self.audit_consistency_status_label: Optional[QLabel] = None
         self.audit_consistency_goto_btn: Optional[QPushButton] = None
         self.audit_consistency_apply_btn: Optional[QPushButton] = None
