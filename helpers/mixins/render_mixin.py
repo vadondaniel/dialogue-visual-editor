@@ -294,6 +294,38 @@ class RenderMixin(_RenderHostTypingFallback):
             return False
         return True
 
+    def _is_actor_name_index_session(self, session: FileSession) -> bool:
+        checker = getattr(self, "_is_actor_index_session", None)
+        if callable(checker):
+            try:
+                return bool(checker(session))
+            except Exception:
+                pass
+        raw_kind = getattr(session, "name_index_kind", "")
+        kind = raw_kind.strip().lower() if isinstance(raw_kind, str) else ""
+        return kind == "actor"
+
+    def _filter_actor_name_index_display_segments(
+        self,
+        session: FileSession,
+        segments: list[DialogueSegment],
+    ) -> list[DialogueSegment]:
+        if not self._is_actor_name_index_session(session):
+            return segments
+        filtered: list[DialogueSegment] = []
+        seen_names: set[str] = set()
+        for segment in segments:
+            source_text = self._segment_source_text_for_meaningful_check(segment)
+            visible = strip_control_tokens(source_text).replace("\u3000", " ").strip()
+            if not visible:
+                continue
+            key = visible.casefold()
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+            filtered.append(segment)
+        return filtered
+
     def _translation_state_entry_is_meaningful_for_display(
         self,
         entry: dict[str, Any],
@@ -522,12 +554,16 @@ class RenderMixin(_RenderHostTypingFallback):
         else:
             segments = [segment for segment in session.segments if not segment.translation_only]
         if not self._hide_non_meaningful_entries_enabled():
-            return segments
-        return [
-            segment
-            for segment in segments
-            if self._is_meaningful_segment_for_display(segment)
-        ]
+            filtered = segments
+        else:
+            filtered = [
+                segment
+                for segment in segments
+                if self._is_meaningful_segment_for_display(segment)
+            ]
+        if actor_mode:
+            return self._filter_actor_name_index_display_segments(session, filtered)
+        return filtered
 
     def _create_blocks_container(self) -> tuple[QWidget, QVBoxLayout]:
         container = QWidget()

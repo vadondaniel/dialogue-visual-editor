@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
 from dialogue_visual_editor.helpers.ui.mass_translate_dialog import (
     MassTranslateDialog,
 )
@@ -54,6 +55,12 @@ class _PromptDialogHarness:
     _speaker_display_for_prompt = MassTranslateDialog._speaker_display_for_prompt
     _resolve_name_tokens_for_prompt = MassTranslateDialog._resolve_name_tokens_for_prompt
     _actor_source_name_map_for_prompt = MassTranslateDialog._actor_source_name_map_for_prompt
+    _persistent_speaker_key_for_segment = (
+        MassTranslateDialog._persistent_speaker_key_for_segment
+    )
+    _segments_for_session_mass_translate = (
+        MassTranslateDialog._segments_for_session_mass_translate
+    )
 
     def __init__(self, editor: Any) -> None:
         self.editor = editor
@@ -85,6 +92,46 @@ class _SpeakerDisplayEditorMeta:
 
     def _resolve_speaker_display_name(self, raw_speaker: str) -> str:
         return self._resolved_by_key.get(raw_speaker, raw_speaker)
+
+
+class _SpeakerKeyEditorMeta:
+    def __init__(self) -> None:
+        self._speaker_keys_by_uid: dict[str, str] = {}
+        self._display_segments: list[DialogueSegment] | None = None
+
+    @staticmethod
+    def _normalize_speaker_key(value: str) -> str:
+        cleaned = value.strip()
+        return cleaned if cleaned else ""
+
+    def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
+        return self._speaker_keys_by_uid.get(segment.uid, "")
+
+    @staticmethod
+    def _is_translator_mode() -> bool:
+        return True
+
+    def _display_segments_for_session(
+        self,
+        session: FileSession,
+        *,
+        translator_mode: bool,
+        actor_mode: bool,
+    ) -> list[DialogueSegment]:
+        _ = (session, translator_mode, actor_mode)
+        return list(self._display_segments or [])
+
+
+def _segment(uid: str, text: str, speaker: str = "") -> DialogueSegment:
+    lines = text.split("\n") if text else [""]
+    return DialogueSegment(
+        uid=uid,
+        context="ctx",
+        code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, speaker]},
+        lines=list(lines),
+        original_lines=list(lines),
+        source_lines=list(lines),
+    )
 
 
 class MassTranslatePromptTests(unittest.TestCase):
@@ -142,6 +189,34 @@ class MassTranslatePromptTests(unittest.TestCase):
         display = harness._speaker_display_for_prompt(r"\C[2]\N[4]\C[0]")
 
         self.assertEqual(display, r"\C[2]Dane\C[0]")
+
+    def test_persistent_speaker_key_uses_resolved_key_for_inferred_speakers(self) -> None:
+        editor = _SpeakerKeyEditorMeta()
+        segment = _segment("Map001.json:1", "Alice\nHello", "")
+        editor._speaker_keys_by_uid[segment.uid] = "Alice"
+        harness = _PromptDialogHarness(editor)
+
+        resolved = harness._persistent_speaker_key_for_segment(segment)
+
+        self.assertEqual(resolved, "Alice")
+
+    def test_segments_for_mass_translate_uses_display_filter_for_actor_sessions(self) -> None:
+        editor = _SpeakerKeyEditorMeta()
+        s1 = _segment("Actors.json:A:1", "Harold")
+        s2 = _segment("Actors.json:A:2", "")
+        session = FileSession(
+            path=Path("Actors.json"),
+            data=[],
+            bundles=[],
+            segments=[s1, s2],
+        )
+        setattr(session, "name_index_kind", "actor")
+        editor._display_segments = [s1]
+        harness = _PromptDialogHarness(editor)
+
+        resolved = harness._segments_for_session_mass_translate(session.path, session)
+
+        self.assertEqual([segment.uid for segment in resolved], ["Actors.json:A:1"])
 
 
 if __name__ == "__main__":

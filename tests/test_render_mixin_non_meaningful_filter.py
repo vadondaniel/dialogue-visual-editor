@@ -19,6 +19,10 @@ class _Harness(RenderMixin):
     def __init__(self, *, hide_non_meaningful: bool) -> None:
         self.hide_non_meaningful_entries_check = _CheckBoxStub(hide_non_meaningful)
 
+    @staticmethod
+    def _is_actor_index_session(session: FileSession) -> bool:
+        return bool(getattr(session, "is_actor_index_session", False))
+
 
 def _segment(
     uid: str,
@@ -135,6 +139,41 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
         )
 
         self.assertEqual([segment.uid for segment in display], ["tl"])
+
+    def test_actor_session_hides_empty_and_duplicate_entries(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        s1 = _segment("Actors.json:A:1", "Harold", segment_kind="name_index")
+        s2 = _segment("Actors.json:A:2", "Harold", segment_kind="name_index")
+        s3 = _segment("Actors.json:A:3", "", segment_kind="name_index")
+        s4 = _segment("Actors.json:A:4", "\\C[2]", segment_kind="name_index")
+        s5 = _segment("Actors.json:A:5", "Therese", segment_kind="name_index")
+        session = _session_with_segments([s1, s2, s3, s4, s5])
+        setattr(session, "is_actor_index_session", True)
+
+        display = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=True,
+        )
+
+        self.assertEqual([segment.uid for segment in display], ["Actors.json:A:1", "Actors.json:A:5"])
+
+    def test_non_actor_name_index_session_keeps_duplicate_and_empty_entries(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        s1 = _segment("Items.json:I:1", "Potion", segment_kind="name_index")
+        s2 = _segment("Items.json:I:2", "Potion", segment_kind="name_index")
+        s3 = _segment("Items.json:I:3", "", segment_kind="name_index")
+        session = _session_with_segments([s1, s2, s3])
+        setattr(session, "is_actor_index_session", False)
+        setattr(session, "name_index_kind", "item")
+
+        display = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=True,
+        )
+
+        self.assertEqual([segment.uid for segment in display], ["Items.json:I:1", "Items.json:I:2", "Items.json:I:3"])
 
     def test_translation_state_entry_filter_respects_toggle_for_plugin_parameters(self) -> None:
         entry = {

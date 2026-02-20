@@ -332,12 +332,57 @@ class MassTranslateDialog(QDialog):
         return bool(source_text.strip())
 
     def _persistent_speaker_key_for_segment(self, segment: DialogueSegment) -> str:
-        # Persistence keys must come from explicit source speaker fields only.
+        # Use the editor's resolved speaker-key logic so line1-inferred
+        # speakers participate in speaker-name translation flows too.
+        key_resolver = getattr(self.editor, "_speaker_key_for_segment", None)
+        if callable(key_resolver):
+            try:
+                resolved = key_resolver(segment)
+            except Exception:
+                resolved = NO_SPEAKER_KEY
+            if isinstance(resolved, str):
+                normalized_resolved = self.editor._normalize_speaker_key(resolved)
+                if normalized_resolved:
+                    return normalized_resolved
+
         raw = segment.speaker_name
         if not isinstance(raw, str):
             return NO_SPEAKER_KEY
         normalized = self.editor._normalize_speaker_key(raw)
         return normalized if normalized else NO_SPEAKER_KEY
+
+    def _segments_for_session_mass_translate(
+        self,
+        path: Path,
+        session: FileSession,
+    ) -> list[DialogueSegment]:
+        _ = path
+        kind_raw = getattr(session, "name_index_kind", "")
+        kind = kind_raw.strip().lower() if isinstance(kind_raw, str) else ""
+        if kind != "actor":
+            return list(session.segments)
+
+        display_resolver = getattr(self.editor, "_display_segments_for_session", None)
+        if not callable(display_resolver):
+            return list(session.segments)
+        translator_mode_resolver = getattr(self.editor, "_is_translator_mode", None)
+        translator_mode = True
+        if callable(translator_mode_resolver):
+            try:
+                translator_mode = bool(translator_mode_resolver())
+            except Exception:
+                translator_mode = True
+        try:
+            resolved = display_resolver(
+                session,
+                translator_mode=translator_mode,
+                actor_mode=True,
+            )
+        except Exception:
+            return list(session.segments)
+        if not isinstance(resolved, list):
+            return list(session.segments)
+        return [segment for segment in resolved if isinstance(segment, DialogueSegment)]
 
     def _mode_has_pending_entries(self, mode: str) -> bool:
         include_dialogue, include_misc, include_speakers = self._content_mode_flags_for_mode(
@@ -351,7 +396,7 @@ class MassTranslateDialog(QDialog):
             self.editor, "_segment_source_lines_for_translation", None
         )
         for path, session in self._scoped_session_items():
-            for segment in session.segments:
+            for segment in self._segments_for_session_mass_translate(path, session):
                 content_type = self._segment_content_type(path, session, segment)
                 if include_speakers and self._should_collect_global_speaker_key(session, content_type):
                     speaker_key = self._persistent_speaker_key_for_segment(segment)
@@ -606,7 +651,7 @@ class MassTranslateDialog(QDialog):
         )
 
         for path, session in self._scoped_session_items():
-            for segment in session.segments:
+            for segment in self._segments_for_session_mass_translate(path, session):
                 content_type = self._segment_content_type(path, session, segment)
                 include_segment = (
                     (content_type == "dialogue" and include_dialogue)
@@ -825,7 +870,7 @@ class MassTranslateDialog(QDialog):
             self.editor, "_segment_source_lines_for_translation", None
         )
         for path, session in self._scope_session_items_from_value(scope_value):
-            for segment in session.segments:
+            for segment in self._segments_for_session_mass_translate(path, session):
                 content_type = self._segment_content_type(path, session, segment)
                 if include_speakers and self._should_collect_global_speaker_key(session, content_type):
                     speaker_key = self._persistent_speaker_key_for_segment(segment)
@@ -1021,7 +1066,8 @@ class MassTranslateDialog(QDialog):
         )
 
         for path, session in session_items:
-            for idx, segment in enumerate(session.segments):
+            segments_for_scope = self._segments_for_session_mass_translate(path, session)
+            for idx, segment in enumerate(segments_for_scope):
                 source_lines = self._segment_source_lines_for_mass_translate(
                     segment,
                     source_lines_resolver,
