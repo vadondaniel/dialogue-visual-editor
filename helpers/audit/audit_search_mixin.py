@@ -212,6 +212,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         for path, session in path_sessions:
             is_name_index = self._is_name_index_session(session)
             name_index_label = self._name_index_label(session)
+            entry_resolver = getattr(self, "_audit_entry_text_for_segment", None)
             for idx, segment in enumerate(list(session.segments), start=1):
                 original_text = "\n".join(
                     self._segment_source_lines_for_display(segment))
@@ -219,8 +220,11 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
                     self._normalize_translation_lines(
                         segment.translation_lines)
                 )
-                entry_text = f"{name_index_label} {idx}" if is_name_index else f"Block {idx}"
-                if is_name_index:
+                if callable(entry_resolver):
+                    entry_text = str(entry_resolver(session, segment, idx))
+                else:
+                    entry_text = f"{name_index_label} {idx}" if is_name_index else f"Block {idx}"
+                if is_name_index and not callable(entry_resolver):
                     actor_id = self._actor_id_from_uid(segment.uid)
                     if actor_id is not None:
                         entry_text = f"{name_index_label} ID {actor_id}"

@@ -1,12 +1,68 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from typing import Any
 
+from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
 from dialogue_visual_editor.helpers.audit.audit_search_mixin import AuditSearchMixin
 
 
 class _Harness(AuditSearchMixin):
-    pass
+    @staticmethod
+    def _is_name_index_session(_session: FileSession) -> bool:
+        return False
+
+    @staticmethod
+    def _name_index_label(_session: FileSession) -> str:
+        return "Actor"
+
+    @staticmethod
+    def _actor_id_from_uid(_uid: str) -> None:
+        return None
+
+    @staticmethod
+    def _segment_source_lines_for_display(segment: DialogueSegment) -> list[str]:
+        return list(segment.source_lines or segment.original_lines or segment.lines or [""])
+
+    @staticmethod
+    def _normalize_translation_lines(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) if item is not None else "" for item in value] or [""]
+        if isinstance(value, str):
+            return value.split("\n")
+        return [""]
+
+    @staticmethod
+    def _audit_entry_text_for_segment(
+        session: FileSession,
+        segment: DialogueSegment,
+        index: int,
+    ) -> str:
+        if segment.segment_kind == "map_display_name":
+            return "Map displayName"
+        block_index = 0
+        for candidate in session.segments:
+            if candidate.segment_kind == "map_display_name":
+                continue
+            block_index += 1
+            if candidate.uid == segment.uid:
+                return f"Block {block_index}"
+        return f"Block {index}"
+
+
+def _segment(uid: str, source: str, translation: str, *, kind: str = "dialogue") -> DialogueSegment:
+    return DialogueSegment(
+        uid=uid,
+        context="ctx",
+        code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+        lines=[source],
+        original_lines=[source],
+        source_lines=[source],
+        segment_kind=kind,
+        translation_lines=[translation],
+        original_translation_lines=[translation],
+    )
 
 
 class AuditSearchMixinTests(unittest.TestCase):
@@ -57,6 +113,32 @@ class AuditSearchMixinTests(unittest.TestCase):
 
         self.assertTrue(natural_mode)
         self.assertEqual(needle, query.casefold())
+
+    def test_search_records_use_display_numbering_when_map_display_name_exists(self) -> None:
+        harness = _Harness()
+        path = Path("Map001.json")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[
+                _segment("Map001.json:map_display_name", "Village", "Village EN", kind="map_display_name"),
+                _segment("Map001.json:L0:0", "Village line", "Village line EN"),
+            ],
+        )
+
+        records = harness._compute_audit_search_records_worker(
+            [(path, session)],
+            scope="original",
+            needle="village",
+            natural_mode=False,
+            case_sensitive=False,
+        )
+
+        labels = [str(record["entry_text"]) for record in records]
+        self.assertIn("Map displayName", labels)
+        self.assertIn("Block 1", labels)
+        self.assertNotIn("Block 2", labels)
 
 
 if __name__ == "__main__":

@@ -94,6 +94,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         segment: DialogueSegment,
         block_index: int,
     ) -> str:
+        entry_resolver = getattr(self, "_audit_entry_text_for_segment", None)
+        if callable(entry_resolver):
+            return str(entry_resolver(session, segment, block_index))
         if not self._is_name_index_session(session):
             return f"Block {block_index}"
         name_index_label = self._name_index_label(session)

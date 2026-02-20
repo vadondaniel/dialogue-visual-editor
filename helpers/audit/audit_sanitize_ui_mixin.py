@@ -17,6 +17,27 @@ class _AuditSanitizeHostTypingFallback:
 
 
 class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
+    def _audit_display_index_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+        fallback_index: int,
+    ) -> int:
+        if self._is_name_index_session(session):
+            return fallback_index
+        if segment.segment_kind == "map_display_name":
+            return 0
+        display_index = 0
+        for candidate in session.segments:
+            if candidate.segment_kind == "map_display_name":
+                if candidate.uid == segment.uid:
+                    return 0
+                continue
+            display_index += 1
+            if candidate.uid == segment.uid:
+                return display_index
+        return max(0, fallback_index)
+
     def _highlight_audit_literal_html(self, text: str, literal: str) -> str:
         source_text = text or ""
         if not literal:
@@ -127,12 +148,24 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         index: int,
     ) -> str:
         if not self._is_name_index_session(session):
-            return f"Block {index}"
+            display_index = self._audit_display_index_for_segment(
+                session,
+                segment,
+                index,
+            )
+            if display_index <= 0:
+                return "Map displayName"
+            return f"Block {display_index}"
         name_index_label = self._name_index_label(session)
         actor_id = self._actor_id_from_uid(segment.uid)
         if actor_id is not None:
             return f"{name_index_label} ID {actor_id}"
-        return f"{name_index_label} {index}"
+        display_index = self._audit_display_index_for_segment(
+            session,
+            segment,
+            index,
+        )
+        return f"{name_index_label} {display_index}"
 
     def _audit_sanitize_scope(self) -> str:
         if self.audit_sanitize_scope_combo is None:

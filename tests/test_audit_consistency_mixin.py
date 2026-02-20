@@ -53,6 +53,23 @@ class _Harness(AuditConsistencyMixin):
     def _is_name_index_session(_session: FileSession) -> bool:
         return False
 
+    @staticmethod
+    def _audit_entry_text_for_segment(
+        session: FileSession,
+        segment: DialogueSegment,
+        index: int,
+    ) -> str:
+        if segment.segment_kind == "map_display_name":
+            return "Map displayName"
+        block_index = 0
+        for candidate in session.segments:
+            if candidate.segment_kind == "map_display_name":
+                continue
+            block_index += 1
+            if candidate.uid == segment.uid:
+                return f"Block {block_index}"
+        return f"Block {index}"
+
 
 class AuditConsistencyMixinTests(unittest.TestCase):
     def test_dialogue_only_excludes_non_dialogue_sources(self) -> None:
@@ -113,6 +130,34 @@ class AuditConsistencyMixinTests(unittest.TestCase):
 
         self.assertEqual(groups_dialogue_only, [])
         self.assertEqual(len(groups_all), 1)
+
+    def test_entry_labels_skip_map_display_name_in_block_numbering(self) -> None:
+        harness = _Harness()
+        path = Path("Map001.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("map", "共通語", "Village", segment_kind="map_display_name"),
+                _segment("d1", "共通語", "Village A", segment_kind="dialogue"),
+                _segment("d2", "共通語", "Village B", segment_kind="dialogue"),
+            ],
+        )
+
+        groups = harness._collect_audit_consistency_groups(
+            only_inconsistent=False,
+            dialogue_only=False,
+            sort_mode="source_order",
+        )
+
+        self.assertEqual(len(groups), 1)
+        entries = [str(entry["entry"]) for entry in groups[0]["entries"]]
+        self.assertIn("Map displayName", entries)
+        self.assertIn("Block 1", entries)
+        self.assertIn("Block 2", entries)
+        self.assertNotIn("Block 3", entries)
 
 
 if __name__ == "__main__":

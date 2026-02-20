@@ -52,6 +52,23 @@ class _Harness(AuditTermUsageMixin):
             return value.split("\n")
         return [""]
 
+    @staticmethod
+    def _audit_entry_text_for_segment(
+        session: FileSession,
+        segment: DialogueSegment,
+        index: int,
+    ) -> str:
+        if segment.segment_kind == "map_display_name":
+            return "Map displayName"
+        block_index = 0
+        for candidate in session.segments:
+            if candidate.segment_kind == "map_display_name":
+                continue
+            block_index += 1
+            if candidate.uid == segment.uid:
+                return f"Block {block_index}"
+        return f"Block {index}"
+
 
 class AuditTermUsageMixinTests(unittest.TestCase):
     def test_collect_hits_dialogue_only_excludes_non_dialogue_segments(self) -> None:
@@ -143,6 +160,27 @@ class AuditTermUsageMixinTests(unittest.TestCase):
 
         self.assertIn("árvíztűrő-tükörfúrógép", tl_suggestions_dict)
         self.assertGreaterEqual(tl_suggestions_dict["árvíztűrő-tükörfúrógép"], 3)
+
+    def test_term_hits_use_display_numbering_when_map_display_name_exists(self) -> None:
+        harness = _Harness()
+        path = Path("Map003.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("map", "ポーション", "Potion", segment_kind="map_display_name"),
+                _segment("d1", "ポーションを拾う", "Pick potion", segment_kind="dialogue"),
+            ],
+        )
+
+        hits = harness._collect_audit_term_hits("ポーション", dialogue_only=False)
+        entries = {str(hit["entry"]) for hit in hits}
+
+        self.assertIn("Map displayName", entries)
+        self.assertIn("Block 1", entries)
+        self.assertNotIn("Block 2", entries)
 
 
 if __name__ == "__main__":
