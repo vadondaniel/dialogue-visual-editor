@@ -497,7 +497,12 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             return ""
         return self._blend_hex_colors(base, self._muted_base_text_color(), 0.55)
 
-    def _render_text_with_color_codes_html(self, text: str, muted: bool = False) -> str:
+    def _render_text_with_color_codes_html(
+        self,
+        text: str,
+        muted: bool = False,
+        show_style_tokens: bool = False,
+    ) -> str:
         if not text:
             return ""
 
@@ -575,20 +580,33 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
                 active_color,
                 self._preview_font_scale(active_font_size),
             )
+            token = match.group(0)
             color_group = match.group(1)
             if color_group is not None:
                 try:
                     color_code = int(color_group)
                 except Exception:
                     color_code = 0
-                active_color = (
+                next_color = (
                     self._muted_color_for_rpgm_code(color_code)
                     if muted
                     else self._color_for_rpgm_code(color_code)
                 )
+                if show_style_tokens:
+                    append_chunk(
+                        token,
+                        next_color,
+                        self._preview_font_scale(active_font_size),
+                    )
+                active_color = next_color
                 cursor = match.end()
                 continue
-            token = match.group(0)
+            if show_style_tokens:
+                append_chunk(
+                    token,
+                    active_color,
+                    self._preview_font_scale(active_font_size),
+                )
             active_font_size = self._next_preview_font_size(
                 token, active_font_size)
             cursor = match.end()
@@ -600,13 +618,21 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
         )
         if parts:
             return "".join(parts)
-        raw = html.escape(strip_control_tokens(resolved))
+        raw_source = resolved if show_style_tokens else strip_control_tokens(resolved)
+        raw = html.escape(raw_source)
         if default_color and raw:
             return f"<span style=\"color: {default_color};\">{raw}</span>"
         return raw
 
     def _render_text_with_color_codes_html_muted(self, text: str) -> str:
         return self._render_text_with_color_codes_html(text, muted=True)
+
+    def _render_text_with_visible_color_codes_html(self, text: str) -> str:
+        return self._render_text_with_color_codes_html(
+            text,
+            muted=False,
+            show_style_tokens=True,
+        )
 
     def _hidden_control_line_with_color_spans(
         self,

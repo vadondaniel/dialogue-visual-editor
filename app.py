@@ -691,8 +691,12 @@ class DialogueVisualEditor(
         speaker_jp_row.setContentsMargins(0, 0, 0, 0)
         self.translator_speaker_jp_label = QLabel("Speaker JP")
         speaker_jp_row.addWidget(self.translator_speaker_jp_label)
-        self.translator_speaker_jp_edit = QLineEdit()
-        self.translator_speaker_jp_edit.setReadOnly(True)
+        self.translator_speaker_jp_edit = QLabel("")
+        self.translator_speaker_jp_edit.setTextFormat(Qt.TextFormat.RichText)
+        self.translator_speaker_jp_edit.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.translator_speaker_jp_edit.setWordWrap(False)
         speaker_jp_row.addWidget(self.translator_speaker_jp_edit, 1)
         detail_content_layout.addWidget(self.translator_speaker_jp_row)
 
@@ -701,11 +705,12 @@ class DialogueVisualEditor(
         speaker_en_row.setContentsMargins(0, 0, 0, 0)
         self.translator_speaker_en_label = QLabel("Speaker EN")
         speaker_en_row.addWidget(self.translator_speaker_en_label)
-        self.translator_speaker_en_edit = QLineEdit()
-        self.translator_speaker_en_edit.setPlaceholderText(
-            "Set in Speakers dialog"
+        self.translator_speaker_en_edit = QLabel("")
+        self.translator_speaker_en_edit.setTextFormat(Qt.TextFormat.RichText)
+        self.translator_speaker_en_edit.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self.translator_speaker_en_edit.setReadOnly(True)
+        self.translator_speaker_en_edit.setWordWrap(False)
         speaker_en_row.addWidget(self.translator_speaker_en_edit, 1)
         self.translator_open_speakers_btn = QPushButton("Speakers...")
         self.translator_open_speakers_btn.clicked.connect(
@@ -3018,8 +3023,14 @@ class DialogueVisualEditor(
             )
             self.translator_context_label.setText(
                 "Entry: -" if actor_mode else "Context: -")
-            self.translator_speaker_jp_edit.setText("")
-            self.translator_speaker_en_edit.setText("")
+            self._set_translator_speaker_display_text(
+                self.translator_speaker_jp_edit,
+                "",
+            )
+            self._set_translator_speaker_display_text(
+                self.translator_speaker_en_edit,
+                "",
+            )
             self.translator_source_view.setPlainText("")
             self.translator_reference_exact_label.setText("")
             self.translator_reference_similar_label.setText("")
@@ -3054,26 +3065,26 @@ class DialogueVisualEditor(
                 f"Context: {segment.context}")
 
             if segment.is_structural_dialogue:
-                speaker_key = self._speaker_key_for_segment(segment)
-                explicit_speaker_raw = self._resolve_name_tokens_in_text(
-                    segment.speaker_name,
-                    prefer_translated=False,
+                speaker_jp, speaker_en = self._translator_panel_speaker_values(
+                    segment
                 )
-                explicit_speaker_key = self._normalize_speaker_key(explicit_speaker_raw)
-                if explicit_speaker_key == NO_SPEAKER_KEY:
-                    self.translator_speaker_jp_edit.setText("")
-                else:
-                    self.translator_speaker_jp_edit.setText(explicit_speaker_key)
-                if speaker_key == NO_SPEAKER_KEY:
-                    speaker_en = ""
-                else:
-                    speaker_en = self._speaker_translation_for_key(speaker_key)
-                    if not speaker_en:
-                        speaker_en = segment.translation_speaker.strip()
-                self.translator_speaker_en_edit.setText(speaker_en)
+                self._set_translator_speaker_display_text(
+                    self.translator_speaker_jp_edit,
+                    speaker_jp,
+                )
+                self._set_translator_speaker_display_text(
+                    self.translator_speaker_en_edit,
+                    speaker_en,
+                )
             else:
-                self.translator_speaker_jp_edit.setText("")
-                self.translator_speaker_en_edit.setText("")
+                self._set_translator_speaker_display_text(
+                    self.translator_speaker_jp_edit,
+                    "",
+                )
+                self._set_translator_speaker_display_text(
+                    self.translator_speaker_en_edit,
+                    "",
+                )
 
         self.translator_source_view.setPlainText(
             "\n".join(self._segment_source_lines_for_translation(segment)))
@@ -3098,6 +3109,47 @@ class DialogueVisualEditor(
             segment,
             actor_mode=actor_mode,
         )
+
+    def _translator_panel_speaker_values(
+        self,
+        segment: DialogueSegment,
+    ) -> tuple[str, str]:
+        if not segment.is_structural_dialogue:
+            return "", ""
+
+        speaker_key = self._speaker_key_for_segment(segment)
+        explicit_speaker_raw = self._resolve_name_tokens_in_text(
+            segment.speaker_name,
+            prefer_translated=False,
+        )
+        explicit_speaker_key = self._normalize_speaker_key(explicit_speaker_raw)
+        if explicit_speaker_key != NO_SPEAKER_KEY:
+            speaker_jp = explicit_speaker_key
+        elif speaker_key != NO_SPEAKER_KEY:
+            speaker_jp = speaker_key
+        else:
+            speaker_jp = ""
+
+        if speaker_key == NO_SPEAKER_KEY:
+            return speaker_jp, ""
+
+        speaker_en = self._speaker_translation_for_key(speaker_key)
+        if not speaker_en:
+            speaker_en = segment.translation_speaker.strip()
+        return speaker_jp, speaker_en
+
+    def _set_translator_speaker_display_text(
+        self,
+        target: QLabel,
+        text: str,
+    ) -> None:
+        cleaned = text.strip()
+        if not cleaned:
+            target.setText("")
+            target.setToolTip("")
+            return
+        target.setText(self._render_text_with_visible_color_codes_html(cleaned))
+        target.setToolTip(cleaned)
 
     def _segment_for_exact_match_row(self, row: dict[str, Any]) -> Optional[DialogueSegment]:
         path = row.get("path")

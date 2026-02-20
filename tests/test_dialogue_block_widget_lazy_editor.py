@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 import unittest
+from typing import Callable, Optional
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -55,6 +57,48 @@ def _widget(segment: DialogueSegment) -> DialogueBlockWidget:
     )
 
 
+def _widget_with_options(
+    segment: DialogueSegment,
+    *,
+    translator_mode: bool,
+    speaker_display_resolver: Optional[Callable[[str], str]],
+    inferred_speaker_name_resolver: Optional[Callable[[DialogueSegment], str]],
+    speaker_display_html_resolver: Optional[Callable[[str], str]] = None,
+    hidden_control_colored_line_resolver: Optional[
+        Callable[[str], tuple[str, list[tuple[int, int, str, float]]]]
+    ] = None,
+) -> DialogueBlockWidget:
+    return DialogueBlockWidget(
+        segment=segment,
+        block_number=1,
+        thin_width=34,
+        wide_width=44,
+        max_lines=4,
+        infer_name_from_first_line=True,
+        smart_collapse_allow_comma_endings=True,
+        smart_collapse_allow_colon_triplet_endings=True,
+        smart_collapse_ellipsis_lowercase_rule=True,
+        smart_collapse_collapse_if_no_punctuation=False,
+        smart_collapse_min_soft_ratio=0.5,
+        hide_control_codes_when_unfocused=False,
+        hidden_control_line_transform=None,
+        hidden_control_colored_line_resolver=hidden_control_colored_line_resolver,
+        speaker_display_resolver=speaker_display_resolver,
+        speaker_display_html_resolver=speaker_display_html_resolver,
+        hint_display_html_resolver=None,
+        color_code_resolver=None,
+        variable_label_resolver=None,
+        speaker_tint_color="#0284c7",
+        translator_mode=translator_mode,
+        highlight_control_mismatch=False,
+        actor_mode=False,
+        name_index_kind="",
+        name_index_label="Entry",
+        allow_structural_actions=True,
+        inferred_speaker_name_resolver=inferred_speaker_name_resolver,
+    )
+
+
 class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -86,6 +130,120 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertEqual(segment.lines, ["after", "next"])
         self.assertIn("after", widget._preview.text())
         self.assertIn("next", widget._preview.text())
+        widget.deleteLater()
+
+    def test_translator_mode_inferred_speaker_uses_translation_map(self) -> None:
+        segment = _segment(["Hero", "こんにちは"])
+        segment.translation_lines = [""]
+
+        def resolve_speaker(value: str) -> str:
+            return "Aki" if value.strip() == "Hero" else ""
+
+        def infer_speaker(_: DialogueSegment) -> str:
+            return "Hero"
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=resolve_speaker,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=infer_speaker,
+        )
+
+        self.assertEqual(widget._speaker_display_name(), "Aki")
+        self.assertEqual(widget._speaker_display_name_html(), "Aki")
+        widget.deleteLater()
+
+    def test_translator_mode_speaker_html_resolver_applies_to_translated_name(self) -> None:
+        segment = _segment(["Hero", "こんにちは"])
+        segment.translation_lines = [""]
+
+        def resolve_speaker(value: str) -> str:
+            return r"\C[2]Aki\C[0]" if value.strip() == "Hero" else ""
+
+        def resolve_speaker_html(value: str) -> str:
+            return f"HTML:{value}"
+
+        def infer_speaker(_: DialogueSegment) -> str:
+            return "Hero"
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=resolve_speaker,
+            speaker_display_html_resolver=resolve_speaker_html,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=infer_speaker,
+        )
+
+        self.assertEqual(widget._speaker_display_name_html(), r"HTML:\C[2]Aki\C[0]")
+        widget.deleteLater()
+
+    def test_line1_inference_prefix_color_carries_into_visible_lines(self) -> None:
+        segment = _segment([r"\C[2]Hero", "Line one", "Line two"])
+
+        color_token_re = re.compile(r"\\[Cc]\[(\d+)\]")
+
+        def colored_mask(value: str) -> tuple[str, list[tuple[int, int, str, float]]]:
+            output: list[str] = []
+            spans: list[tuple[int, int, str, float]] = []
+            cursor = 0
+            out_pos = 0
+            active_color = ""
+            for match in color_token_re.finditer(value):
+                chunk = value[cursor:match.start()]
+                if chunk:
+                    output.append(chunk)
+                    next_pos = out_pos + len(chunk)
+                    spans.append((out_pos, next_pos, active_color, 1.0))
+                    out_pos = next_pos
+                color_code = int(match.group(1))
+                active_color = "#22aa22" if color_code == 2 else ""
+                cursor = match.end()
+            tail = value[cursor:]
+            if tail:
+                output.append(tail)
+                next_pos = out_pos + len(tail)
+                spans.append((out_pos, next_pos, active_color, 1.0))
+            return "".join(output), spans
+
+        def infer_speaker(_: DialogueSegment) -> str:
+            return "Hero"
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=False,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=colored_mask,
+            inferred_speaker_name_resolver=infer_speaker,
+        )
+
+        masked_lines = widget._masked_lines_from_raw(["Line one", "Line two"])
+
+        self.assertEqual(masked_lines, ["Line one", "Line two"])
+        self.assertEqual(len(widget._masked_color_spans), 2)
+        self.assertTrue(
+            any(color == "#22aa22" for _s, _e, color, _scale in widget._masked_color_spans[0])
+        )
+        self.assertTrue(
+            any(color == "#22aa22" for _s, _e, color, _scale in widget._masked_color_spans[1])
+        )
+
+        widget.set_editor_active(True)
+        widget.set_hide_control_codes_when_unfocused(True)
+        widget._apply_overflow_highlighting()
+        self.assertIsNotNone(widget.editor)
+        editor = widget.editor
+        assert editor is not None
+        selections = editor.extraSelections()
+        colored = 0
+        for selection in selections:
+            color = selection.format.foreground().color()
+            if color.isValid() and color.name().lower() == "#22aa22":
+                colored += 1
+        self.assertGreaterEqual(colored, 2)
         widget.deleteLater()
 
 

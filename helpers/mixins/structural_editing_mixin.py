@@ -377,6 +377,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self,
         kept_lines: list[str],
         moved_lines: list[str],
+        *,
+        inferred_marker: str = "",
     ) -> tuple[list[str], list[str]]:
         if not kept_lines or not moved_lines:
             return kept_lines, moved_lines
@@ -385,10 +387,18 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if active_color == 0:
             return kept_lines, moved_lines
 
+        # If active color comes from inferred line-1 speaker marker, the marker
+        # is copied to the moved block anyway, so injecting extra continuity
+        # codes would be redundant.
+        marker_color = self._active_color_code_at_end([inferred_marker]) if inferred_marker else 0
+        if marker_color != 0 and marker_color == active_color:
+            return kept_lines, moved_lines
+
         if not self._line_starts_with_color_code(moved_lines[0]):
             moved_lines[0] = f"\\C[{active_color}]{moved_lines[0]}"
 
-        kept_lines[-1] = f"{kept_lines[-1]}\\C[0]"
+        if self._TRAILING_RESET_COLOR_RE.search(kept_lines[-1] or "") is None:
+            kept_lines[-1] = f"{kept_lines[-1]}\\C[0]"
         return kept_lines, moved_lines
 
     def _sync_source_split_color_continuity_from_translation(
@@ -1552,9 +1562,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if not moved_active_lines:
             self.statusBar().showMessage("No overflow lines to move.")
             return
+        inferred_marker = self._inferred_line1_speaker_marker(source_segment)
         kept_active_lines, moved_active_lines = self._apply_split_overflow_color_continuity(
             list(kept_active_lines),
             list(moved_active_lines),
+            inferred_marker=inferred_marker,
         )
 
         if translator_mode:
@@ -1588,7 +1600,6 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 source_segment.translation_lines[split_index:]
             )
 
-        inferred_marker = self._inferred_line1_speaker_marker(source_segment)
         moved_source_lines = self._with_inferred_line1_marker(
             moved_source_lines,
             inferred_marker,

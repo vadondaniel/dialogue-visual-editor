@@ -2078,24 +2078,24 @@ class DialogueBlockWidget(QFrame):
         return [""]
 
     def _line1_inference_active(self) -> bool:
+        return bool(self._resolved_inferred_speaker_name())
+
+    def _resolved_inferred_speaker_name(self) -> str:
         if self._line1_inference_is_disabled():
-            return False
+            return ""
         if not self._is_standard_dialogue_block():
-            return False
+            return ""
         if not self.infer_name_from_first_line:
-            return False
+            return ""
         if self.segment.speaker_name != NO_SPEAKER_KEY:
-            return False
-        lines = self._segment_storage_lines()
-        if len(lines) <= 1:
-            return False
+            return ""
         if self.inferred_speaker_name_resolver is None:
-            return False
+            return ""
         try:
             inferred = self.inferred_speaker_name_resolver(self.segment)
         except Exception:
-            return False
-        return bool(inferred.strip())
+            return ""
+        return inferred.strip()
 
     def _line1_inference_prefix_text(self) -> str:
         if self._uses_translation_storage():
@@ -2372,10 +2372,7 @@ class DialogueBlockWidget(QFrame):
         return "<br/>".join(rows)
 
     def _should_show_masked_preview_overlay(self) -> bool:
-        return (
-            self._displaying_masked_text
-            and self.hidden_control_colored_line_resolver is not None
-        )
+        return False
 
     def _masked_preview_html(self) -> str:
         lines = self._raw_lines or [""]
@@ -2419,11 +2416,16 @@ class DialogueBlockWidget(QFrame):
         source_lines = lines or [""]
         if self.hidden_control_colored_line_resolver is not None:
             joined = "\n".join(source_lines)
-            masked_text, spans = self.hidden_control_colored_line_resolver(
-                joined)
-            split_lines, spans_per_line = _split_masked_text_and_spans(
-                masked_text, list(spans)
-            )
+            prefix_text = ""
+            if self._line1_inference_active():
+                prefix_text = self._line1_inference_prefix_text()
+            if prefix_text:
+                joined = f"{prefix_text}\n{joined}"
+            masked_text, spans = self.hidden_control_colored_line_resolver(joined)
+            split_lines, spans_per_line = _split_masked_text_and_spans(masked_text, list(spans))
+            if prefix_text:
+                split_lines = split_lines[1:] if len(split_lines) > 1 else [""]
+                spans_per_line = spans_per_line[1:] if len(spans_per_line) > 1 else [[]]
             self._masked_color_spans = spans_per_line
             return split_lines or [""]
 
@@ -2600,6 +2602,7 @@ class DialogueBlockWidget(QFrame):
         return split_lines_preserve_empty(self.editor.toPlainText())
 
     def _speaker_display_name(self) -> str:
+        inferred_name = self._resolved_inferred_speaker_name()
         if self._uses_translation_storage():
             translated = ""
             if (
@@ -2609,13 +2612,9 @@ class DialogueBlockWidget(QFrame):
                 translated = self.speaker_display_resolver(
                     self.segment.speaker_name
                 ).strip()
-            if (
-                not translated
-                and (
-                    self.segment.speaker_name != NO_SPEAKER_KEY
-                    or self._line1_inference_active()
-                )
-            ):
+            if not translated and inferred_name and self.speaker_display_resolver is not None:
+                translated = self.speaker_display_resolver(inferred_name).strip()
+            if not translated and (self.segment.speaker_name != NO_SPEAKER_KEY or inferred_name):
                 translated = self.segment.translation_speaker.strip()
             if translated:
                 return translated
@@ -2626,33 +2625,25 @@ class DialogueBlockWidget(QFrame):
                 if resolved.strip():
                     return resolved
             return explicit
-        if not self._line1_inference_active():
+        if not inferred_name:
             return NO_SPEAKER_KEY
-        if self._uses_translation_storage():
-            lines = self._segment_storage_lines()
-        else:
-            lines = self._segment_storage_lines()
-        if not lines:
-            return NO_SPEAKER_KEY
-        first_line = lines[0].strip()
-        if not first_line:
-            return NO_SPEAKER_KEY
-
-        display_name = first_line
+        display_name = inferred_name
         if self.speaker_display_resolver is not None:
-            resolved = self.speaker_display_resolver(first_line).strip()
+            resolved = self.speaker_display_resolver(inferred_name).strip()
             if resolved:
                 display_name = resolved
+        first_line = self._line1_inference_prefix_text().strip()
 
         if (
             self._line1_inference_is_forced()
-            or looks_like_name_line(first_line)
-            or (display_name != first_line and looks_like_name_line(display_name))
+            or (first_line and looks_like_name_line(first_line))
+            or (display_name != inferred_name and looks_like_name_line(display_name))
         ):
             return f"{display_name} (line 1)"
         return NO_SPEAKER_KEY
 
     def _speaker_display_name_html(self) -> str:
+        inferred_name = self._resolved_inferred_speaker_name()
         if self._uses_translation_storage():
             translated = ""
             if (
@@ -2662,15 +2653,15 @@ class DialogueBlockWidget(QFrame):
                 translated = self.speaker_display_resolver(
                     self.segment.speaker_name
                 ).strip()
-            if (
-                not translated
-                and (
-                    self.segment.speaker_name != NO_SPEAKER_KEY
-                    or self._line1_inference_active()
-                )
-            ):
+            if not translated and inferred_name and self.speaker_display_resolver is not None:
+                translated = self.speaker_display_resolver(inferred_name).strip()
+            if not translated and (self.segment.speaker_name != NO_SPEAKER_KEY or inferred_name):
                 translated = self.segment.translation_speaker.strip()
             if translated:
+                if self.speaker_display_html_resolver is not None:
+                    rendered = self.speaker_display_html_resolver(translated).strip()
+                    if rendered:
+                        return rendered
                 return html.escape(translated)
 
         explicit = self.segment.speaker_name
@@ -2685,31 +2676,25 @@ class DialogueBlockWidget(QFrame):
                     return html.escape(resolved)
             return html.escape(explicit)
 
-        if not self._line1_inference_active():
+        if not inferred_name:
             return html.escape(NO_SPEAKER_KEY)
-        lines = self._segment_storage_lines()
-        if not lines:
-            return html.escape(NO_SPEAKER_KEY)
-        first_line = lines[0].strip()
-        if not first_line:
-            return html.escape(NO_SPEAKER_KEY)
-
-        display_name = first_line
-        display_html = html.escape(first_line)
+        display_name = inferred_name
+        display_html = html.escape(inferred_name)
         if self.speaker_display_resolver is not None:
-            resolved = self.speaker_display_resolver(first_line).strip()
+            resolved = self.speaker_display_resolver(inferred_name).strip()
             if resolved:
                 display_name = resolved
                 display_html = html.escape(resolved)
         if self.speaker_display_html_resolver is not None:
-            rendered = self.speaker_display_html_resolver(first_line).strip()
+            rendered = self.speaker_display_html_resolver(inferred_name).strip()
             if rendered:
                 display_html = rendered
+        first_line = self._line1_inference_prefix_text().strip()
 
         if (
             self._line1_inference_is_forced()
-            or looks_like_name_line(first_line)
-            or (display_name != first_line and looks_like_name_line(display_name))
+            or (first_line and looks_like_name_line(first_line))
+            or (display_name != inferred_name and looks_like_name_line(display_name))
         ):
             return f"{display_html} (line 1)"
         return html.escape(NO_SPEAKER_KEY)
@@ -2768,6 +2753,8 @@ class DialogueBlockWidget(QFrame):
         if self.editor is None:
             return
         selections: list[QTextEdit.ExtraSelection] = []
+        if self._displaying_masked_text:
+            selections.extend(self._masked_color_selections())
         can_highlight_overflow = (
             (not self.actor_mode)
             and self._is_standard_dialogue_block()
