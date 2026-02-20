@@ -822,6 +822,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 name_index_label=name_index_label,
                 allow_structural_actions=allow_structural,
                 inferred_speaker_name_resolver=self._inferred_speaker_from_segment_line1,
+                segment_prompt_type_resolver=getattr(self, "_segment_prompt_type", None),
             )
         self._bind_block_widget_signals(widget)
         return widget
@@ -933,6 +934,7 @@ class RenderMixin(_RenderHostTypingFallback):
             ),
         )
         widget.inferred_speaker_name_resolver = self._inferred_speaker_from_segment_line1
+        widget.segment_prompt_type_resolver = getattr(self, "_segment_prompt_type", None)
         widget.speaker_tint_color = self._speaker_color_for_segment(segment)
         widget.allow_structural_actions = self._segment_allows_structural_actions(
             segment,
@@ -970,6 +972,7 @@ class RenderMixin(_RenderHostTypingFallback):
         )
         widget._sync_control_code_visibility(force=True)
         widget.refresh_metadata()
+        widget._refresh_block_style()
 
     def _sync_reused_block_widget(
         self,

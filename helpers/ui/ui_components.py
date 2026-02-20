@@ -1694,6 +1694,7 @@ class DialogueBlockWidget(QFrame):
         name_index_label: str,
         allow_structural_actions: bool,
         inferred_speaker_name_resolver: Optional[Callable[[DialogueSegment], str]],
+        segment_prompt_type_resolver: Optional[Callable[..., str]] = None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
@@ -1738,6 +1739,7 @@ class DialogueBlockWidget(QFrame):
         ) if name_index_label.strip() else "Entry"
         self.allow_structural_actions = allow_structural_actions
         self.inferred_speaker_name_resolver = inferred_speaker_name_resolver
+        self.segment_prompt_type_resolver = segment_prompt_type_resolver
         self._actor_id = self._actor_id_from_uid()
         self._name_index_field = self._name_index_field_from_uid()
         self._suppress_text_changed = False
@@ -2174,6 +2176,30 @@ class DialogueBlockWidget(QFrame):
     def _is_map_display_name_block(self) -> bool:
         return self.segment.segment_kind == "map_display_name"
 
+    def _segment_entry_type(self, default_type: str = "dialogue") -> str:
+        resolver = self.segment_prompt_type_resolver
+        if callable(resolver):
+            try:
+                resolved = resolver(self.segment, default_type)
+            except TypeError:
+                try:
+                    resolved = resolver(self.segment)
+                except Exception:
+                    resolved = default_type
+            except Exception:
+                resolved = default_type
+            if isinstance(resolved, str) and resolved.strip():
+                return resolved.strip().lower()
+        normalized_default = default_type.strip().lower() if isinstance(default_type, str) else ""
+        if normalized_default:
+            return normalized_default
+        return "dialogue"
+
+    def _is_thought_block(self) -> bool:
+        if not self._is_standard_dialogue_block():
+            return False
+        return self._segment_entry_type("dialogue") == "thought"
+
     def _uses_translation_storage(self) -> bool:
         return self.translator_mode
 
@@ -2367,6 +2393,10 @@ class DialogueBlockWidget(QFrame):
                 block_bg = "#1d2f2a" if self._dark_theme else "#ecfdf5"
                 block_border = "#10b981" if self._dark_theme else "#059669"
                 meta_color = "#86efac" if self._dark_theme else "#065f46"
+            elif self._is_thought_block():
+                block_bg = "#1f2a44" if self._dark_theme else "#dbeafe"
+                block_border = "#60a5fa" if self._dark_theme else "#2563eb"
+                meta_color = "#bfdbfe" if self._dark_theme else "#1e3a8a"
         border_width = 2
         if self._selected:
             block_bg = "#14362e" if self._dark_theme else "#dcfce7"
@@ -2395,6 +2425,8 @@ class DialogueBlockWidget(QFrame):
                 block_prefix = "Choice"
             elif self._is_map_display_name_block():
                 block_prefix = "Map Display Name"
+            elif self._is_thought_block():
+                block_prefix = "Thought"
             if self._is_map_display_name_block():
                 self.title_label.setText(f"{block_prefix}{title_suffix}")
             else:
@@ -2952,11 +2984,13 @@ class DialogueBlockWidget(QFrame):
 
         speaker_html = self._speaker_display_name_html()
         face_text = self.segment.face_name or "(none)"
+        thought_type_suffix = " | Type: Thought" if self._is_thought_block() else ""
         meta_html = (
             f"Speaker: {speaker_html} | "
             f"Face: {html.escape(face_text)} [{self.segment.face_index}] | "
             f"BG: {html.escape(str(self.segment.background))} | "
             f"Pos: {html.escape(str(self.segment.position))}"
+            f"{thought_type_suffix}"
         )
         self.meta_label.setTextFormat(Qt.TextFormat.RichText)
         self.meta_label.setText(meta_html)

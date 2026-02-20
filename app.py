@@ -5106,6 +5106,10 @@ class DialogueVisualEditor(
             self._rerender_current_file()
 
     def _on_bg1_thoughts_toggled(self, _checked: bool) -> None:
+        if self.current_path is not None:
+            current_session = self.sessions.get(self.current_path)
+            if current_session is not None:
+                self._render_session(current_session, preserve_scroll=True)
         dialog = self.mass_translate_dialog
         if dialog is None or not dialog.isVisible():
             return

@@ -55,6 +55,7 @@ def _widget(segment: DialogueSegment) -> DialogueBlockWidget:
         name_index_label="Entry",
         allow_structural_actions=True,
         inferred_speaker_name_resolver=None,
+        segment_prompt_type_resolver=None,
     )
 
 
@@ -65,6 +66,7 @@ def _widget_with_options(
     speaker_display_resolver: Optional[Callable[[str], str]],
     inferred_speaker_name_resolver: Optional[Callable[[DialogueSegment], str]],
     speaker_display_html_resolver: Optional[Callable[[str], str]] = None,
+    segment_prompt_type_resolver: Optional[Callable[..., str]] = None,
     hidden_control_colored_line_resolver: Optional[
         Callable[[str], tuple[str, list[tuple[int, int, str, float]]]]
     ] = None,
@@ -99,6 +101,7 @@ def _widget_with_options(
         name_index_label="Entry",
         allow_structural_actions=True,
         inferred_speaker_name_resolver=inferred_speaker_name_resolver,
+        segment_prompt_type_resolver=segment_prompt_type_resolver,
     )
 
 
@@ -133,6 +136,29 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertEqual(segment.lines, ["after", "next"])
         self.assertIn("after", widget._preview.text())
         self.assertIn("next", widget._preview.text())
+        widget.deleteLater()
+
+    def test_thought_block_has_title_and_meta_indicator(self) -> None:
+        segment = _segment(["Inner thought"])
+        segment.code101["parameters"][2] = 1
+
+        def resolve_type(current: DialogueSegment, default_type: str = "dialogue") -> str:
+            if default_type.strip().lower() != "dialogue":
+                return default_type
+            return "thought" if int(current.background) == 1 else default_type
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=False,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=None,
+            segment_prompt_type_resolver=resolve_type,
+        )
+
+        self.assertTrue(widget.title_label.text().startswith("Thought 1"))
+        self.assertIn("Type: Thought", widget.meta_label.text())
         widget.deleteLater()
 
     def test_translator_mode_inferred_speaker_uses_translation_map(self) -> None:
