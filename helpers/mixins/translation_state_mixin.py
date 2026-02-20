@@ -1466,8 +1466,24 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             source_text = "(empty)"
         source_text = self._resolve_name_tokens_for_prompt_text(source_text)
         normalized = source_text.replace("\r\n", "\n").replace("\r", "\n")
-        escaped = normalized.replace('"', '\\"').replace("\n", "\\n")
+        escaped = normalized.replace("\n", "\\n")
         return escaped
+
+    def _prompt_entry_type_for_segment(self, segment: DialogueSegment) -> str:
+        type_resolver = getattr(self, "_segment_prompt_type", None)
+        if callable(type_resolver):
+            try:
+                resolved = type_resolver(segment, "dialogue")
+            except TypeError:
+                try:
+                    resolved = type_resolver(segment)
+                except Exception:
+                    resolved = "dialogue"
+            except Exception:
+                resolved = "dialogue"
+            if isinstance(resolved, str) and resolved.strip():
+                return resolved.strip().lower()
+        return "dialogue"
 
     def _build_human_translation_reference_prompt(
         self,
@@ -1512,6 +1528,11 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         for _row_index, row_segment in transcript_rows:
             speaker_label = self._prompt_tl_speaker_label_for_segment(row_segment)
             source_text = self._prompt_inline_source_text_for_segment(row_segment)
-            prompt_lines.append(f'{speaker_label}: "{source_text}"')
+            entry_type = self._prompt_entry_type_for_segment(row_segment)
+            if entry_type == "thought":
+                prompt_lines.append(f"{speaker_label}: ({source_text})")
+            else:
+                escaped_text = source_text.replace('"', '\\"')
+                prompt_lines.append(f'{speaker_label}: "{escaped_text}"')
 
         return "\n".join(prompt_lines).strip() + "\n"

@@ -590,6 +590,8 @@ class DialogueVisualEditor(
         self.hide_non_meaningful_entries_check.toggled.connect(
             self._on_project_setting_changed
         )
+        self.bg1_thoughts_check.toggled.connect(self._on_project_setting_changed)
+        self.bg1_thoughts_check.toggled.connect(self._on_bg1_thoughts_toggled)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter, 1)
@@ -935,6 +937,12 @@ class DialogueVisualEditor(
             "Hide empty map displayName entries and plugins.js parameters that are bool/on-off/none/number-list values."
         )
 
+        self.bg1_thoughts_check = QCheckBox(self)
+        self.bg1_thoughts_check.setChecked(False)
+        self.bg1_thoughts_check.setToolTip(
+            "When enabled, dialogue blocks with BG=1 are treated as thought lines in translation prompts."
+        )
+
         self.apply_version_combo = QComboBox(self)
         self.apply_version_combo.addItem("Original", "original")
         self.apply_version_combo.addItem("Working", "working")
@@ -975,6 +983,7 @@ class DialogueVisualEditor(
             self.problem_missing_translation_check,
             self.problem_contains_japanese_check,
             self.hide_non_meaningful_entries_check,
+            self.bg1_thoughts_check,
             self.apply_version_combo,
         )
         for control in hidden_controls:
@@ -1258,6 +1267,16 @@ class DialogueVisualEditor(
             self.hide_non_meaningful_entries_check,
         )
         settings_menu.addAction(hide_non_meaningful_action)
+
+        bg1_thoughts_action = QAction(
+            "Treat BG=1 as thoughts",
+            self,
+        )
+        self._bind_toggle_menu_action(
+            bg1_thoughts_action,
+            self.bg1_thoughts_check,
+        )
+        settings_menu.addAction(bg1_thoughts_action)
 
         settings_menu.addSeparator()
         auto_split_action = QAction("Auto-split overflow on save", self)
@@ -3902,6 +3921,31 @@ class DialogueVisualEditor(
             return self._normalize_speaker_key(inferred)
         return NO_SPEAKER_KEY
 
+    def _bg1_means_thoughts_enabled(self) -> bool:
+        return bool(self.bg1_thoughts_check.isChecked())
+
+    def _segment_prompt_type(
+        self,
+        segment: DialogueSegment,
+        default_type: str = "dialogue",
+    ) -> str:
+        normalized_default = (
+            default_type.strip().lower() if isinstance(default_type, str) else "dialogue"
+        ) or "dialogue"
+        if normalized_default != "dialogue":
+            return normalized_default
+        if not self._bg1_means_thoughts_enabled():
+            return normalized_default
+        if not segment.is_structural_dialogue:
+            return normalized_default
+        try:
+            background = int(segment.background)
+        except Exception:
+            return normalized_default
+        if background == 1:
+            return "thought"
+        return normalized_default
+
     def _speaker_param_value_from_key(self, speaker_key: str) -> str:
         return "" if speaker_key == NO_SPEAKER_KEY else speaker_key
 
@@ -4587,6 +4631,7 @@ class DialogueVisualEditor(
             "hide_non_meaningful_entries": bool(
                 self.hide_non_meaningful_entries_check.isChecked()
             ),
+            "bg1_means_thoughts": bool(self.bg1_thoughts_check.isChecked()),
             "show_empty_files": bool(self.show_empty_files_check.isChecked()),
             "default_variable_length": int(self.default_variable_length_estimate),
             "variable_length_overrides": {
@@ -4627,6 +4672,7 @@ class DialogueVisualEditor(
         self.problem_missing_translation_check.blockSignals(True)
         self.problem_contains_japanese_check.blockSignals(True)
         self.hide_non_meaningful_entries_check.blockSignals(True)
+        self.bg1_thoughts_check.blockSignals(True)
         self.show_empty_files_check.blockSignals(True)
         try:
             editor_mode = settings.get("editor_mode")
@@ -4747,6 +4793,9 @@ class DialogueVisualEditor(
                 self.hide_non_meaningful_entries_check.setChecked(
                     hide_non_meaningful_entries
                 )
+            bg1_means_thoughts = settings.get("bg1_means_thoughts")
+            if isinstance(bg1_means_thoughts, bool):
+                self.bg1_thoughts_check.setChecked(bg1_means_thoughts)
             show_empty_files = settings.get("show_empty_files")
             if isinstance(show_empty_files, bool):
                 self.show_empty_files_check.setChecked(show_empty_files)
@@ -4792,6 +4841,7 @@ class DialogueVisualEditor(
             self.problem_missing_translation_check.blockSignals(False)
             self.problem_contains_japanese_check.blockSignals(False)
             self.hide_non_meaningful_entries_check.blockSignals(False)
+            self.bg1_thoughts_check.blockSignals(False)
             self.show_empty_files_check.blockSignals(False)
             self._applying_project_ui_state = False
 
@@ -5054,6 +5104,14 @@ class DialogueVisualEditor(
         self._rebuild_file_list(preferred_path=self.current_path)
         if self.current_path is not None:
             self._rerender_current_file()
+
+    def _on_bg1_thoughts_toggled(self, _checked: bool) -> None:
+        dialog = self.mass_translate_dialog
+        if dialog is None or not dialog.isVisible():
+            return
+        refresh_scope = getattr(dialog, "_on_scope_or_filters_changed", None)
+        if callable(refresh_scope):
+            refresh_scope()
 
     def _visible_file_paths(self) -> list[Path]:
         visible_paths: list[Path] = []

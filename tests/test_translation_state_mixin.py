@@ -44,12 +44,28 @@ class _Harness(TranslationStateMixin):
         self.speaker_translation_map: dict[str, str] = {}
         self.translation_uid_counter = 0
         self.sessions: dict[Path, FileSession] = {}
+        self.bg1_means_thoughts = False
 
     def _relative_path(self, path: Path) -> str:
         return path.name
 
     def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
         return segment.speaker_name
+
+    def _segment_prompt_type(
+        self,
+        segment: DialogueSegment,
+        default_type: str = "dialogue",
+    ) -> str:
+        if default_type.strip().lower() != "dialogue":
+            return default_type
+        if not self.bg1_means_thoughts:
+            return default_type
+        try:
+            background = int(segment.background)
+        except Exception:
+            return default_type
+        return "thought" if background == 1 else default_type
 
     def _resolve_name_tokens_in_text(
         self,
@@ -68,6 +84,30 @@ class _Harness(TranslationStateMixin):
 
 
 class TranslationStateMixinTests(unittest.TestCase):
+    def test_build_human_translation_reference_prompt_marks_thoughts(self) -> None:
+        harness = _Harness()
+        harness.bg1_means_thoughts = True
+        thought_segment = _segment("Map001.json:L0:1", "Inner thought", "Hero")
+        thought_segment.code101["parameters"][2] = 1
+        normal_segment = _segment("Map001.json:L0:2", "Spoken line", "Hero")
+        normal_segment.code101["parameters"][2] = 0
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[thought_segment, normal_segment],
+        )
+
+        prompt = harness._build_human_translation_reference_prompt(
+            session,
+            thought_segment,
+            1,
+        )
+
+        self.assertIn("Hero: (Inner thought)", prompt)
+        self.assertIn('Hero: "Spoken line"', prompt)
+        self.assertNotIn("[THOUGHT]", prompt)
+
     def test_build_human_translation_reference_prompt_resolves_name_tokens(self) -> None:
         harness = _Harness()
         current = _segment("Map001.json:L0:1", "\\N[1] says hi", "\\N[2]")
@@ -84,7 +124,7 @@ class TranslationStateMixinTests(unittest.TestCase):
             0,
         )
 
-        self.assertIn('{Bob}: "Alice says hi"', prompt)
+        self.assertIn('Bob: "Alice says hi"', prompt)
         self.assertNotIn("\\N[1]", prompt)
         self.assertNotIn("\\N[2]", prompt)
 
@@ -145,7 +185,7 @@ class TranslationStateMixinTests(unittest.TestCase):
             0,
         )
 
-        self.assertIn('{Mage}: "Current line"', prompt)
+        self.assertIn('Mage: "Current line"', prompt)
         self.assertNotIn("[CURRENT]", prompt)
 
     def test_build_human_translation_reference_prompt_returns_empty_for_missing_segment(self) -> None:

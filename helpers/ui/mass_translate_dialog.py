@@ -67,6 +67,11 @@ class MassTranslateHost(Protocol):
         self,
         profile_id: Optional[str] = None,
     ) -> str: ...
+    def _segment_prompt_type(
+        self,
+        segment: DialogueSegment,
+        default_type: str = "dialogue",
+    ) -> str: ...
 
 
 class MassTranslateDialog(QDialog):
@@ -678,7 +683,11 @@ class MassTranslateDialog(QDialog):
                 source_text = "\n".join(source_lines)
 
                 if content_type == "dialogue":
-                    entry_type = "choice" if is_choice_segment else "dialogue"
+                    entry_type = (
+                        "choice"
+                        if is_choice_segment
+                        else self._entry_type_for_segment(segment, "dialogue")
+                    )
                 elif content_type == "speaker_segment":
                     entry_type = "speaker_text"
                 else:
@@ -802,6 +811,28 @@ class MassTranslateDialog(QDialog):
     def _segment_uses_translation_storage(segment: DialogueSegment) -> bool:
         _ = segment
         return True
+
+    def _entry_type_for_segment(
+        self,
+        segment: DialogueSegment,
+        default_type: str,
+    ) -> str:
+        type_resolver = getattr(self.editor, "_segment_prompt_type", None)
+        if callable(type_resolver):
+            try:
+                resolved = type_resolver(segment, default_type)
+            except TypeError:
+                try:
+                    resolved = type_resolver(segment)
+                except Exception:
+                    resolved = default_type
+            except Exception:
+                resolved = default_type
+            if isinstance(resolved, str) and resolved.strip():
+                return resolved.strip().lower()
+        if isinstance(default_type, str) and default_type.strip():
+            return default_type.strip().lower()
+        return "dialogue"
 
     def _segment_existing_lines_for_mass_translate(
         self,
@@ -1105,7 +1136,11 @@ class MassTranslateDialog(QDialog):
                 tl_uid = self._ensure_segment_translation_uid(segment)
                 if content_type == "dialogue":
                     entry_id = f"D:{tl_uid}"
-                    entry_type = "choice" if is_choice_segment else "dialogue"
+                    entry_type = (
+                        "choice"
+                        if is_choice_segment
+                        else self._entry_type_for_segment(segment, "dialogue")
+                    )
                 elif content_type == "speaker_segment":
                     entry_id = f"P:{tl_uid}"
                     entry_type = "speaker_text"
