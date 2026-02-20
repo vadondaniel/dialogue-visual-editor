@@ -397,7 +397,12 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
         self._color_code_resolver = color_code_resolver
         self._resolve_color_flow = bool(resolve_color_flow)
         self._initial_active_color_code = 0
-        if dark_theme:
+        self._dark_theme = bool(dark_theme)
+        self._rules: list[tuple[re.Pattern[str], QTextCharFormat]] = []
+        self._rebuild_rules()
+
+    def _rebuild_rules(self) -> None:
+        if self._dark_theme:
             command_color = "#fbbf24"
             symbol_color = "#93c5fd"
         else:
@@ -412,11 +417,19 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
         symbol_format.setForeground(QColor(symbol_color))
         symbol_format.setFontWeight(QFont.Weight.DemiBold)
 
-        self._rules: list[tuple[re.Pattern[str], QTextCharFormat]] = [
+        self._rules = [
             (re.compile(r"\\[A-Za-z]+\[[^\]\r\n]*\]"), command_format),
             (re.compile(r"\\[A-Za-z]+"), command_format),
             (re.compile(r"\\[\\{}.$|!><^]"), symbol_format),
         ]
+
+    def set_dark_theme(self, dark_theme: bool) -> None:
+        next_theme = bool(dark_theme)
+        if self._dark_theme == next_theme:
+            return
+        self._dark_theme = next_theme
+        self._rebuild_rules()
+        self.rehighlight()
 
     def set_initial_active_color_code(self, color_code: int) -> None:
         try:
@@ -1315,6 +1328,17 @@ class ItemNameDescriptionWidget(QFrame):
         self.hide_control_codes_when_unfocused = new_value
         self._sync_control_code_visibility(force=True)
 
+    def refresh_theme_palette(self) -> None:
+        dark_theme = is_dark_palette()
+        if self._dark_theme == dark_theme:
+            return
+        self._dark_theme = dark_theme
+        self._name_highlighter.set_dark_theme(dark_theme)
+        self._desc_highlighter.set_dark_theme(dark_theme)
+        self._refresh_block_style()
+        self._apply_editor_style()
+        self._refresh_status()
+
     def focus_editor(self) -> None:
         self.name_editor.setFocus()
 
@@ -1648,50 +1672,7 @@ class DialogueBlockWidget(QFrame):
         self._flash_step = 0
         self._flash_level = 0
         self._dark_theme = is_dark_palette()
-        if self._dark_theme:
-            self._meta_dim_color = "#cbd5e1"
-            self._status_ok_color = "#cbd5e1"
-            self._status_warn_color = "#fca5a5"
-            self._overflow_bg = "#7f1d1d"
-            self._overflow_fg = "#fecaca"
-            self._block_bg = "#1f2937"
-            self._block_border = "#475569"
-            self._editor_bg = "#0f172a"
-            self._editor_bg_changed = "#162826"
-            self._editor_bg_inserted = "#102337"
-            self._editor_bg_warning = "#3f1d1d"
-            self._editor_fg = "#e2e8f0"
-            self._editor_border_thin = "#f59e0b"
-            self._editor_border_wide = "#38bdf8"
-            self._editor_border_warn = "#f87171"
-            self._actor_block_bg = "#13293d"
-            self._actor_block_border = "#0ea5e9"
-            self._actor_meta_color = "#7dd3fc"
-            self._actor_editor_bg = "#0b1e2d"
-            self._actor_editor_bg_changed = "#103147"
-            self._actor_editor_border = "#38bdf8"
-        else:
-            self._meta_dim_color = "#475569"
-            self._status_ok_color = "#475569"
-            self._status_warn_color = "#b91c1c"
-            self._overflow_bg = "#fee2e2"
-            self._overflow_fg = "#991b1b"
-            self._block_bg = "#f8fafc"
-            self._block_border = "#cbd5e1"
-            self._editor_bg = "#ffffff"
-            self._editor_bg_changed = "#f0fdf4"
-            self._editor_bg_inserted = "#ecfeff"
-            self._editor_bg_warning = "#fff1f2"
-            self._editor_fg = "#0f172a"
-            self._editor_border_thin = "#ea580c"
-            self._editor_border_wide = "#0284c7"
-            self._editor_border_warn = "#b91c1c"
-            self._actor_block_bg = "#e9f6ff"
-            self._actor_block_border = "#0284c7"
-            self._actor_meta_color = "#075985"
-            self._actor_editor_bg = "#f8fcff"
-            self._actor_editor_bg_changed = "#dff3ff"
-            self._actor_editor_border = "#0284c7"
+        self._apply_theme_palette_colors(self._dark_theme)
 
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setObjectName("DialogueBlock")
@@ -2506,6 +2487,64 @@ class DialogueBlockWidget(QFrame):
             return
         self.hide_control_codes_when_unfocused = new_value
         self._sync_control_code_visibility(force=True)
+
+    def _apply_theme_palette_colors(self, dark_theme: bool) -> None:
+        self._dark_theme = bool(dark_theme)
+        if self._dark_theme:
+            self._meta_dim_color = "#cbd5e1"
+            self._status_ok_color = "#cbd5e1"
+            self._status_warn_color = "#fca5a5"
+            self._overflow_bg = "#7f1d1d"
+            self._overflow_fg = "#fecaca"
+            self._block_bg = "#1f2937"
+            self._block_border = "#475569"
+            self._editor_bg = "#0f172a"
+            self._editor_bg_changed = "#162826"
+            self._editor_bg_inserted = "#102337"
+            self._editor_bg_warning = "#3f1d1d"
+            self._editor_fg = "#e2e8f0"
+            self._editor_border_thin = "#f59e0b"
+            self._editor_border_wide = "#38bdf8"
+            self._editor_border_warn = "#f87171"
+            self._actor_block_bg = "#13293d"
+            self._actor_block_border = "#0ea5e9"
+            self._actor_meta_color = "#7dd3fc"
+            self._actor_editor_bg = "#0b1e2d"
+            self._actor_editor_bg_changed = "#103147"
+            self._actor_editor_border = "#38bdf8"
+            return
+        self._meta_dim_color = "#475569"
+        self._status_ok_color = "#475569"
+        self._status_warn_color = "#b91c1c"
+        self._overflow_bg = "#fee2e2"
+        self._overflow_fg = "#991b1b"
+        self._block_bg = "#f8fafc"
+        self._block_border = "#cbd5e1"
+        self._editor_bg = "#ffffff"
+        self._editor_bg_changed = "#f0fdf4"
+        self._editor_bg_inserted = "#ecfeff"
+        self._editor_bg_warning = "#fff1f2"
+        self._editor_fg = "#0f172a"
+        self._editor_border_thin = "#ea580c"
+        self._editor_border_wide = "#0284c7"
+        self._editor_border_warn = "#b91c1c"
+        self._actor_block_bg = "#e9f6ff"
+        self._actor_block_border = "#0284c7"
+        self._actor_meta_color = "#075985"
+        self._actor_editor_bg = "#f8fcff"
+        self._actor_editor_bg_changed = "#dff3ff"
+        self._actor_editor_border = "#0284c7"
+
+    def refresh_theme_palette(self) -> None:
+        dark_theme = is_dark_palette()
+        if self._dark_theme == dark_theme:
+            return
+        self._apply_theme_palette_colors(dark_theme)
+        if self._control_code_highlighter is not None:
+            self._control_code_highlighter.set_dark_theme(dark_theme)
+        self._refresh_block_style()
+        self._apply_editor_style(self._has_warning)
+        self._refresh_status()
 
     def set_control_mismatch_highlighting_enabled(self, enabled: bool) -> None:
         new_value = bool(enabled)

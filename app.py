@@ -473,6 +473,11 @@ class DialogueVisualEditor(
         self._middle_autoscroll_timer.setInterval(16)
         self._middle_autoscroll_timer.timeout.connect(
             self._tick_middle_autoscroll)
+        self._theme_refresh_timer = QTimer(self)
+        self._theme_refresh_timer.setSingleShot(True)
+        self._theme_refresh_timer.setInterval(60)
+        self._theme_refresh_timer.timeout.connect(self._apply_runtime_theme_refresh)
+        self._current_palette_dark = is_dark_palette()
 
         self._global_undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
         self._global_redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
@@ -2793,6 +2798,12 @@ class DialogueVisualEditor(
         font.setPointSize(8)
         font.setBold(True)
         indicator.setFont(font)
+        self._apply_middle_autoscroll_indicator_style(indicator)
+        indicator.hide()
+        self._middle_autoscroll_indicator = indicator
+        return indicator
+
+    def _apply_middle_autoscroll_indicator_style(self, indicator: QLabel) -> None:
         if is_dark_palette():
             indicator.setStyleSheet(
                 "QLabel {"
@@ -2802,18 +2813,59 @@ class DialogueVisualEditor(
                 "border-radius: 17px;"
                 "}"
             )
-        else:
-            indicator.setStyleSheet(
-                "QLabel {"
-                "background: rgba(255, 255, 255, 235);"
-                "color: #0f172a;"
-                "border: 2px solid #2563eb;"
-                "border-radius: 17px;"
-                "}"
+            return
+        indicator.setStyleSheet(
+            "QLabel {"
+            "background: rgba(255, 255, 255, 235);"
+            "color: #0f172a;"
+            "border: 2px solid #2563eb;"
+            "border-radius: 17px;"
+            "}"
+        )
+
+    def _schedule_runtime_theme_refresh(self) -> None:
+        self._theme_refresh_timer.start()
+
+    def _apply_runtime_theme_refresh(self) -> None:
+        dark_theme = is_dark_palette()
+        if dark_theme == self._current_palette_dark:
+            return
+        self._current_palette_dark = dark_theme
+
+        self._invalidate_speaker_auto_color_cache()
+
+        if self.translator_source_highlighter is not None:
+            self.translator_source_highlighter.set_dark_theme(dark_theme)
+            self.translator_source_highlighter.rehighlight()
+        if self.audit_consistency_source_highlighter is not None:
+            self.audit_consistency_source_highlighter.set_dark_theme(dark_theme)
+            self.audit_consistency_source_highlighter.rehighlight()
+        if self.audit_consistency_target_highlighter is not None:
+            self.audit_consistency_target_highlighter.set_dark_theme(dark_theme)
+            self.audit_consistency_target_highlighter.rehighlight()
+        if self._middle_autoscroll_indicator is not None:
+            self._apply_middle_autoscroll_indicator_style(
+                self._middle_autoscroll_indicator
             )
-        indicator.hide()
-        self._middle_autoscroll_indicator = indicator
-        return indicator
+
+        for widget in self.block_widgets.values():
+            refresh_theme = getattr(widget, "refresh_theme_palette", None)
+            if callable(refresh_theme):
+                refresh_theme()
+
+        self._refresh_translator_detail_panel()
+        self._refresh_block_control_mismatch_highlighting()
+
+        if self.audit_window is not None and self.audit_window.isVisible():
+            refresh_search = getattr(self, "_run_audit_search", None)
+            if callable(refresh_search):
+                refresh_search()
+            self._refresh_audit_search_replace_preview()
+            self._refresh_audit_sanitize_panel()
+            self._refresh_audit_control_mismatch_panel()
+            self._refresh_audit_consistency_panel()
+            self._refresh_audit_term_panel()
+            self._refresh_audit_term_suggestions_panel()
 
     def _show_middle_autoscroll_indicator(self, anchor_global: QPoint) -> None:
         indicator = self._ensure_middle_autoscroll_indicator()
@@ -2832,7 +2884,21 @@ class DialogueVisualEditor(
             self._middle_autoscroll_indicator.hide()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if event.type() == QEvent.Type.MouseButtonPress:
+        event_type = event.type()
+        theme_change_type = getattr(QEvent.Type, "ThemeChange", None)
+        if (
+            event_type in (
+                QEvent.Type.ApplicationPaletteChange,
+                QEvent.Type.PaletteChange,
+                QEvent.Type.StyleChange,
+            )
+            or (theme_change_type is not None and event_type == theme_change_type)
+        ):
+            app_instance = QApplication.instance()
+            if watched is app_instance or watched is self:
+                self._schedule_runtime_theme_refresh()
+
+        if event_type == QEvent.Type.MouseButtonPress:
             if not isinstance(event, QMouseEvent):
                 return super().eventFilter(watched, event)
             mouse_event = event
@@ -2852,7 +2918,7 @@ class DialogueVisualEditor(
                 Qt.MouseButton.MiddleButton,
             ):
                 self._stop_middle_autoscroll()
-        elif event.type() == QEvent.Type.MouseButtonRelease:
+        elif event_type == QEvent.Type.MouseButtonRelease:
             if not isinstance(event, QMouseEvent):
                 return super().eventFilter(watched, event)
             mouse_event = event
@@ -2869,7 +2935,7 @@ class DialogueVisualEditor(
                 if held_for >= self._middle_autoscroll_hold_release_threshold_sec:
                     self._stop_middle_autoscroll()
                 return True
-        elif self._middle_autoscroll_active and event.type() == QEvent.Type.Wheel:
+        elif self._middle_autoscroll_active and event_type == QEvent.Type.Wheel:
             self._stop_middle_autoscroll()
         return super().eventFilter(watched, event)
 
