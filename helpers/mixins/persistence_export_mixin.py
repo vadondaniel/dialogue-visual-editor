@@ -1040,7 +1040,17 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     segment.original_force_line1_speaker_inference
                 )
             self._refresh_dirty_state(session)
-            self._render_session(session)
+            rerender_nearby = getattr(self, "_rerender_blocks_near_viewport", None)
+            if callable(rerender_nearby):
+                rerender_nearby()
+                refresh_visuals = getattr(self, "_refresh_block_visual_states", None)
+                if callable(refresh_visuals):
+                    refresh_visuals()
+                refresh_detail = getattr(self, "_refresh_translator_detail_panel", None)
+                if callable(refresh_detail):
+                    refresh_detail()
+            else:
+                self._render_session(session)
             self.statusBar().showMessage(
                 f"Reset TL changes in {session.path.name}.")
             return

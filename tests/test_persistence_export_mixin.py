@@ -3,6 +3,9 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
+
+from PySide6.QtWidgets import QMessageBox
 
 from dialogue_visual_editor.helpers.core.models import (
     CommandBundle,
@@ -190,6 +193,35 @@ class _SaveSessionHarness(PersistenceExportMixin):
     def _rerender_blocks_near_viewport(self, overscan_px: int = 800) -> None:
         _ = overscan_px
         self.rerender_nearby_calls += 1
+
+    def statusBar(self) -> _StatusBarHarness:
+        return self._status_bar
+
+
+class _ResetCurrentFileHarness(PersistenceExportMixin):
+    def __init__(self) -> None:
+        self.current_path: Path | None = None
+        self.sessions: dict[Path, FileSession] = {}
+        self._status_bar = _StatusBarHarness()
+        self.refresh_dirty_calls = 0
+        self.rerender_nearby_calls = 0
+        self.render_session_calls = 0
+
+    def _is_translator_mode(self) -> bool:
+        return True
+
+    def _session_has_translation_changes(self, _session: FileSession) -> bool:
+        return True
+
+    def _refresh_dirty_state(self, _session: FileSession) -> None:
+        self.refresh_dirty_calls += 1
+
+    def _rerender_blocks_near_viewport(self, overscan_px: int = 800) -> None:
+        _ = overscan_px
+        self.rerender_nearby_calls += 1
+
+    def _render_session(self, _session: FileSession) -> None:
+        self.render_session_calls += 1
 
     def statusBar(self) -> _StatusBarHarness:
         return self._status_bar
@@ -475,6 +507,35 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual(harness.rerender_nearby_calls, 1)
         self.assertEqual(harness.refresh_visual_calls, 1)
         self.assertEqual(harness.refresh_detail_calls, 1)
+
+    def test_reset_current_file_in_translator_mode_avoids_full_rerender(self) -> None:
+        harness = _ResetCurrentFileHarness()
+        segment = _dialogue_segment("A:1", "line")
+        segment.translation_lines = ["changed"]
+        segment.original_translation_lines = ["orig"]
+        segment.translation_speaker = "new"
+        segment.original_translation_speaker = "old"
+        segment.disable_line1_speaker_inference = True
+        segment.original_disable_line1_speaker_inference = False
+        segment.force_line1_speaker_inference = False
+        segment.original_force_line1_speaker_inference = True
+        session = FileSession(path=Path("A.json"), data={}, bundles=[], segments=[segment])
+        harness.current_path = session.path
+        harness.sessions[session.path] = session
+
+        with patch(
+            "dialogue_visual_editor.helpers.mixins.persistence_export_mixin.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            harness._on_reset_current_file_requested()
+
+        self.assertEqual(segment.translation_lines, ["orig"])
+        self.assertEqual(segment.translation_speaker, "old")
+        self.assertFalse(segment.disable_line1_speaker_inference)
+        self.assertTrue(segment.force_line1_speaker_inference)
+        self.assertEqual(harness.refresh_dirty_calls, 1)
+        self.assertEqual(harness.rerender_nearby_calls, 1)
+        self.assertEqual(harness.render_session_calls, 0)
 
 
 if __name__ == "__main__":
