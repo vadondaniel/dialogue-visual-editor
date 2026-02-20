@@ -172,6 +172,47 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
                 mapped[variable_id] = text_value
         return mapped
 
+    def _system_game_title_from_session(
+        self,
+        translated: bool,
+        *,
+        translated_fallback_to_source: bool = True,
+    ) -> str:
+        session = self._system_session()
+        if session is None:
+            return ""
+        for segment in session.segments:
+            path_tokens_raw = getattr(segment, "system_text_path", ())
+            if not isinstance(path_tokens_raw, tuple):
+                continue
+            if path_tokens_raw != ("gameTitle",):
+                continue
+            if translated:
+                translated_lines = self._normalize_translation_lines(
+                    segment.translation_lines
+                )
+                title_text = "\n".join(translated_lines).strip()
+                if not title_text and translated_fallback_to_source:
+                    source_lines = (
+                        segment.source_lines
+                        or segment.original_lines
+                        or segment.lines
+                        or [""]
+                    )
+                    title_text = "\n".join(source_lines).strip()
+            else:
+                source_lines = (
+                    segment.lines
+                    or segment.source_lines
+                    or segment.original_lines
+                    or [""]
+                )
+                title_text = "\n".join(source_lines).strip()
+            if title_text:
+                return title_text
+            return ""
+        return ""
+
     def _variable_label_for_rpgm_index(self, variable_id: int) -> str:
         safe_id = max(0, int(variable_id))
 

@@ -4078,12 +4078,54 @@ class DialogueVisualEditor(
     def _on_remember_folder_toggled(self, _checked: bool) -> None:
         self._save_ui_state()
 
+    def _system_game_title_from_disk(self, folder: Path) -> str:
+        for path in self._system_json_candidates(folder):
+            if not path.is_file():
+                continue
+            raw_text = self._read_text_file_best_effort(path)
+            if raw_text is None:
+                continue
+            try:
+                decoded = json.loads(raw_text)
+            except Exception:
+                continue
+            if not isinstance(decoded, dict):
+                continue
+            title_raw = decoded.get("gameTitle")
+            if not isinstance(title_raw, str):
+                continue
+            title_text = title_raw.strip()
+            if title_text:
+                return title_text
+        return ""
+
+    def _window_game_title(self) -> str:
+        if self.data_dir is None:
+            return ""
+        if self._is_translator_mode():
+            translated_title = self._system_game_title_from_session(
+                translated=True,
+                translated_fallback_to_source=False,
+            )
+            if translated_title.strip():
+                return " ".join(translated_title.splitlines()).strip()
+        source_title = self._system_game_title_from_session(translated=False)
+        if source_title.strip():
+            return " ".join(source_title.splitlines()).strip()
+        disk_title = self._system_game_title_from_disk(self.data_dir)
+        if disk_title.strip():
+            return " ".join(disk_title.splitlines()).strip()
+        return ""
+
     def _update_window_title(self) -> None:
         if self.data_dir is None:
             self.setWindowTitle(APP_TITLE)
             return
+        project_title = self._window_game_title()
+        if not project_title:
+            project_title = self.data_dir.name
         dirty_suffix = " *" if any(session.dirty for session in self.sessions.values()) else ""
-        self.setWindowTitle(f"{APP_TITLE} | {self.data_dir}{dirty_suffix}")
+        self.setWindowTitle(f"{APP_TITLE} | {project_title}{dirty_suffix}")
 
     def _project_state_key(self, folder: Path) -> str:
         try:
@@ -5535,6 +5577,7 @@ class DialogueVisualEditor(
             len(load_errors),
             bak_bootstrap_count,
         )
+        self._update_window_title()
 
     def _file_path_from_item(self, item: Optional[QListWidgetItem]) -> Optional[Path]:
         if item is None:

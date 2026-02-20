@@ -106,6 +106,9 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         sync_mode_ui = getattr(self, "_sync_translator_mode_ui", None)
         if callable(sync_mode_ui):
             sync_mode_ui()
+        refresh_window_title = getattr(self, "_update_window_title", None)
+        if callable(refresh_window_title):
+            refresh_window_title()
         self._rerender_current_file()
 
     def _update_mode_controls(self) -> None:
