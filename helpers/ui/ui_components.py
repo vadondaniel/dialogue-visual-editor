@@ -1439,9 +1439,9 @@ class ItemNameDescriptionWidget(QFrame):
             if self._flash_level == 1:
                 block_bg = "#4b3500" if self._dark_theme else "#fef9c3"
         if self._audit_pinned:
-            block_bg = "#3f1d1d" if self._dark_theme else "#fee2e2"
-            block_border = "#ef4444" if self._dark_theme else "#b91c1c"
-            meta_color = "#fecaca" if self._dark_theme else "#7f1d1d"
+            block_bg = "#0f2233" if self._dark_theme else "#e0f2fe"
+            block_border = "#38bdf8" if self._dark_theme else "#0369a1"
+            meta_color = "#bae6fd" if self._dark_theme else "#075985"
         self.title_label.setText(
             f"{self.name_index_label} {self._actor_id}"
             if self._actor_id is not None
@@ -1469,8 +1469,8 @@ class ItemNameDescriptionWidget(QFrame):
         if self._flash_level > 0 and not self._audit_pinned:
             bg = "#3b2a00" if self._dark_theme else "#fefce8"
         if self._audit_pinned:
-            bg = "#2a1515" if self._dark_theme else "#fff1f2"
-            border = "#ef4444" if self._dark_theme else "#b91c1c"
+            bg = "#0b2233" if self._dark_theme else "#f0f9ff"
+            border = "#38bdf8" if self._dark_theme else "#0369a1"
         style = (
             "QPlainTextEdit {"
             f"background: {bg}; color: {fg}; border: 2px solid {border}; border-radius: 6px;"
@@ -2315,9 +2315,9 @@ class DialogueBlockWidget(QFrame):
             if self._flash_level == 1:
                 block_bg = "#4b3500" if self._dark_theme else "#fef9c3"
         if self._audit_pinned:
-            block_bg = "#3f1d1d" if self._dark_theme else "#fee2e2"
-            block_border = "#ef4444" if self._dark_theme else "#b91c1c"
-            meta_color = "#fecaca" if self._dark_theme else "#7f1d1d"
+            block_bg = "#0f2233" if self._dark_theme else "#e0f2fe"
+            block_border = "#38bdf8" if self._dark_theme else "#0369a1"
+            meta_color = "#bae6fd" if self._dark_theme else "#075985"
         title_suffix = f" ({', '.join(tags)})" if tags else ""
 
         if self.actor_mode:
@@ -2380,8 +2380,8 @@ class DialogueBlockWidget(QFrame):
         if self._flash_level > 0 and not self._audit_pinned:
             bg = "#3b2a00" if self._dark_theme else "#fefce8"
         if self._audit_pinned:
-            bg = "#2a1515" if self._dark_theme else "#fff1f2"
-            border = "#ef4444" if self._dark_theme else "#b91c1c"
+            bg = "#0b2233" if self._dark_theme else "#f0f9ff"
+            border = "#38bdf8" if self._dark_theme else "#0369a1"
         editor_fg = (
             "transparent"
             if self._should_show_masked_preview_overlay()
