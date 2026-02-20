@@ -187,6 +187,7 @@ _JS_SYSTEM_ADVANCED_FONT_RE = re.compile(
     r"\$dataSystem\s*\.\s*advanced\s*\.\s*fontSize"
 )
 _VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
+_INLINE_COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]")
 _DEFAULT_VARIABLE_LENGTH_ESTIMATE = 4
 _MAX_VARIABLE_LENGTH_ESTIMATE = 64
 _DEFAULT_SMART_COLLAPSE_SOFT_RATIO_PERCENT = 50
@@ -740,6 +741,7 @@ class DialogueVisualEditor(
             self.translator_source_view.document(),
             is_dark_palette(),
             color_code_resolver=self._color_for_rpgm_code,
+            resolve_color_flow=True,
         )
         detail_content_layout.addWidget(self.translator_source_view, 1)
 
@@ -3032,6 +3034,8 @@ class DialogueVisualEditor(
                 "",
             )
             self.translator_source_view.setPlainText("")
+            self.translator_source_highlighter.set_initial_active_color_code(0)
+            self.translator_source_highlighter.rehighlight()
             self.translator_reference_exact_label.setText("")
             self.translator_reference_similar_label.setText("")
             self.translator_review_exact_matches_btn.setEnabled(False)
@@ -3086,8 +3090,13 @@ class DialogueVisualEditor(
                     "",
                 )
 
+        self.translator_source_highlighter.set_initial_active_color_code(
+            self._translator_source_initial_active_color_code(segment)
+        )
         self.translator_source_view.setPlainText(
-            "\n".join(self._segment_source_lines_for_translation(segment)))
+            "\n".join(self._segment_source_lines_for_translation(segment))
+        )
+        self.translator_source_highlighter.rehighlight()
         if actor_mode:
             self.translator_reference_exact_label.setText("")
             self.translator_reference_similar_label.setText("")
@@ -3150,6 +3159,30 @@ class DialogueVisualEditor(
             return
         target.setText(self._render_text_with_visible_color_codes_html(cleaned))
         target.setToolTip(cleaned)
+
+    def _active_color_code_at_end_of_lines(self, lines: list[str]) -> int:
+        active = 0
+        text = "\n".join(lines)
+        for match in _INLINE_COLOR_CODE_RE.finditer(text):
+            try:
+                active = int(match.group(1))
+            except Exception:
+                active = 0
+        return max(0, active)
+
+    def _translator_source_initial_active_color_code(
+        self,
+        segment: DialogueSegment,
+    ) -> int:
+        if not self._segment_has_inferred_line1_speaker(segment):
+            return 0
+        source_lines = self._segment_source_lines_for_display(segment)
+        if len(source_lines) <= 1:
+            return 0
+        first_line = source_lines[0] if isinstance(source_lines[0], str) else ""
+        if not first_line:
+            return 0
+        return self._active_color_code_at_end_of_lines([first_line])
 
     def _segment_for_exact_match_row(self, row: dict[str, Any]) -> Optional[DialogueSegment]:
         path = row.get("path")

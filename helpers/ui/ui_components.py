@@ -391,9 +391,12 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
         parent: Any,
         dark_theme: bool,
         color_code_resolver: Optional[Callable[[int], str]] = None,
+        resolve_color_flow: bool = False,
     ):
         super().__init__(parent)
         self._color_code_resolver = color_code_resolver
+        self._resolve_color_flow = bool(resolve_color_flow)
+        self._initial_active_color_code = 0
         if dark_theme:
             command_color = "#fbbf24"
             symbol_color = "#93c5fd"
@@ -415,26 +418,75 @@ class ControlCodeHighlighter(QSyntaxHighlighter):
             (re.compile(r"\\[\\{}.$|!><^]"), symbol_format),
         ]
 
+    def set_initial_active_color_code(self, color_code: int) -> None:
+        try:
+            parsed = int(color_code)
+        except Exception:
+            parsed = 0
+        self._initial_active_color_code = max(0, parsed)
+
     def highlightBlock(self, text: str) -> None:
         for pattern, fmt in self._rules:
             for match in pattern.finditer(text):
                 self.setFormat(match.start(), match.end() - match.start(), fmt)
-        if self._color_code_resolver is None:
+        color_resolver = self._color_code_resolver
+        if color_resolver is None:
+            self.setCurrentBlockState(-1)
             return
-        for match in self._COLOR_CODE_RE.finditer(text):
-            try:
-                color_code = int(match.group(1))
-            except Exception:
-                continue
-            color_hex = self._color_code_resolver(color_code)
+        if not self._resolve_color_flow:
+            for match in self._COLOR_CODE_RE.finditer(text):
+                try:
+                    color_code = int(match.group(1))
+                except Exception:
+                    continue
+                color_hex = color_resolver(color_code)
+                color = QColor(color_hex)
+                if not color.isValid():
+                    continue
+                color_fmt = QTextCharFormat()
+                color_fmt.setForeground(color)
+                color_fmt.setFontWeight(QFont.Weight.DemiBold)
+                self.setFormat(match.start(), match.end() - match.start(), color_fmt)
+            self.setCurrentBlockState(-1)
+            return
+
+        def apply_active_color(start: int, length: int, color_code: int, *, bold: bool) -> None:
+            if length <= 0 or color_code <= 0:
+                return
+            color_hex = color_resolver(color_code)
             color = QColor(color_hex)
             if not color.isValid():
-                continue
-            color_fmt = QTextCharFormat()
-            color_fmt.setForeground(color)
-            color_fmt.setFontWeight(QFont.Weight.DemiBold)
-            self.setFormat(match.start(), match.end() -
-                           match.start(), color_fmt)
+                return
+            fmt = QTextCharFormat()
+            fmt.setForeground(color)
+            if bold:
+                fmt.setFontWeight(QFont.Weight.DemiBold)
+            self.setFormat(start, length, fmt)
+
+        prev_state = self.previousBlockState()
+        if prev_state >= 0:
+            active_color = prev_state
+        else:
+            block_number = self.currentBlock().blockNumber()
+            active_color = self._initial_active_color_code if block_number == 0 else 0
+
+        cursor = 0
+        for match in self._COLOR_CODE_RE.finditer(text):
+            start = match.start()
+            end = match.end()
+            if start > cursor and active_color > 0:
+                apply_active_color(cursor, start - cursor, active_color, bold=False)
+            try:
+                next_color = int(match.group(1))
+            except Exception:
+                next_color = 0
+            if next_color > 0:
+                apply_active_color(start, end - start, next_color, bold=True)
+            active_color = max(0, next_color)
+            cursor = end
+        if cursor < len(text) and active_color > 0:
+            apply_active_color(cursor, len(text) - cursor, active_color, bold=False)
+        self.setCurrentBlockState(active_color)
 
 
 class SpeakerManagerDialog(QDialog):
