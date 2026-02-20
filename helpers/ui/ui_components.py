@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import html
+import math
 import re
 from typing import Any, Callable, Literal, Optional, Protocol, cast
 
@@ -45,6 +46,7 @@ from ..core.text_utils import (
     collapse_lines_join_paragraphs,
     first_overflow_char_index,
     looks_like_name_line,
+    parse_units_for_measure,
     split_lines_by_row_budget,
     smart_collapse_lines,
     split_lines_preserve_empty,
@@ -1747,6 +1749,7 @@ class DialogueBlockWidget(QFrame):
         self._masked_color_spans: list[list[tuple[int, int, str, float]]] = []
         self._source_hint_lines: list[str] = []
         self._source_hint_overlay: Optional[QLabel] = None
+        self._width_limit_marker: Optional[QFrame] = None
         self.editor: Optional[QPlainTextEdit] = None
         self._control_code_highlighter: Optional[ControlCodeHighlighter] = None
         self._selected = False
@@ -1833,6 +1836,7 @@ class DialogueBlockWidget(QFrame):
         editor_row = QHBoxLayout()
         editor_row.setContentsMargins(0, 0, 0, 0)
         editor_row.setSpacing(8)
+        self._editor_row = editor_row
 
         self._raw_lines = [""]
         self._load_editor_lines_from_segment()
@@ -1957,6 +1961,12 @@ class DialogueBlockWidget(QFrame):
         overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         overlay.setStyleSheet("background: transparent;")
         overlay.setFont(self._editor_font)
+        width_limit_marker = QFrame(ed.viewport())
+        width_limit_marker.setFrameShape(QFrame.Shape.NoFrame)
+        width_limit_marker.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+            True,
+        )
 
         ed.viewport().setMouseTracking(True)
         ed.viewport().installEventFilter(self)
@@ -1965,12 +1975,14 @@ class DialogueBlockWidget(QFrame):
 
         self.editor = ed
         self._source_hint_overlay = overlay
+        self._width_limit_marker = width_limit_marker
         self._preview.setVisible(False)
         self._editor_layout.addWidget(ed, 1)
         self._apply_editor_width()
         self._apply_editor_style(self._has_warning)
         self._sync_control_code_visibility(force=True)
         self._refresh_source_hint_overlay()
+        self._refresh_width_limit_marker()
         self._apply_overflow_highlighting()
 
     def _unmount_editor(self) -> None:
@@ -1999,6 +2011,10 @@ class DialogueBlockWidget(QFrame):
             self._source_hint_overlay.setParent(None)
             self._source_hint_overlay.deleteLater()
             self._source_hint_overlay = None
+        if self._width_limit_marker is not None:
+            self._width_limit_marker.setParent(None)
+            self._width_limit_marker.deleteLater()
+            self._width_limit_marker = None
 
         ed.setParent(None)
         ed.deleteLater()
@@ -2080,6 +2096,7 @@ class DialogueBlockWidget(QFrame):
                 return True
             if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
                 self._refresh_source_hint_overlay()
+                self._refresh_width_limit_marker()
         return super().eventFilter(watched, event)
 
     def _variable_tooltip_text(self, event_pos: QPoint) -> str:
@@ -2346,24 +2363,137 @@ class DialogueBlockWidget(QFrame):
 
     def _apply_editor_width(self) -> None:
         editor = self.editor
-        target_widget = editor if editor is not None else self._editor_container
+        target_widgets: list[QWidget] = [self._editor_container]
+        if editor is not None:
+            target_widgets.append(editor)
         if self.actor_mode:
             metrics = QFontMetrics(self._editor_font)
-            target_widget.setMinimumWidth(
-                max(420, metrics.horizontalAdvance("M") * 24))
-            target_widget.setMaximumWidth(16777215)
+            min_width = max(420, metrics.horizontalAdvance("M") * 24)
+            for widget in target_widgets:
+                widget.setMinimumWidth(min_width)
+                widget.setMaximumWidth(16777215)
             if self.name_index_kind == "item" and self._name_index_field == "description":
-                target_widget.setFixedHeight(max(164, metrics.lineSpacing() * 8))
+                target_height = max(164, metrics.lineSpacing() * 8)
             else:
-                target_widget.setFixedHeight(max(96, metrics.lineSpacing() * 3))
+                target_height = max(96, metrics.lineSpacing() * 3)
+            for widget in target_widgets:
+                widget.setFixedHeight(target_height)
             return
         char_width = self._width_chars()
         metrics = QFontMetrics(self._editor_font)
         pixel_width = metrics.horizontalAdvance("M") * (char_width + 2)
-        target_widget.setMinimumWidth(pixel_width)
-        target_widget.setMaximumWidth(pixel_width + 36)
-        target_widget.setFixedHeight(
-            max(130, metrics.lineSpacing() * (self.max_lines + 2)))
+        char_pixel = metrics.horizontalAdvance("M")
+        expand_chars = self._dynamic_expand_width_chars(char_width)
+        target_width = pixel_width + (char_pixel * expand_chars)
+        target_height = max(130, metrics.lineSpacing() * (self.max_lines + 2))
+        for widget in target_widgets:
+            widget.setMinimumWidth(target_width)
+            widget.setMaximumWidth(target_width)
+            widget.setFixedHeight(target_height)
+        if expand_chars > 0:
+            self._editor_row.setStretch(0, 100)
+            self._editor_row.setStretch(1, 0)
+        else:
+            self._editor_row.setStretch(0, 1)
+            self._editor_row.setStretch(1, 1)
+        self._refresh_width_limit_marker()
+
+    def _dynamic_expand_width_chars(self, width_chars: int) -> int:
+        if self.actor_mode:
+            return 0
+        if not self._is_standard_dialogue_block():
+            return 0
+        max_visible = self._max_display_width_units()
+        if max_visible <= float(width_chars):
+            return 0
+        # Grow to fit longer lines, but cap to avoid unbounded widths.
+        overflow_chars = int(math.ceil(max_visible - float(width_chars)))
+        return max(0, min(120, overflow_chars + 2))
+
+    def _line_display_width_units(
+        self,
+        line: str,
+        spans: Optional[list[tuple[int, int, str, float]]] = None,
+    ) -> float:
+        if not line:
+            return 0.0
+        metrics = QFontMetrics(self._editor_font)
+        base_char_px = float(max(1, metrics.horizontalAdvance("M")))
+        if not spans:
+            return float(metrics.horizontalAdvance(line)) / base_char_px
+
+        units = 0.0
+        cursor = 0
+        sorted_spans = sorted(spans, key=lambda item: (item[0], item[1]))
+        line_len = len(line)
+        for start, end, _color_hex, font_scale in sorted_spans:
+            safe_start = max(0, min(line_len, int(start)))
+            safe_end = max(safe_start, min(line_len, int(end)))
+            if safe_start > cursor:
+                units += float(metrics.horizontalAdvance(line[cursor:safe_start])) / base_char_px
+            if safe_end > safe_start:
+                chunk = line[safe_start:safe_end]
+                chunk_units = float(metrics.horizontalAdvance(chunk)) / base_char_px
+                scale = float(font_scale) if isinstance(font_scale, (int, float)) else 1.0
+                units += chunk_units * max(0.1, scale)
+            cursor = max(cursor, safe_end)
+        if cursor < line_len:
+            units += float(metrics.horizontalAdvance(line[cursor:])) / base_char_px
+        return units
+
+    def _max_display_width_units(self) -> float:
+        editor = self.editor
+        if editor is not None:
+            display_lines = split_lines_preserve_empty(editor.toPlainText())
+        else:
+            if self._displaying_masked_text:
+                display_lines = self._masked_lines_from_raw(self._raw_lines)
+            else:
+                display_lines = list(self._raw_lines if self._raw_lines else [""])
+        if not display_lines:
+            return 0.0
+
+        if not self._displaying_masked_text:
+            return max(self._line_display_width_units(line) for line in display_lines)
+
+        spans_per_line = self._masked_color_spans
+        if len(spans_per_line) != len(display_lines):
+            display_lines = self._masked_lines_from_raw(self._raw_lines)
+            spans_per_line = self._masked_color_spans
+        if len(spans_per_line) != len(display_lines):
+            spans_per_line = [[] for _ in display_lines]
+        return max(
+            self._line_display_width_units(
+                line,
+                spans_per_line[idx] if idx < len(spans_per_line) else None,
+            )
+            for idx, line in enumerate(display_lines)
+        )
+
+    def _refresh_width_limit_marker(self) -> None:
+        editor = self.editor
+        marker = self._width_limit_marker
+        if editor is None or marker is None:
+            return
+        if self.actor_mode or not self._is_standard_dialogue_block():
+            marker.setVisible(False)
+            return
+        viewport = editor.viewport()
+        width_chars = self._width_chars()
+        metrics = QFontMetrics(self._editor_font)
+        char_pixel = metrics.horizontalAdvance("M")
+        margin = int(editor.document().documentMargin())
+        marker_x = margin + (char_pixel * width_chars)
+        if marker_x <= 0 or marker_x >= viewport.width():
+            marker.setVisible(False)
+            return
+        marker_color = "#ef4444" if self._dark_theme else "#b91c1c"
+        marker.setStyleSheet(f"background: {marker_color}; border: none;")
+        marker.setGeometry(marker_x, 1, 1, max(1, viewport.height() - 2))
+        width_mode = self._width_mode_name()
+        marker.setToolTip(f"Recommended width limit: {width_chars} chars ({width_mode})")
+        marker.raise_()
+        marker.setVisible(True)
 
     def _refresh_block_style(self) -> None:
         tags: list[str] = []
@@ -2518,7 +2648,11 @@ class DialogueBlockWidget(QFrame):
         return "<br/>".join(rows)
 
     def _should_show_masked_preview_overlay(self) -> bool:
-        return False
+        return bool(
+            self._displaying_masked_text
+            and self.editor is not None
+            and self.speaker_display_html_resolver is not None
+        )
 
     def _masked_preview_html(self) -> str:
         lines = self._raw_lines or [""]
@@ -2527,6 +2661,7 @@ class DialogueBlockWidget(QFrame):
             rendered = self.speaker_display_html_resolver(full_text).strip()
             if rendered:
                 return rendered
+        lines = self._masked_lines_from_raw(lines)
         rows: list[str] = []
         for line in lines:
             rows.append(_html_escape_line_preserve_indent(line))
@@ -2657,6 +2792,7 @@ class DialogueBlockWidget(QFrame):
             self._control_code_highlighter.set_dark_theme(dark_theme)
         self._refresh_block_style()
         self._apply_editor_style(self._has_warning)
+        self._refresh_width_limit_marker()
         self._refresh_status()
 
     def set_control_mismatch_highlighting_enabled(self, enabled: bool) -> None:
@@ -2838,6 +2974,126 @@ class DialogueBlockWidget(QFrame):
             line_idx += 1
         return selections
 
+    def _raw_font_scale_selections(self) -> list[QTextEdit.ExtraSelection]:
+        editor = self.editor
+        if editor is None:
+            return []
+        if self._displaying_masked_text:
+            return []
+        text = editor.toPlainText()
+        if not text:
+            return []
+        base_point_size = editor.font().pointSizeF()
+        if base_point_size <= 0:
+            fallback_point_size = editor.font().pointSize()
+            base_point_size = float(fallback_point_size if fallback_point_size > 0 else 10)
+
+        selections: list[QTextEdit.ExtraSelection] = []
+        span_start: Optional[int] = None
+        span_scale = 1.0
+        cursor_pos = 0
+
+        for unit in parse_units_for_measure(text):
+            token_text = unit.get("text")
+            token = token_text if isinstance(token_text, str) else ""
+            token_len = len(token)
+            is_newline = bool(unit.get("is_newline"))
+
+            if token_len == 0:
+                continue
+            if is_newline:
+                if span_start is not None and cursor_pos > span_start:
+                    selection = QTextEdit.ExtraSelection()
+                    fmt = QTextCharFormat()
+                    fmt.setFontPointSize(max(1.0, base_point_size * span_scale))
+                    sel_cursor = QTextCursor(editor.document())
+                    sel_cursor.setPosition(span_start)
+                    sel_cursor.setPosition(cursor_pos, QTextCursor.MoveMode.KeepAnchor)
+                    selection_any = cast(Any, selection)
+                    selection_any.format = fmt
+                    selection_any.cursor = sel_cursor
+                    selections.append(selection)
+                span_start = None
+                span_scale = 1.0
+                cursor_pos += token_len
+                continue
+
+            if token_len != 1:
+                if span_start is not None and cursor_pos > span_start:
+                    selection = QTextEdit.ExtraSelection()
+                    fmt = QTextCharFormat()
+                    fmt.setFontPointSize(max(1.0, base_point_size * span_scale))
+                    sel_cursor = QTextCursor(editor.document())
+                    sel_cursor.setPosition(span_start)
+                    sel_cursor.setPosition(cursor_pos, QTextCursor.MoveMode.KeepAnchor)
+                    selection_any = cast(Any, selection)
+                    selection_any.format = fmt
+                    selection_any.cursor = sel_cursor
+                    selections.append(selection)
+                span_start = None
+                span_scale = 1.0
+                cursor_pos += token_len
+                continue
+
+            raw_visible = unit.get("visible", 0.0)
+            if isinstance(raw_visible, (int, float)):
+                unit_scale = float(raw_visible)
+            else:
+                try:
+                    unit_scale = float(raw_visible)
+                except Exception:
+                    unit_scale = 1.0
+            unit_scale = max(0.1, unit_scale)
+
+            if abs(unit_scale - 1.0) <= 0.01:
+                if span_start is not None and cursor_pos > span_start:
+                    selection = QTextEdit.ExtraSelection()
+                    fmt = QTextCharFormat()
+                    fmt.setFontPointSize(max(1.0, base_point_size * span_scale))
+                    sel_cursor = QTextCursor(editor.document())
+                    sel_cursor.setPosition(span_start)
+                    sel_cursor.setPosition(cursor_pos, QTextCursor.MoveMode.KeepAnchor)
+                    selection_any = cast(Any, selection)
+                    selection_any.format = fmt
+                    selection_any.cursor = sel_cursor
+                    selections.append(selection)
+                span_start = None
+                span_scale = 1.0
+                cursor_pos += token_len
+                continue
+
+            if span_start is None:
+                span_start = cursor_pos
+                span_scale = unit_scale
+            elif abs(unit_scale - span_scale) > 0.01:
+                if cursor_pos > span_start:
+                    selection = QTextEdit.ExtraSelection()
+                    fmt = QTextCharFormat()
+                    fmt.setFontPointSize(max(1.0, base_point_size * span_scale))
+                    sel_cursor = QTextCursor(editor.document())
+                    sel_cursor.setPosition(span_start)
+                    sel_cursor.setPosition(cursor_pos, QTextCursor.MoveMode.KeepAnchor)
+                    selection_any = cast(Any, selection)
+                    selection_any.format = fmt
+                    selection_any.cursor = sel_cursor
+                    selections.append(selection)
+                span_start = cursor_pos
+                span_scale = unit_scale
+            cursor_pos += token_len
+
+        if span_start is not None and cursor_pos > span_start:
+            selection = QTextEdit.ExtraSelection()
+            fmt = QTextCharFormat()
+            fmt.setFontPointSize(max(1.0, base_point_size * span_scale))
+            sel_cursor = QTextCursor(editor.document())
+            sel_cursor.setPosition(span_start)
+            sel_cursor.setPosition(cursor_pos, QTextCursor.MoveMode.KeepAnchor)
+            selection_any = cast(Any, selection)
+            selection_any.format = fmt
+            selection_any.cursor = sel_cursor
+            selections.append(selection)
+        return selections
+
     def _current_lines(self) -> list[str]:
         if self.editor is None:
             return list(self._raw_lines if self._raw_lines else [""])
@@ -2999,8 +3255,12 @@ class DialogueBlockWidget(QFrame):
         if self.editor is None:
             return
         selections: list[QTextEdit.ExtraSelection] = []
+        masked_overlay_active = self._should_show_masked_preview_overlay()
         if self._displaying_masked_text:
-            selections.extend(self._masked_color_selections())
+            if not masked_overlay_active:
+                selections.extend(self._masked_color_selections())
+        else:
+            selections.extend(self._raw_font_scale_selections())
         can_highlight_overflow = (
             (not self.actor_mode)
             and self._is_standard_dialogue_block()
@@ -3035,6 +3295,7 @@ class DialogueBlockWidget(QFrame):
         lines = self._current_lines()
         if self.editor is None:
             self._preview.setText(self._preview_text())
+        self._apply_editor_width()
         storage_lines = self._storage_lines_from_editor_lines(lines)
         max_rows_budget = float(max(1, self.max_lines))
         control_mismatch_problem = self._has_control_mismatch_problem()
@@ -3144,7 +3405,7 @@ class DialogueBlockWidget(QFrame):
                 over_width.append(idx)
 
         line_label = "line" if len(lines) == 1 else "lines"
-        text = f"{len(lines)} {line_label}, width hint: {width_chars} chars ({width_mode})"
+        text = f"{len(lines)} {line_label}, width limit: {width_chars} chars ({width_mode})"
         if over_width:
             over_width_label = "line" if len(over_width) == 1 else "lines"
             text += f", over width on {over_width_label}: {', '.join(str(i) for i in over_width[:6])}"

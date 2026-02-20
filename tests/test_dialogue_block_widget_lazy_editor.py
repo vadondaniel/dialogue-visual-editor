@@ -138,6 +138,118 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertIn("next", widget._preview.text())
         widget.deleteLater()
 
+    def test_editor_shows_width_limit_marker_tooltip(self) -> None:
+        segment = _segment(["This is a test line."])
+        widget = _widget(segment)
+        widget.resize(1100, 260)
+        widget.set_editor_active(True)
+        self._app.processEvents()
+        marker = widget._width_limit_marker
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertIn("Recommended width limit:", marker.toolTip())
+        self.assertIn("chars", marker.toolTip())
+        widget.deleteLater()
+
+    def test_editor_width_expands_only_for_overflow_content(self) -> None:
+        segment = _segment(["Short line"])
+        widget = _widget(segment)
+        widget.resize(1400, 260)
+        widget.set_editor_active(True)
+        self._app.processEvents()
+        editor = widget.editor
+        assert editor is not None
+        base_width = editor.maximumWidth()
+
+        long_line = "W" * 120
+        widget._set_editor_lines([long_line])
+        self._app.processEvents()
+        expanded_width = editor.maximumWidth()
+        self.assertGreater(expanded_width, base_width)
+
+        widget._set_editor_lines(["Short again"])
+        self._app.processEvents()
+        shrunk_width = editor.maximumWidth()
+        self.assertEqual(shrunk_width, base_width)
+        widget.deleteLater()
+
+    def test_raw_editor_applies_font_scale_for_brace_tokens(self) -> None:
+        segment = _segment([r"\{BIG text"])
+        widget = _widget(segment)
+        widget.set_editor_active(True)
+        self._app.processEvents()
+        editor = widget.editor
+        assert editor is not None
+        widget._apply_overflow_highlighting()
+        base_point_size = editor.font().pointSizeF()
+        if base_point_size <= 0:
+            fallback_point_size = editor.font().pointSize()
+            base_point_size = float(fallback_point_size if fallback_point_size > 0 else 10)
+        has_scaled_selection = False
+        for selection in editor.extraSelections():
+            selection_any = cast(Any, selection)
+            point_size = selection_any.format.fontPointSize()
+            if point_size > (base_point_size + 0.25):
+                has_scaled_selection = True
+                break
+        self.assertTrue(has_scaled_selection)
+        widget.deleteLater()
+
+    def test_expand_width_accounts_for_shown_vs_hidden_control_codes(self) -> None:
+        heavy_codes = (r"\C[2]" * 20) + "Hi"
+        segment = _segment([heavy_codes])
+        widget = _widget(segment)
+        widget.resize(1400, 260)
+        widget.set_editor_active(True)
+        self._app.processEvents()
+
+        raw_expand = widget._dynamic_expand_width_chars(widget._width_chars())
+        self.assertGreater(raw_expand, 0)
+
+        widget.set_hide_control_codes_when_unfocused(True)
+        editor = widget.editor
+        assert editor is not None
+        editor.clearFocus()
+        widget._sync_control_code_visibility(force=True)
+        self._app.processEvents()
+
+        hidden_expand = widget._dynamic_expand_width_chars(widget._width_chars())
+        self.assertLess(hidden_expand, raw_expand)
+        widget.deleteLater()
+
+    def test_unfocused_hidden_mode_uses_html_overlay_for_brace_scaling(self) -> None:
+        segment = _segment([r"\{Big thought"])
+
+        def render_html(value: str) -> str:
+            if r"\{" in value:
+                return '<span style="font-size: 16pt;">Big thought</span>'
+            return value
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=False,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=render_html,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=None,
+        )
+        widget.set_editor_active(True)
+        editor = widget.editor
+        assert editor is not None
+        editor.clearFocus()
+        widget._sync_control_code_visibility(force=True)
+        widget.set_hide_control_codes_when_unfocused(True)
+        editor.clearFocus()
+        widget._sync_control_code_visibility(force=True)
+        self._app.processEvents()
+
+        overlay = widget._source_hint_overlay
+        self.assertIsNotNone(overlay)
+        assert overlay is not None
+        self.assertFalse(overlay.isHidden())
+        self.assertIn("font-size", overlay.text())
+        widget.deleteLater()
+
     def test_thought_block_has_title_and_meta_indicator(self) -> None:
         segment = _segment(["Inner thought"])
         segment.code101["parameters"][2] = 1

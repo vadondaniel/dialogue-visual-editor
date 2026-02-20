@@ -44,6 +44,24 @@ class PresentationColorCodeHtmlTests(unittest.TestCase):
         self.assertIn(r"\C[0]", rendered)
         self.assertIn("color: #22aa22;", rendered)
 
+    def test_render_applies_font_size_style_for_brace_tokens(self) -> None:
+        harness = _Harness()
+
+        rendered = harness._render_text_with_color_codes_html(r"\{BIG\} normal")
+
+        self.assertIn("BIG", rendered)
+        self.assertIn("normal", rendered)
+        self.assertIn("font-size:", rendered)
+
+    def test_hidden_control_spans_apply_font_scale_for_brace_tokens(self) -> None:
+        harness = _Harness()
+
+        masked, spans = harness._hidden_control_line_with_color_spans(r"\{BIG text")
+
+        self.assertEqual(masked, "BIG text")
+        self.assertTrue(spans)
+        self.assertGreater(spans[0][3], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
