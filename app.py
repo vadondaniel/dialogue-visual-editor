@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -959,6 +960,13 @@ class DialogueVisualEditor(
         mass_translate_action.triggered.connect(self._open_mass_translate_dialog)
         tools_menu.addAction(mass_translate_action)
 
+        translations_action = QAction("Translations...", self)
+        translations_action.setShortcut(QKeySequence("F7"))
+        translations_action.triggered.connect(
+            self._open_translation_settings_dialog
+        )
+        tools_menu.addAction(translations_action)
+
         normalize_codes_action = QAction("Normalize Codes...", self)
         normalize_codes_action.setShortcut(QKeySequence("F3"))
         normalize_codes_action.triggered.connect(self._open_normalize_codes_dialog)
@@ -979,6 +987,15 @@ class DialogueVisualEditor(
         trim_ellipses_action = QAction("Trim Extra Ellipses...", self)
         trim_ellipses_action.triggered.connect(self._open_trim_extra_ellipses_dialog)
         tools_menu.addAction(trim_ellipses_action)
+
+        self._settings_translation_profiles_menu = None
+        self._settings_translation_profiles_switch_menu = None
+        self._settings_translation_new_profile_action = None
+        self._settings_translation_profile_settings_action = None
+        self._settings_translation_project_source_action = None
+        self._settings_translation_rename_profile_action = None
+        self._settings_translation_delete_profile_action = None
+        self._rebuild_translation_profile_menu()
 
         settings_menu = menu_bar.addMenu("Settings")
         mode_menu = settings_menu.addMenu("Edit Mode")
@@ -1091,41 +1108,6 @@ class DialogueVisualEditor(
             self._settings_smart_collapse_soft_ratio_action
         )
         self._sync_smart_collapse_menu_state()
-
-        translation_profiles_menu = settings_menu.addMenu("Translation Profiles")
-        self._settings_translation_profiles_menu = translation_profiles_menu
-        switch_profile_menu = translation_profiles_menu.addMenu("Switch Profile")
-        self._settings_translation_profiles_switch_menu = switch_profile_menu
-
-        new_profile_action = QAction("New Profile...", self)
-        new_profile_action.triggered.connect(self._create_translation_profile)
-        translation_profiles_menu.addAction(new_profile_action)
-        self._settings_translation_new_profile_action = new_profile_action
-
-        profile_settings_action = QAction("Edit Active Profile Settings...", self)
-        profile_settings_action.triggered.connect(
-            self._edit_active_translation_profile_settings
-        )
-        translation_profiles_menu.addAction(profile_settings_action)
-        self._settings_translation_profile_settings_action = profile_settings_action
-
-        project_source_action = QAction("Set Project Source Language...", self)
-        project_source_action.triggered.connect(
-            self._set_project_source_language_code
-        )
-        translation_profiles_menu.addAction(project_source_action)
-        self._settings_translation_project_source_action = project_source_action
-
-        rename_profile_action = QAction("Rename Active Profile...", self)
-        rename_profile_action.triggered.connect(self._rename_active_translation_profile)
-        translation_profiles_menu.addAction(rename_profile_action)
-        self._settings_translation_rename_profile_action = rename_profile_action
-
-        delete_profile_action = QAction("Delete Active Profile...", self)
-        delete_profile_action.triggered.connect(self._delete_active_translation_profile)
-        translation_profiles_menu.addAction(delete_profile_action)
-        self._settings_translation_delete_profile_action = delete_profile_action
-        self._rebuild_translation_profile_menu()
 
         problem_checks_menu = settings_menu.addMenu("Problem Checks")
         problem_char_limit_action = QAction("Flag char-width overflow", self)
@@ -1278,27 +1260,25 @@ class DialogueVisualEditor(
 
     def _rebuild_translation_profile_menu(self) -> None:
         switch_menu = self._settings_translation_profiles_switch_menu
-        if switch_menu is None:
-            return
-        switch_menu.clear()
         profile_ids = self._translation_profile_ids_sorted()
-
-        action_group = QActionGroup(self)
-        action_group.setExclusive(True)
-        self._settings_translation_profile_switch_group = action_group
-        for profile_id in profile_ids:
-            action = QAction(self._translation_profile_choice_label(profile_id), self)
-            action.setCheckable(True)
-            action.setChecked(profile_id == self.active_translation_profile_id)
-            action.triggered.connect(
-                lambda checked=False, pid=profile_id: (
-                    self._switch_translation_profile(pid)
-                    if checked
-                    else None
+        if switch_menu is not None:
+            switch_menu.clear()
+            action_group = QActionGroup(self)
+            action_group.setExclusive(True)
+            self._settings_translation_profile_switch_group = action_group
+            for profile_id in profile_ids:
+                action = QAction(self._translation_profile_choice_label(profile_id), self)
+                action.setCheckable(True)
+                action.setChecked(profile_id == self.active_translation_profile_id)
+                action.triggered.connect(
+                    lambda checked=False, pid=profile_id: (
+                        self._switch_translation_profile(pid)
+                        if checked
+                        else None
+                    )
                 )
-            )
-            switch_menu.addAction(action)
-            action_group.addAction(action)
+                switch_menu.addAction(action)
+                action_group.addAction(action)
 
         has_folder = self.data_dir is not None
         if self._settings_translation_new_profile_action is not None:
@@ -1317,6 +1297,283 @@ class DialogueVisualEditor(
             self._settings_translation_delete_profile_action.setEnabled(
                 has_folder and len(profile_ids) > 1
             )
+
+    def _open_translation_settings_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Translations")
+        dialog.resize(760, 460)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        main_row = QHBoxLayout()
+        main_row.setSpacing(10)
+        layout.addLayout(main_row, 1)
+
+        profiles_group = QGroupBox("Profiles", dialog)
+        profiles_layout = QVBoxLayout(profiles_group)
+        profiles_layout.setContentsMargins(8, 8, 8, 8)
+        profiles_layout.setSpacing(6)
+        profiles_list = QListWidget(profiles_group)
+        profiles_list.setAlternatingRowColors(True)
+        profiles_layout.addWidget(profiles_list, 1)
+        main_row.addWidget(profiles_group, 1)
+
+        details_group = QGroupBox("Selected Profile", dialog)
+        details_form = QFormLayout(details_group)
+
+        selected_name_label = QLabel(details_group)
+        selected_name_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        details_form.addRow("Name", selected_name_label)
+
+        selected_id_label = QLabel(details_group)
+        selected_id_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        details_form.addRow("Profile ID", selected_id_label)
+
+        selected_target_label = QLabel(details_group)
+        selected_target_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        details_form.addRow("Target language", selected_target_label)
+
+        selected_warning_label = QLabel(details_group)
+        selected_warning_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        details_form.addRow("Warnings", selected_warning_label)
+
+        selected_progress_label = QLabel(details_group)
+        selected_progress_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        details_form.addRow("Translated strings", selected_progress_label)
+
+        source_language_label = QLabel(details_group)
+        source_language_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        details_form.addRow("Project source", source_language_label)
+
+        main_row.addWidget(details_group, 1)
+
+        def selected_profile_id() -> str:
+            current_item = profiles_list.currentItem()
+            if current_item is None:
+                return ""
+            profile_id_raw = current_item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(profile_id_raw, str):
+                return ""
+            return profile_id_raw.strip()
+
+        def profile_stats(profile_id: str) -> tuple[int, int, int]:
+            profile_state = self._ensure_translation_profile(profile_id)
+            files_raw = profile_state.get("files")
+            translated_count = 0
+            total_count = 0
+            warning_count = 0
+            if not isinstance(files_raw, dict):
+                return translated_count, total_count, warning_count
+
+            for file_state_raw in files_raw.values():
+                if not isinstance(file_state_raw, dict):
+                    continue
+                entries_raw = file_state_raw.get("entries")
+                if not isinstance(entries_raw, dict):
+                    continue
+                for entry_raw in entries_raw.values():
+                    if not isinstance(entry_raw, dict):
+                        continue
+                    if bool(entry_raw.get("translation_only", False)):
+                        continue
+                    source_preview_raw = entry_raw.get("source_preview", "")
+                    source_preview = (
+                        source_preview_raw
+                        if isinstance(source_preview_raw, str)
+                        else ""
+                    )
+                    visible_source = strip_control_tokens(
+                        source_preview
+                    ).replace("\u3000", " ").strip()
+                    if not visible_source:
+                        continue
+
+                    total_count += 1
+                    translation_lines_raw = entry_raw.get("translation_lines", [])
+                    if isinstance(translation_lines_raw, list):
+                        translation_lines = [
+                            line if isinstance(line, str) else str(line)
+                            for line in translation_lines_raw
+                        ]
+                    elif isinstance(translation_lines_raw, str):
+                        translation_lines = [translation_lines_raw]
+                    else:
+                        translation_lines = []
+                    has_translation = any(line.strip() for line in translation_lines)
+                    if has_translation:
+                        translated_count += 1
+                    else:
+                        warning_count += 1
+            return translated_count, total_count, warning_count
+
+        def refresh_selected_profile_details() -> None:
+            profile_id = selected_profile_id()
+            source_language_label.setText(self._translation_project_source_language_code())
+            if not profile_id:
+                selected_name_label.setText("-")
+                selected_id_label.setText("-")
+                selected_target_label.setText("-")
+                selected_warning_label.setText("0")
+                selected_progress_label.setText("0 / 0")
+                return
+            translated_count, total_count, warning_count = profile_stats(profile_id)
+            profile_name = self._translation_profile_name(profile_id)
+            if profile_id == self.active_translation_profile_id:
+                profile_name = f"{profile_name}"
+            selected_name_label.setText(profile_name)
+            selected_id_label.setText(profile_id)
+            selected_target_label.setText(
+                self._translation_profile_target_language_code(profile_id)
+            )
+            selected_warning_label.setText(str(warning_count))
+            selected_progress_label.setText(f"{translated_count} / {total_count}")
+
+        def refresh_profiles_list(preferred_profile_id: Optional[str] = None) -> None:
+            profile_ids = self._translation_profile_ids_sorted()
+            preferred = preferred_profile_id or selected_profile_id() or self.active_translation_profile_id
+            profiles_list.blockSignals(True)
+            try:
+                profiles_list.clear()
+                for profile_id in profile_ids:
+                    translated_count, total_count, warning_count = profile_stats(profile_id)
+                    _ = warning_count
+                    profile_name = self._translation_profile_name(profile_id)
+                    if total_count > 0:
+                        percent_value = int(round((translated_count / total_count) * 100))
+                        percent_text = f"{percent_value}%"
+                    else:
+                        percent_text = "--"
+                    if profile_id == self.active_translation_profile_id:
+                        row_text = f"{profile_name} {percent_text} [ACTIVE]"
+                    else:
+                        row_text = f"{profile_name} {percent_text}"
+                    item = QListWidgetItem(row_text)
+                    item.setData(Qt.ItemDataRole.UserRole, profile_id)
+                    profiles_list.addItem(item)
+                target_id = preferred if preferred else self.active_translation_profile_id
+                selected_row = -1
+                for row in range(profiles_list.count()):
+                    item = profiles_list.item(row)
+                    profile_id_raw = item.data(Qt.ItemDataRole.UserRole)
+                    if isinstance(profile_id_raw, str) and profile_id_raw == target_id:
+                        selected_row = row
+                        break
+                if selected_row < 0 and profiles_list.count() > 0:
+                    selected_row = 0
+                if selected_row >= 0:
+                    profiles_list.setCurrentRow(selected_row)
+            finally:
+                profiles_list.blockSignals(False)
+            refresh_selected_profile_details()
+
+        def switch_selected_profile() -> None:
+            profile_id = selected_profile_id()
+            if not profile_id:
+                return
+            self._switch_translation_profile(profile_id)
+            refresh_profiles_list(preferred_profile_id=profile_id)
+
+        def create_profile() -> None:
+            self._create_translation_profile()
+            refresh_profiles_list(preferred_profile_id=self.active_translation_profile_id)
+
+        def rename_profile() -> None:
+            profile_id = selected_profile_id()
+            if not profile_id:
+                return
+            if self._rename_translation_profile(profile_id):
+                refresh_profiles_list(preferred_profile_id=profile_id)
+
+        def delete_profile() -> None:
+            profile_id = selected_profile_id()
+            if not profile_id:
+                return
+            if self._delete_translation_profile(profile_id):
+                refresh_profiles_list(preferred_profile_id=self.active_translation_profile_id)
+
+        def edit_profile_settings() -> None:
+            profile_id = selected_profile_id()
+            if not profile_id:
+                return
+            if self._edit_translation_profile_settings(profile_id):
+                refresh_profiles_list(preferred_profile_id=profile_id)
+
+        def set_source_language() -> None:
+            self._set_project_source_language_code()
+            refresh_selected_profile_details()
+            refresh_profiles_list(preferred_profile_id=selected_profile_id())
+
+        def open_profiles_context_menu(pos: QPoint) -> None:
+            viewport_pos = profiles_list.viewport().mapFrom(profiles_list, pos)
+            clicked_item = profiles_list.itemAt(viewport_pos)
+            if clicked_item is not None and profiles_list.currentItem() is not clicked_item:
+                profiles_list.setCurrentItem(clicked_item)
+
+            menu = QMenu(profiles_list)
+            has_folder = self.data_dir is not None
+            profile_ids = self._translation_profile_ids_sorted()
+            selected_id = selected_profile_id()
+            has_selected = clicked_item is not None and bool(selected_id)
+
+            if has_selected:
+                switch_action = menu.addAction("Switch To This Profile")
+                switch_action.setEnabled(
+                    has_folder and selected_id != self.active_translation_profile_id
+                )
+                switch_action.triggered.connect(switch_selected_profile)
+
+                edit_action = menu.addAction("Edit This Profile Settings...")
+                edit_action.setEnabled(has_folder)
+                edit_action.triggered.connect(edit_profile_settings)
+
+                rename_action = menu.addAction("Rename This Profile...")
+                rename_action.setEnabled(has_folder)
+                rename_action.triggered.connect(rename_profile)
+
+                delete_action = menu.addAction("Delete This Profile...")
+                delete_action.setEnabled(has_folder and len(profile_ids) > 1)
+                delete_action.triggered.connect(delete_profile)
+
+                menu.addSeparator()
+
+            new_action = menu.addAction("Create New Profile...")
+            new_action.setEnabled(has_folder)
+            new_action.triggered.connect(create_profile)
+
+            source_action = menu.addAction("Set Project Source Language...")
+            source_action.setEnabled(has_folder)
+            source_action.triggered.connect(set_source_language)
+
+            menu.exec(profiles_list.viewport().mapToGlobal(viewport_pos))
+
+        profiles_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        profiles_list.customContextMenuRequested.connect(open_profiles_context_menu)
+        profiles_list.itemSelectionChanged.connect(refresh_selected_profile_details)
+        profiles_list.itemDoubleClicked.connect(
+            lambda _item: switch_selected_profile()
+        )
+
+        close_row = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=dialog)
+        close_row.rejected.connect(dialog.reject)
+        close_row.accepted.connect(dialog.accept)
+        layout.addWidget(close_row)
+
+        refresh_profiles_list(preferred_profile_id=self.active_translation_profile_id)
+        dialog.exec()
 
     def _reset_session_for_profile_switch(self, session: FileSession) -> None:
         reset_segments: list[DialogueSegment] = []
@@ -1519,26 +1776,34 @@ class DialogueVisualEditor(
         self._refresh_translation_profiles_meta()
         self._switch_translation_profile(profile_id, prompt_unsaved=False)
 
-    def _edit_active_translation_profile_settings(self) -> None:
+    def _edit_translation_profile_settings(self, profile_id: str) -> bool:
         if self.data_dir is None:
             QMessageBox.warning(
                 self,
                 "No folder selected",
                 "Load a data folder before editing translation profile settings.",
             )
-            return
-        active_profile_id = self.active_translation_profile_id
-        profile_name = self._translation_profile_name(active_profile_id)
+            return False
+        normalized_profile_id = self._normalize_translation_profile_id(profile_id)
+        profile_ids = self._translation_profile_ids_sorted()
+        if normalized_profile_id not in profile_ids:
+            QMessageBox.warning(
+                self,
+                "Profile not found",
+                f"Profile '{normalized_profile_id}' was not found.",
+            )
+            return False
+        profile_name = self._translation_profile_name(normalized_profile_id)
         current_target_language_code = self._translation_profile_target_language_code(
-            active_profile_id
+            normalized_profile_id
         )
         current_prompt_template = self._translation_profile_prompt_template(
-            active_profile_id
+            normalized_profile_id
         )
 
         dialog = QDialog(self)
         dialog.setWindowTitle(
-            f"Profile Settings: {profile_name} ({active_profile_id})"
+            f"Profile Settings: {profile_name} ({normalized_profile_id})"
         )
         dialog.resize(760, 560)
         root = QVBoxLayout(dialog)
@@ -1584,7 +1849,7 @@ class DialogueVisualEditor(
         root.addWidget(button_box)
 
         if dialog.exec() != int(QDialog.DialogCode.Accepted):
-            return
+            return False
 
         target_language_code = target_language_code_edit.text().strip()
         if not target_language_code:
@@ -1593,21 +1858,25 @@ class DialogueVisualEditor(
                 "Invalid language code",
                 "Target language code cannot be empty.",
             )
-            return
+            return False
         prompt_template = prompt_template_edit.toPlainText().strip()
         self._set_translation_profile_prompt_settings(
             target_language_code=target_language_code,
             prompt_template=prompt_template,
-            profile_id=active_profile_id,
+            profile_id=normalized_profile_id,
         )
         self._save_translation_state()
         self._rebuild_translation_profile_menu()
         self.statusBar().showMessage(
             (
                 f"Updated profile settings for '{profile_name}' "
-                f"({active_profile_id}) -> target {self._translation_profile_target_language_code(active_profile_id)}."
+                f"({normalized_profile_id}) -> target {self._translation_profile_target_language_code(normalized_profile_id)}."
             )
         )
+        return True
+
+    def _edit_active_translation_profile_settings(self) -> None:
+        self._edit_translation_profile_settings(self.active_translation_profile_id)
 
     def _set_project_source_language_code(self) -> None:
         if self.data_dir is None:
@@ -1644,21 +1913,29 @@ class DialogueVisualEditor(
             )
         )
 
-    def _rename_active_translation_profile(self) -> None:
+    def _rename_translation_profile(self, profile_id: str) -> bool:
         if self.data_dir is None:
             QMessageBox.warning(
                 self,
                 "No folder selected",
                 "Load a data folder before renaming translation profiles.",
             )
-            return
-        active_profile_id = self.active_translation_profile_id
-        profile_state = self._ensure_translation_profile(active_profile_id)
+            return False
+        normalized_profile_id = self._normalize_translation_profile_id(profile_id)
+        profile_ids = self._translation_profile_ids_sorted()
+        if normalized_profile_id not in profile_ids:
+            QMessageBox.warning(
+                self,
+                "Profile not found",
+                f"Profile '{normalized_profile_id}' was not found.",
+            )
+            return False
+        profile_state = self._ensure_translation_profile(normalized_profile_id)
         current_name_raw = profile_state.get("name")
         current_name = (
             current_name_raw.strip()
             if isinstance(current_name_raw, str) and current_name_raw.strip()
-            else self._translation_profile_name(active_profile_id)
+            else self._translation_profile_name(normalized_profile_id)
         )
         new_name_raw, accepted = QInputDialog.getText(
             self,
@@ -1668,7 +1945,7 @@ class DialogueVisualEditor(
             current_name,
         )
         if not accepted:
-            return
+            return False
         new_name = new_name_raw.strip()
         if not new_name:
             QMessageBox.warning(
@@ -1676,25 +1953,35 @@ class DialogueVisualEditor(
                 "Invalid profile name",
                 "Profile name cannot be empty.",
             )
-            return
+            return False
         if new_name == current_name:
-            return
+            return False
         profile_state["name"] = new_name
         self._refresh_translation_profiles_meta()
         self._save_translation_state()
         self._rebuild_translation_profile_menu()
         self.statusBar().showMessage(
-            f"Renamed active translation profile to '{new_name}'."
+            f"Renamed translation profile to '{new_name}'."
         )
+        return True
 
-    def _delete_active_translation_profile(self) -> None:
+    def _rename_active_translation_profile(self) -> None:
+        self._rename_translation_profile(self.active_translation_profile_id)
+
+    def _delete_translation_profile(
+        self,
+        profile_id: str,
+        *,
+        prompt_unsaved: bool = True,
+    ) -> bool:
         if self.data_dir is None:
             QMessageBox.warning(
                 self,
                 "No folder selected",
                 "Load a data folder before deleting translation profiles.",
             )
-            return
+            return False
+        normalized_profile_id = self._normalize_translation_profile_id(profile_id)
         profile_ids = self._translation_profile_ids_sorted()
         if len(profile_ids) <= 1:
             QMessageBox.warning(
@@ -1702,28 +1989,36 @@ class DialogueVisualEditor(
                 "Cannot delete profile",
                 "At least one translation profile must remain.",
             )
-            return
-        if not self._prompt_unsaved_if_any():
-            return
+            return False
+        if normalized_profile_id not in profile_ids:
+            QMessageBox.warning(
+                self,
+                "Delete failed",
+                f"Profile '{normalized_profile_id}' was not found.",
+            )
+            return False
+        if prompt_unsaved and (not self._prompt_unsaved_if_any()):
+            return False
 
-        active_profile_id = self.active_translation_profile_id
-        active_profile_name = self._translation_profile_name(active_profile_id)
+        is_active_profile = normalized_profile_id == self.active_translation_profile_id
+        profile_name = self._translation_profile_name(normalized_profile_id)
+        profile_scope = "active profile" if is_active_profile else "profile"
         confirm = QMessageBox.question(
             self,
             "Delete Translation Profile",
             (
-                f"Delete active profile '{active_profile_name}' ({active_profile_id})?\n\n"
+                f"Delete {profile_scope} '{profile_name}' ({normalized_profile_id})?\n\n"
                 "This removes its translation state and translated snapshots."
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
-            return
+            return False
 
         profiles_raw = self.translation_state.get("profiles")
         profiles = profiles_raw if isinstance(profiles_raw, dict) else {}
-        profiles.pop(active_profile_id, None)
+        profiles.pop(normalized_profile_id, None)
         remaining_ids = sorted(
             [pid for pid in profiles.keys() if isinstance(pid, str) and pid.strip()],
             key=natural_sort_key,
@@ -1734,22 +2029,35 @@ class DialogueVisualEditor(
                 "Delete failed",
                 "No fallback profile is available.",
             )
-            return
-        fallback_profile_id = remaining_ids[0]
+            return False
+        next_active_profile_id = self.active_translation_profile_id
+        if next_active_profile_id not in remaining_ids:
+            next_active_profile_id = remaining_ids[0]
 
         if self.version_db is not None:
             try:
-                self.version_db.delete_translation_profile(active_profile_id)
+                self.version_db.delete_translation_profile(normalized_profile_id)
             except Exception:
                 logger.exception(
                     "Failed to delete translated snapshots for profile '%s'.",
-                    active_profile_id,
+                    normalized_profile_id,
                 )
 
         self.translation_state["profiles"] = profiles
-        self.translation_state["active_profile_id"] = fallback_profile_id
+        self.translation_state["active_profile_id"] = next_active_profile_id
         self._refresh_translation_profiles_meta()
-        self._switch_translation_profile(fallback_profile_id, prompt_unsaved=False)
+        if is_active_profile:
+            self._switch_translation_profile(next_active_profile_id, prompt_unsaved=False)
+        else:
+            self._save_translation_state()
+            self._rebuild_translation_profile_menu()
+            self.statusBar().showMessage(
+                f"Deleted translation profile '{profile_name}'."
+            )
+        return True
+
+    def _delete_active_translation_profile(self) -> None:
+        self._delete_translation_profile(self.active_translation_profile_id)
 
     def _prompt_translation_profile_for_apply(
         self,
