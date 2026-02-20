@@ -3565,6 +3565,9 @@ class DialogueVisualEditor(
         ).strip()
         if bool(getattr(segment, "force_line1_speaker_inference", False)):
             return resolved_first or first_line
+        second_line_visible = strip_control_tokens(lines[1]).replace("\u3000", " ").lstrip()
+        if second_line_visible.startswith("「"):
+            return resolved_first or first_line
         if first_line and looks_like_name_line(first_line):
             return resolved_first or first_line
         if resolved_first and looks_like_name_line(resolved_first):

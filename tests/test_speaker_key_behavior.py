@@ -64,6 +64,28 @@ class _SpeakerTranslationHarness:
         return {}, {}
 
 
+class _Line1InferenceHarness:
+    def __init__(self, enabled: bool = True) -> None:
+        self.infer_speaker_check = SimpleNamespace(isChecked=lambda: enabled)
+
+    def _segment_source_lines_for_display(self, segment: DialogueSegment) -> list[str]:
+        lines = segment.source_lines or segment.original_lines or segment.lines
+        return list(lines) if lines else [""]
+
+    def _resolve_name_tokens_in_text(
+        self,
+        text: str,
+        prefer_translated: bool,
+        unresolved_placeholder: bool = False,
+    ) -> str:
+        _ = prefer_translated
+        _ = unresolved_placeholder
+        return text
+
+    def _matches_name_token(self, text: str) -> bool:
+        return DialogueVisualEditor._matches_name_token(self, text)
+
+
 class SpeakerKeyBehaviorTests(unittest.TestCase):
     def test_speaker_key_keeps_raw_name_tokens(self) -> None:
         harness = _SpeakerKeyHarness()
@@ -105,6 +127,24 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         result = SpeakerManagerDialog._raw_translation_for_key(dialog_like, raw_key)
 
         self.assertEqual(result, "Masatoki")
+
+    def test_line1_inference_uses_quote_on_second_line(self) -> None:
+        harness = _Line1InferenceHarness(enabled=True)
+        quoted_line = r"\C[2]" + chr(0x300C) + "Lets go" + chr(0x300D)
+        segment = DialogueSegment(
+            uid="seg",
+            context="ctx",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=["???", quoted_line],
+            original_lines=["???", quoted_line],
+            source_lines=["???", quoted_line],
+        )
+
+        inferred = DialogueVisualEditor._inferred_speaker_from_segment_line1(
+            harness, segment
+        )
+
+        self.assertEqual(inferred, "???")
 
 
 if __name__ == "__main__":
