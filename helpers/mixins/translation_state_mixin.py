@@ -1350,3 +1350,168 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
             summaries[segment.uid] = (exact_summary, similar_summary)
         return summaries
+
+    def _prompt_source_lines_for_segment(self, segment: DialogueSegment) -> list[str]:
+        source_lines_resolver = getattr(self, "_segment_source_lines_for_translation", None)
+        if callable(source_lines_resolver):
+            try:
+                resolved = source_lines_resolver(segment)
+            except Exception:
+                resolved = None
+            if isinstance(resolved, list):
+                normalized = self._normalize_translation_lines(resolved)
+                if normalized:
+                    return normalized
+
+        display_lines_resolver = getattr(self, "_segment_source_lines_for_display", None)
+        if callable(display_lines_resolver):
+            try:
+                resolved_display = display_lines_resolver(segment)
+            except Exception:
+                resolved_display = None
+            if isinstance(resolved_display, list):
+                normalized = self._normalize_translation_lines(resolved_display)
+                if normalized:
+                    return normalized
+
+        fallback_lines = segment.source_lines or segment.original_lines or segment.lines or [""]
+        return self._normalize_translation_lines(fallback_lines)
+
+    def _prompt_speaker_values_for_segment(self, segment: DialogueSegment) -> tuple[str, str]:
+        speaker_resolver = getattr(self, "_translator_panel_speaker_values", None)
+        if callable(speaker_resolver):
+            try:
+                resolved = speaker_resolver(segment)
+            except Exception:
+                resolved = None
+            if (
+                isinstance(resolved, tuple)
+                and len(resolved) == 2
+                and isinstance(resolved[0], str)
+                and isinstance(resolved[1], str)
+            ):
+                return resolved[0].strip(), resolved[1].strip()
+
+        speaker_key = self._speaker_key_for_state(segment)
+        source_speaker = "" if speaker_key == NO_SPEAKER_KEY else speaker_key
+
+        target_speaker = ""
+        speaker_translation_resolver = getattr(self, "_speaker_translation_for_key", None)
+        if callable(speaker_translation_resolver) and speaker_key != NO_SPEAKER_KEY:
+            try:
+                translated = speaker_translation_resolver(speaker_key)
+            except Exception:
+                translated = None
+            if isinstance(translated, str):
+                target_speaker = translated.strip()
+        if not target_speaker:
+            target_speaker = segment.translation_speaker.strip()
+        return source_speaker, target_speaker
+
+    def _prompt_tl_speaker_label_for_segment(self, segment: DialogueSegment) -> str:
+        source_speaker, target_speaker = self._prompt_speaker_values_for_segment(segment)
+        speaker = target_speaker.strip() or source_speaker.strip()
+        speaker = self._resolve_name_tokens_for_prompt_text(speaker).strip()
+        if not speaker or speaker == NO_SPEAKER_KEY:
+            return "Narration"
+        return speaker
+
+    def _resolve_name_tokens_for_prompt_text(self, text: str) -> str:
+        if not isinstance(text, str) or not text:
+            return text
+        resolver = getattr(self, "_resolve_name_tokens_in_text", None)
+        if not callable(resolver):
+            return text
+        try:
+            resolved = resolver(text, prefer_translated=True)
+        except TypeError:
+            try:
+                resolved = resolver(text, True)
+            except Exception:
+                resolved = text
+        except Exception:
+            resolved = text
+        return resolved if isinstance(resolved, str) else text
+
+    def _prompt_context_segment_rows(
+        self,
+        session: FileSession,
+        anchor_index: int,
+        direction: int,
+        limit: int,
+    ) -> list[tuple[int, DialogueSegment]]:
+        if limit <= 0 or anchor_index < 0:
+            return []
+        if direction < 0:
+            indexes = range(anchor_index - 1, -1, -1)
+        else:
+            indexes = range(anchor_index + 1, len(session.segments))
+
+        rows: list[tuple[int, DialogueSegment]] = []
+        for idx in indexes:
+            segment = session.segments[idx]
+            source_text = "\n".join(self._prompt_source_lines_for_segment(segment)).strip()
+            if not source_text:
+                continue
+            rows.append((idx, segment))
+            if len(rows) >= limit:
+                break
+        if direction < 0:
+            rows.reverse()
+        return rows
+
+    def _prompt_inline_source_text_for_segment(self, segment: DialogueSegment) -> str:
+        source_text = "\n".join(self._prompt_source_lines_for_segment(segment)).strip()
+        if not source_text:
+            source_text = "(empty)"
+        source_text = self._resolve_name_tokens_for_prompt_text(source_text)
+        normalized = source_text.replace("\r\n", "\n").replace("\r", "\n")
+        escaped = normalized.replace('"', '\\"').replace("\n", "\\n")
+        return escaped
+
+    def _build_human_translation_reference_prompt(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+        neighbor_count: int,
+    ) -> str:
+        source_language_label = self._translation_project_source_language_label()
+        target_language_label = self._translation_profile_target_language_label()
+        safe_neighbors = max(0, int(neighbor_count))
+
+        anchor_index = -1
+        for idx, row_segment in enumerate(session.segments):
+            if row_segment.uid == segment.uid:
+                anchor_index = idx
+                break
+        if anchor_index < 0:
+            return ""
+
+        before_rows = self._prompt_context_segment_rows(
+            session,
+            anchor_index,
+            direction=-1,
+            limit=safe_neighbors,
+        )
+        after_rows = self._prompt_context_segment_rows(
+            session,
+            anchor_index,
+            direction=1,
+            limit=safe_neighbors,
+        )
+
+        transcript_rows = [*before_rows, (anchor_index, segment), *after_rows]
+        prompt_lines: list[str] = [
+            f"Translate the following dialogue from {source_language_label} to {target_language_label}.",
+            "Write natural, fluent game dialogue.",
+            "Preserve intent, tone, and character voice.",
+            "Keep control codes/placeholders unchanged when present.",
+            "",
+            "Transcript:",
+        ]
+        for _row_index, row_segment in transcript_rows:
+            speaker_label = self._prompt_tl_speaker_label_for_segment(row_segment)
+            source_text = self._prompt_inline_source_text_for_segment(row_segment)
+            prompt_lines.append(f'{speaker_label}: "{source_text}"')
+
+        return "\n".join(prompt_lines).strip() + "\n"

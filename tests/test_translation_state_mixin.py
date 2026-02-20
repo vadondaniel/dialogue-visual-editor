@@ -51,8 +51,122 @@ class _Harness(TranslationStateMixin):
     def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
         return segment.speaker_name
 
+    def _resolve_name_tokens_in_text(
+        self,
+        text: str,
+        prefer_translated: bool,
+        unresolved_placeholder: bool = False,
+    ) -> str:
+        _ = prefer_translated
+        _ = unresolved_placeholder
+        return (
+            text.replace("\\N[1]", "Alice")
+            .replace("\\n[1]", "Alice")
+            .replace("\\N[2]", "Bob")
+            .replace("\\n[2]", "Bob")
+        )
+
 
 class TranslationStateMixinTests(unittest.TestCase):
+    def test_build_human_translation_reference_prompt_resolves_name_tokens(self) -> None:
+        harness = _Harness()
+        current = _segment("Map001.json:L0:1", "\\N[1] says hi", "\\N[2]")
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[current],
+        )
+
+        prompt = harness._build_human_translation_reference_prompt(
+            session,
+            current,
+            0,
+        )
+
+        self.assertIn('{Bob}: "Alice says hi"', prompt)
+        self.assertNotIn("\\N[1]", prompt)
+        self.assertNotIn("\\N[2]", prompt)
+
+    def test_build_human_translation_reference_prompt_includes_neighbors(self) -> None:
+        harness = _Harness()
+        before_segment = _segment("Map001.json:L0:0", "Before line", "Hero")
+        before_segment.translation_speaker = "Hero EN"
+        current = _segment("Map001.json:L0:1", "Current line", "Mage")
+        current.translation_speaker = "Mage EN"
+        current.translation_lines = ["Existing TL"]
+        after_segment = _segment("Map001.json:L0:2", "After line", "Villain")
+        after_segment.translation_speaker = "Villain EN"
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[before_segment, current, after_segment],
+        )
+
+        prompt = harness._build_human_translation_reference_prompt(
+            session,
+            current,
+            1,
+        )
+
+        self.assertIn(
+            "Translate the following dialogue from JA to EN.",
+            prompt,
+        )
+        self.assertIn(
+            "Write natural, fluent game dialogue.",
+            prompt,
+        )
+        self.assertIn("Preserve intent, tone, and character voice.", prompt)
+        self.assertIn("Transcript:", prompt)
+        self.assertNotIn("context", prompt.lower())
+        self.assertNotIn("selected line", prompt.lower())
+        self.assertNotIn("chunk", prompt.lower())
+        self.assertNotIn("same number of lines", prompt.lower())
+        self.assertNotIn("same `{speaker}", prompt.lower())
+        self.assertIn('Hero EN: "Before line"', prompt)
+        self.assertIn('Mage EN: "Current line"', prompt)
+        self.assertIn('Villain EN: "After line"', prompt)
+
+    def test_build_human_translation_reference_prompt_zero_neighbors(self) -> None:
+        harness = _Harness()
+        current = _segment("Map001.json:L0:1", "Current line", "Mage")
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[current],
+        )
+
+        prompt = harness._build_human_translation_reference_prompt(
+            session,
+            current,
+            0,
+        )
+
+        self.assertIn('{Mage}: "Current line"', prompt)
+        self.assertNotIn("[CURRENT]", prompt)
+
+    def test_build_human_translation_reference_prompt_returns_empty_for_missing_segment(self) -> None:
+        harness = _Harness()
+        current = _segment("Map001.json:L0:1", "Current line", "Mage")
+        missing = _segment("Map001.json:L0:999", "Missing", "Ghost")
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[current],
+        )
+
+        prompt = harness._build_human_translation_reference_prompt(
+            session,
+            missing,
+            2,
+        )
+
+        self.assertEqual(prompt, "")
+
     def test_other_profile_translations_include_other_profiles_for_same_segment(self) -> None:
         harness = _Harness()
         current = _segment("Map001.json:L0:0", "JP line")

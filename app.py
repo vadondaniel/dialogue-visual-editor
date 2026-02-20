@@ -762,6 +762,24 @@ class DialogueVisualEditor(
         )
         detail_content_layout.addWidget(self.translator_source_view, 1)
 
+        self.translator_quick_prompt_row = QWidget()
+        quick_prompt_row_layout = QHBoxLayout(self.translator_quick_prompt_row)
+        quick_prompt_row_layout.setContentsMargins(0, 0, 0, 0)
+        quick_prompt_row_layout.setSpacing(6)
+        self.translator_copy_quick_prompt_btn = QPushButton("Copy TL Prompt")
+        self.translator_copy_quick_prompt_btn.clicked.connect(
+            self._copy_translator_quick_prompt_to_clipboard
+        )
+        quick_prompt_row_layout.addWidget(self.translator_copy_quick_prompt_btn)
+        quick_prompt_row_layout.addWidget(QLabel("Context"))
+        self.translator_quick_prompt_neighbors_spin = QSpinBox()
+        self.translator_quick_prompt_neighbors_spin.setRange(0, 32)
+        self.translator_quick_prompt_neighbors_spin.setValue(2)
+        self.translator_quick_prompt_neighbors_spin.setFixedWidth(64)
+        quick_prompt_row_layout.addWidget(self.translator_quick_prompt_neighbors_spin)
+        quick_prompt_row_layout.addStretch(1)
+        detail_content_layout.addWidget(self.translator_quick_prompt_row)
+
         self.translator_other_translations_label = QLabel("Other translations")
         other_label_font = self.translator_other_translations_label.font()
         other_label_font.setBold(True)
@@ -3137,6 +3155,36 @@ class DialogueVisualEditor(
         self.translator_other_translations_tabs.blockSignals(False)
         self._on_translator_other_profile_tab_changed(selected_index)
 
+    def _copy_translator_quick_prompt_to_clipboard(self) -> None:
+        if self.current_path is None:
+            self.statusBar().showMessage("Select an entry first.")
+            return
+        session = self.sessions.get(self.current_path)
+        if session is None:
+            self.statusBar().showMessage("Select an entry first.")
+            return
+        selected_uid = self.selected_segment_uid
+        if not isinstance(selected_uid, str) or not selected_uid:
+            self.statusBar().showMessage("Select an entry first.")
+            return
+        segment = self.current_segment_lookup.get(selected_uid)
+        if segment is None:
+            self.statusBar().showMessage("Select an entry first.")
+            return
+        neighbor_count = int(self.translator_quick_prompt_neighbors_spin.value())
+        prompt_text = self._build_human_translation_reference_prompt(
+            session,
+            segment,
+            neighbor_count,
+        )
+        if not prompt_text.strip():
+            self.statusBar().showMessage("Could not build prompt for selected entry.")
+            return
+        QApplication.clipboard().setText(prompt_text)
+        self.statusBar().showMessage(
+            f"Copied quick prompt with {neighbor_count} neighbors per side."
+        )
+
     def _refresh_translator_detail_panel(self) -> None:
         translator_mode = self._is_translator_mode()
         self.translator_detail_panel.setVisible(translator_mode)
@@ -3226,6 +3274,7 @@ class DialogueVisualEditor(
             self.translator_reference_similar_label.setText("")
             self.translator_review_exact_matches_btn.setEnabled(False)
             self.translator_source_view.setExtraSelections([])
+            self.translator_copy_quick_prompt_btn.setEnabled(False)
             self._set_translator_other_profile_rows([])
             return
 
@@ -3284,6 +3333,7 @@ class DialogueVisualEditor(
             "\n".join(self._segment_source_lines_for_translation(segment))
         )
         self.translator_source_highlighter.rehighlight()
+        self.translator_copy_quick_prompt_btn.setEnabled(True)
         if actor_mode:
             self.translator_reference_exact_label.setText("")
             self.translator_reference_similar_label.setText("")
