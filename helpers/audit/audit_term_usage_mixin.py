@@ -915,10 +915,10 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         )
         self.audit_term_render_timer.stop()
         self.audit_term_hits_render_timer.stop()
-        self.audit_term_variants_list.clear()
-        self.audit_term_hits_list.clear()
-        self.audit_term_goto_btn.setEnabled(False)
         if not term:
+            self.audit_term_variants_list.clear()
+            self.audit_term_hits_list.clear()
+            self.audit_term_goto_btn.setEnabled(False)
             self.audit_term_displayed_key = None
             self.audit_term_display_complete = False
             self._hide_audit_progress_overlay(self.audit_term_variants_progress_overlay)
@@ -935,6 +935,9 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             self._refresh_audit_term_hits()
             self._refresh_audit_term_apply_state()
             return
+        self.audit_term_variants_list.clear()
+        self.audit_term_hits_list.clear()
+        self.audit_term_goto_btn.setEnabled(False)
         self.audit_term_displayed_key = None
         self.audit_term_display_complete = False
         if self.audit_term_cache_key == requested_key:

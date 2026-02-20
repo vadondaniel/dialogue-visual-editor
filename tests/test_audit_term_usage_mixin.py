@@ -70,6 +70,94 @@ class _Harness(AuditTermUsageMixin):
         return f"Block {index}"
 
 
+class _FakeEdit:
+    def __init__(self, value: str) -> None:
+        self._value = value
+
+    def text(self) -> str:
+        return self._value
+
+
+class _FakeCheckBox:
+    def __init__(self, checked: bool) -> None:
+        self._checked = checked
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+
+class _FakeList:
+    def __init__(self, items: list[str] | None = None) -> None:
+        self.items = list(items or [])
+        self.clear_calls = 0
+
+    def clear(self) -> None:
+        self.clear_calls += 1
+        self.items.clear()
+
+
+class _FakeLabel:
+    def __init__(self) -> None:
+        self.value = ""
+
+    def setText(self, value: str) -> None:
+        self.value = value
+
+
+class _FakeButton:
+    def __init__(self) -> None:
+        self.enabled = False
+
+    def setEnabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+
+class _FakeTimer:
+    def __init__(self) -> None:
+        self.stop_calls = 0
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+    def start(self, _interval_ms: int) -> None:
+        return
+
+
+class _RefreshHarness(AuditTermUsageMixin):
+    def __init__(self) -> None:
+        self.audit_cache_generation = 1
+        self.audit_render_batch_interval_ms = 8
+        self.audit_term_query_edit = _FakeEdit("魔王")
+        self.audit_term_candidates_edit = _FakeEdit("Demon Lord")
+        self.audit_term_dialogue_only_check = _FakeCheckBox(True)
+        self.audit_term_variants_list = _FakeList(["existing_variant"])
+        self.audit_term_hits_list = _FakeList(["existing_hit"])
+        self.audit_term_status_label = _FakeLabel()
+        self.audit_term_goto_btn = _FakeButton()
+        self.audit_term_render_timer = _FakeTimer()
+        self.audit_term_hits_render_timer = _FakeTimer()
+        self.audit_term_variants_progress_overlay = None
+        self.audit_term_hits_progress_overlay = None
+        self.audit_term_display_complete = True
+        self.audit_term_displayed_key = (
+            self.audit_cache_generation,
+            "魔王",
+            "Demon Lord",
+            True,
+        )
+        self.audit_term_cache_key = None
+        self.audit_term_cache_groups: list[dict[str, object]] = []
+        self.audit_term_worker_pending_request = None
+        self.refresh_hits_calls = 0
+        self.refresh_apply_calls = 0
+
+    def _refresh_audit_term_hits(self) -> None:
+        self.refresh_hits_calls += 1
+
+    def _refresh_audit_term_apply_state(self) -> None:
+        self.refresh_apply_calls += 1
+
+
 class AuditTermUsageMixinTests(unittest.TestCase):
     def test_collect_hits_dialogue_only_excludes_non_dialogue_segments(self) -> None:
         harness = _Harness()
@@ -181,6 +269,16 @@ class AuditTermUsageMixinTests(unittest.TestCase):
         self.assertIn("Map displayName", entries)
         self.assertIn("Block 1", entries)
         self.assertNotIn("Block 2", entries)
+
+    def test_refresh_panel_fast_path_keeps_existing_variants_list(self) -> None:
+        harness = _RefreshHarness()
+
+        harness._refresh_audit_term_panel()
+
+        self.assertEqual(harness.audit_term_variants_list.clear_calls, 0)
+        self.assertEqual(harness.audit_term_hits_list.clear_calls, 0)
+        self.assertEqual(harness.refresh_hits_calls, 1)
+        self.assertEqual(harness.refresh_apply_calls, 1)
 
 
 if __name__ == "__main__":

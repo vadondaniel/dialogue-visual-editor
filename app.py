@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QTabBar,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -291,6 +292,7 @@ class DialogueVisualEditor(
         self._settings_translation_project_source_action: Optional[QAction] = None
         self._settings_translation_rename_profile_action: Optional[QAction] = None
         self._settings_translation_delete_profile_action: Optional[QAction] = None
+        self.audit_tabs: Optional[QTabWidget] = None
         self.audit_window: Optional[QDialog] = None
         self.audit_search_query_edit: Optional[QLineEdit] = None
         self.audit_search_replace_edit: Optional[QLineEdit] = None

@@ -32,6 +32,12 @@ class _AuditWindowHostTypingFallback:
 
 
 class AuditWindowMixin(_AuditWindowHostTypingFallback):
+    _AUDIT_TAB_SEARCH = 0
+    _AUDIT_TAB_SANITIZE = 1
+    _AUDIT_TAB_CONTROL_MISMATCH = 2
+    _AUDIT_TAB_CONSISTENCY = 3
+    _AUDIT_TAB_TERM_USAGE = 4
+
     def _audit_case_toggle_icon(self, checked: bool) -> QIcon:
         pixmap = QPixmap(26, 26)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -61,6 +67,30 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
     def _default_audit_search_scope(self) -> str:
         return "translation" if self._is_translator_mode() else "original"
 
+    def _current_audit_tab_index(self) -> int:
+        tabs = getattr(self, "audit_tabs", None)
+        if isinstance(tabs, QTabWidget):
+            return tabs.currentIndex()
+        return self._AUDIT_TAB_SEARCH
+
+    def _refresh_audit_tab(self, tab_index: int) -> None:
+        if tab_index == self._AUDIT_TAB_SEARCH:
+            self._run_audit_search()
+            self._refresh_audit_search_replace_preview()
+            return
+        if tab_index == self._AUDIT_TAB_SANITIZE:
+            self._refresh_audit_sanitize_panel()
+            return
+        if tab_index == self._AUDIT_TAB_CONTROL_MISMATCH:
+            self._refresh_audit_control_mismatch_panel()
+            return
+        if tab_index == self._AUDIT_TAB_CONSISTENCY:
+            self._refresh_audit_consistency_panel()
+            return
+        if tab_index == self._AUDIT_TAB_TERM_USAGE:
+            self._refresh_audit_term_panel()
+            self._refresh_audit_term_suggestions_panel()
+
     def _open_audit_window(self) -> None:
         if self.audit_window is None:
             self._build_audit_window()
@@ -75,12 +105,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
                 default_scope)
             if scope_index >= 0:
                 self.audit_sanitize_scope_combo.setCurrentIndex(scope_index)
-            self._refresh_audit_sanitize_panel()
-        self._refresh_audit_control_mismatch_panel()
-        self._refresh_audit_consistency_panel()
-        self._refresh_audit_term_panel()
         if self.audit_window is None:
             return
+        self._refresh_audit_tab(self._current_audit_tab_index())
         self.audit_window.show()
         self.audit_window.raise_()
         self.audit_window.activateWindow()
@@ -504,6 +531,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             term_hits_list
         )
 
+        self.audit_tabs = tabs
         self.audit_window = dialog
         self.audit_search_query_edit = query_edit
         self.audit_search_scope_combo = scope_combo
@@ -764,21 +792,13 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         term_goto_btn.clicked.connect(self._go_to_selected_audit_term_hit)
         tabs.currentChanged.connect(self._on_audit_tab_changed)
 
-        self._refresh_audit_sanitize_panel()
-        self._refresh_audit_control_mismatch_panel()
-        self._refresh_audit_consistency_panel()
-        self._refresh_audit_term_panel()
-        self._refresh_audit_term_suggestions_panel()
-        self._refresh_audit_search_replace_preview()
+        self._refresh_audit_tab(tabs.currentIndex())
 
-    def _on_audit_tab_changed(self, _index: int) -> None:
+    def _on_audit_tab_changed(self, index: int) -> None:
         self._hide_audit_progress_overlay(self.audit_search_progress_overlay)
         self._hide_audit_progress_overlay(self.audit_sanitize_progress_overlay)
         self._hide_audit_progress_overlay(
             self.audit_control_mismatch_progress_overlay)
         self._hide_audit_progress_overlay(self.audit_term_variants_progress_overlay)
         self._hide_audit_progress_overlay(self.audit_term_hits_progress_overlay)
-        self._refresh_audit_sanitize_panel()
-        self._refresh_audit_consistency_panel()
-        self._refresh_audit_term_panel()
-        self._refresh_audit_term_suggestions_panel()
+        self._refresh_audit_tab(index)
