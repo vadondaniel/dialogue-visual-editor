@@ -79,6 +79,16 @@ _CONTROL_MISMATCH_BG_LIGHT: dict[ControlMismatchStatus, str] = {
     "missing": "#fee2e2",
     "extra": "#fef3c7",
 }
+_JAPANESE_CHAR_RE = re.compile(
+    r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
+    r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF66-\uFF9F]"
+)
+_JAPANESE_PROBLEM_BG_DARK = "#7c2d12"
+_JAPANESE_PROBLEM_BG_LIGHT = "#ffedd5"
+_JAPANESE_PROBLEM_FG_DARK = "#fdba74"
+_JAPANESE_PROBLEM_FG_LIGHT = "#9a3412"
+_JAPANESE_PROBLEM_UNDERLINE_DARK = "#fb923c"
+_JAPANESE_PROBLEM_UNDERLINE_LIGHT = "#c2410c"
 
 
 def _extract_control_token_matches(text: str) -> list[tuple[str, int, int]]:
@@ -176,6 +186,66 @@ def build_control_mismatch_selections(
         selection = QTextEdit.ExtraSelection()
         fmt = QTextCharFormat()
         fmt.setBackground(color)
+        selection_any = cast(Any, selection)
+        selection_any.format = fmt
+        selection_any.cursor = cursor
+        selections.append(selection)
+    return selections
+
+
+def japanese_character_spans(text: str) -> list[tuple[int, int]]:
+    if not text:
+        return []
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for control_match in CONTROL_TOKEN_RE.finditer(text):
+        if control_match.start() > cursor:
+            chunk = text[cursor:control_match.start()]
+            for match in _JAPANESE_CHAR_RE.finditer(chunk):
+                spans.append((cursor + match.start(), cursor + match.end()))
+        cursor = control_match.end()
+    if cursor < len(text):
+        chunk = text[cursor:]
+        for match in _JAPANESE_CHAR_RE.finditer(chunk):
+            spans.append((cursor + match.start(), cursor + match.end()))
+    return spans
+
+
+def build_japanese_character_problem_selections(
+    editor: QPlainTextEdit,
+    text: str,
+    *,
+    dark_theme: bool,
+) -> list[QTextEdit.ExtraSelection]:
+    spans = japanese_character_spans(text)
+    if not spans:
+        return []
+
+    bg = QColor(_JAPANESE_PROBLEM_BG_DARK if dark_theme else _JAPANESE_PROBLEM_BG_LIGHT)
+    if not bg.isValid():
+        return []
+    bg.setAlpha(172 if dark_theme else 160)
+    fg = QColor(_JAPANESE_PROBLEM_FG_DARK if dark_theme else _JAPANESE_PROBLEM_FG_LIGHT)
+    underline = QColor(
+        _JAPANESE_PROBLEM_UNDERLINE_DARK if dark_theme else _JAPANESE_PROBLEM_UNDERLINE_LIGHT
+    )
+
+    doc_len = len(editor.toPlainText())
+    selections: list[QTextEdit.ExtraSelection] = []
+    for start, end in spans:
+        if end <= start or start >= doc_len:
+            continue
+        cursor = QTextCursor(editor.document())
+        cursor.setPosition(max(0, start))
+        cursor.setPosition(min(end, doc_len), QTextCursor.MoveMode.KeepAnchor)
+        selection = QTextEdit.ExtraSelection()
+        fmt = QTextCharFormat()
+        fmt.setBackground(bg)
+        if fg.isValid():
+            fmt.setForeground(fg)
+        if underline.isValid():
+            fmt.setUnderlineColor(underline)
+            fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
         selection_any = cast(Any, selection)
         selection_any.format = fmt
         selection_any.cursor = cursor
@@ -1609,6 +1679,7 @@ class DialogueBlockWidget(QFrame):
         speaker_tint_color: str,
         translator_mode: bool,
         highlight_control_mismatch: bool,
+        highlight_contains_japanese: bool,
         actor_mode: bool,
         name_index_kind: str,
         name_index_label: str,
@@ -1651,6 +1722,7 @@ class DialogueBlockWidget(QFrame):
         self.control_mismatch_highlighting_enabled = bool(
             highlight_control_mismatch
         )
+        self.japanese_char_problem_enabled = bool(highlight_contains_japanese)
         self.actor_mode = actor_mode
         self.name_index_kind = name_index_kind.strip().lower()
         self.name_index_label = name_index_label.strip(
@@ -2553,6 +2625,13 @@ class DialogueBlockWidget(QFrame):
         self.control_mismatch_highlighting_enabled = new_value
         self._refresh_status()
 
+    def set_japanese_char_problem_enabled(self, enabled: bool) -> None:
+        new_value = bool(enabled)
+        if self.japanese_char_problem_enabled == new_value:
+            return
+        self.japanese_char_problem_enabled = new_value
+        self._refresh_status()
+
     def _source_lines_for_control_mismatch(self) -> list[str]:
         source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
             ""
@@ -2601,6 +2680,24 @@ class DialogueBlockWidget(QFrame):
             for _start, _end, status in translation_spans
         )
 
+    def _japanese_problem_spans(self) -> list[tuple[int, int]]:
+        if not self.japanese_char_problem_enabled:
+            return []
+        if not self._uses_translation_storage():
+            return []
+        if self.actor_mode:
+            return []
+        if not self._is_standard_dialogue_block():
+            return []
+        tl_lines = list(self._raw_lines if self._raw_lines else [""])
+        if not any(visible_length(line) > 0 for line in tl_lines):
+            return []
+        tl_text = "\n".join(tl_lines)
+        return japanese_character_spans(tl_text)
+
+    def _has_japanese_text_problem(self) -> bool:
+        return bool(self._japanese_problem_spans())
+
     def _control_mismatch_selections(self) -> list[QTextEdit.ExtraSelection]:
         editor = self.editor
         if editor is None:
@@ -2620,6 +2717,21 @@ class DialogueBlockWidget(QFrame):
             source_text=source_text,
             translation_text=translation_text,
             highlight_side="translation",
+            dark_theme=self._dark_theme,
+        )
+
+    def _japanese_problem_selections(self) -> list[QTextEdit.ExtraSelection]:
+        editor = self.editor
+        if editor is None:
+            return []
+        if self._displaying_masked_text:
+            return []
+        if not self._has_japanese_text_problem():
+            return []
+        tl_text = "\n".join(self._raw_lines if self._raw_lines else [""])
+        return build_japanese_character_problem_selections(
+            editor,
+            tl_text,
             dark_theme=self._dark_theme,
         )
 
@@ -2872,6 +2984,7 @@ class DialogueBlockWidget(QFrame):
                     selection_any.cursor = cursor
                     selections.append(selection)
                 block = block.next()
+        selections.extend(self._japanese_problem_selections())
         selections.extend(self._control_mismatch_selections())
         self.editor.setExtraSelections(selections)
 
@@ -2882,6 +2995,7 @@ class DialogueBlockWidget(QFrame):
         storage_lines = self._storage_lines_from_editor_lines(lines)
         max_rows_budget = float(max(1, self.max_lines))
         control_mismatch_problem = self._has_control_mismatch_problem()
+        japanese_text_problem = self._has_japanese_text_problem()
         line1_override_changed = (
             bool(self.segment.disable_line1_speaker_inference)
             != bool(self.segment.original_disable_line1_speaker_inference)
@@ -2937,9 +3051,12 @@ class DialogueBlockWidget(QFrame):
             text = f"{line_count} {entry_label}, {char_count} {char_label}"
             if control_mismatch_problem:
                 text += ", control mismatch"
+            if japanese_text_problem:
+                text += ", contains Japanese"
             self.status_label.setText(text)
-            self._has_warning = control_mismatch_problem
-            if control_mismatch_problem:
+            has_warning = control_mismatch_problem or japanese_text_problem
+            self._has_warning = has_warning
+            if has_warning:
                 self.status_label.setStyleSheet(
                     f"color: {self._status_warn_color}; font-weight: 600;"
                 )
@@ -2970,7 +3087,7 @@ class DialogueBlockWidget(QFrame):
             self._refresh_action_button_state(lines, self._width_chars())
             self._refresh_line1_inference_override_button()
             self._apply_overflow_highlighting()
-            self._apply_editor_style(control_mismatch_problem)
+            self._apply_editor_style(has_warning)
             self._refresh_block_style()
             self._refresh_source_hint_overlay()
             return
@@ -3010,9 +3127,16 @@ class DialogueBlockWidget(QFrame):
                 text += f" -> move {overflow_count} {overflow_line_label} below"
         if control_mismatch_problem:
             text += ", control mismatch"
+        if japanese_text_problem:
+            text += ", contains Japanese"
 
         self.status_label.setText(text)
-        has_warning = bool(over_width) or max_lines_over or control_mismatch_problem
+        has_warning = (
+            bool(over_width)
+            or max_lines_over
+            or control_mismatch_problem
+            or japanese_text_problem
+        )
         self._has_warning = has_warning
         if has_warning:
             self.status_label.setStyleSheet(

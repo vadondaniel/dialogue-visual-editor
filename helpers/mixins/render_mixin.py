@@ -814,6 +814,9 @@ class RenderMixin(_RenderHostTypingFallback):
                 highlight_control_mismatch=bool(
                     self.problem_control_mismatch_check.isChecked()
                 ),
+                highlight_contains_japanese=bool(
+                    self.problem_contains_japanese_check.isChecked()
+                ),
                 actor_mode=actor_mode,
                 name_index_kind=name_index_kind,
                 name_index_label=name_index_label,
@@ -961,6 +964,9 @@ class RenderMixin(_RenderHostTypingFallback):
             self.hide_control_codes_check.isChecked())
         widget.set_control_mismatch_highlighting_enabled(
             bool(self.problem_control_mismatch_check.isChecked())
+        )
+        widget.set_japanese_char_problem_enabled(
+            bool(self.problem_contains_japanese_check.isChecked())
         )
         widget._sync_control_code_visibility(force=True)
         widget.refresh_metadata()

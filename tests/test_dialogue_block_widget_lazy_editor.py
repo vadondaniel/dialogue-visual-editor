@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import unittest
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -49,6 +49,7 @@ def _widget(segment: DialogueSegment) -> DialogueBlockWidget:
         speaker_tint_color="#0284c7",
         translator_mode=False,
         highlight_control_mismatch=False,
+        highlight_contains_japanese=False,
         actor_mode=False,
         name_index_kind="",
         name_index_label="Entry",
@@ -67,6 +68,7 @@ def _widget_with_options(
     hidden_control_colored_line_resolver: Optional[
         Callable[[str], tuple[str, list[tuple[int, int, str, float]]]]
     ] = None,
+    highlight_contains_japanese: bool = False,
 ) -> DialogueBlockWidget:
     return DialogueBlockWidget(
         segment=segment,
@@ -91,6 +93,7 @@ def _widget_with_options(
         speaker_tint_color="#0284c7",
         translator_mode=translator_mode,
         highlight_control_mismatch=False,
+        highlight_contains_japanese=highlight_contains_japanese,
         actor_mode=False,
         name_index_kind="",
         name_index_label="Entry",
@@ -240,10 +243,51 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         selections = editor.extraSelections()
         colored = 0
         for selection in selections:
-            color = selection.format.foreground().color()
+            selection_any = cast(Any, selection)
+            color = selection_any.format.foreground().color()
             if color.isValid() and color.name().lower() == "#22aa22":
                 colored += 1
         self.assertGreaterEqual(colored, 2)
+        widget.deleteLater()
+
+    def test_translator_mode_japanese_problem_updates_warning_text(self) -> None:
+        segment = _segment(["Source only"])
+        segment.translation_lines = ["Alpha あ Beta"]
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            inferred_speaker_name_resolver=None,
+            highlight_contains_japanese=True,
+        )
+
+        self.assertTrue(widget._has_japanese_text_problem())
+        self.assertTrue(widget._has_warning)
+        self.assertIn("contains Japanese", widget.status_label.text())
+        widget.deleteLater()
+
+    def test_translator_mode_japanese_problem_highlights_character(self) -> None:
+        segment = _segment(["Source only"])
+        segment.translation_lines = ["A\\C[2]xあB"]
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            inferred_speaker_name_resolver=None,
+            highlight_contains_japanese=True,
+        )
+
+        widget.set_editor_active(True)
+        widget._apply_overflow_highlighting()
+        self.assertIsNotNone(widget.editor)
+        editor = widget.editor
+        assert editor is not None
+        selected_texts = [
+            cast(Any, selection).cursor.selectedText()
+            for selection in editor.extraSelections()
+            if cast(Any, selection).cursor.selectedText()
+        ]
+        self.assertIn("あ", selected_texts)
         widget.deleteLater()
 
 

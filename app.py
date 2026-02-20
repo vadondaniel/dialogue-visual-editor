@@ -2994,11 +2994,15 @@ class DialogueVisualEditor(
         return None
 
     def _refresh_block_control_mismatch_highlighting(self) -> None:
-        enabled = bool(self.problem_control_mismatch_check.isChecked())
+        control_mismatch_enabled = bool(self.problem_control_mismatch_check.isChecked())
+        japanese_problem_enabled = bool(self.problem_contains_japanese_check.isChecked())
         for widget in self.block_widgets.values():
             setter = getattr(widget, "set_control_mismatch_highlighting_enabled", None)
             if callable(setter):
-                setter(enabled)
+                setter(control_mismatch_enabled)
+            japanese_setter = getattr(widget, "set_japanese_char_problem_enabled", None)
+            if callable(japanese_setter):
+                japanese_setter(japanese_problem_enabled)
 
     def _apply_translator_source_mismatch_highlighting(
         self,
