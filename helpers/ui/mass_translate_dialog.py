@@ -507,9 +507,15 @@ class MassTranslateDialog(QDialog):
         actor_name_maps_resolver = getattr(self.editor, "_actor_name_maps", None)
         if callable(actor_name_maps_resolver):
             try:
-                source_names, _translated_names = actor_name_maps_resolver()
+                maps_result = actor_name_maps_resolver()
             except Exception:
-                source_names = {}
+                maps_result = None
+            source_names: object = {}
+            if (
+                isinstance(maps_result, tuple)
+                and len(maps_result) >= 1
+            ):
+                source_names = maps_result[0]
             if isinstance(source_names, dict):
                 for raw_actor_id, raw_name in source_names.items():
                     if not (isinstance(raw_actor_id, int) and isinstance(raw_name, str)):

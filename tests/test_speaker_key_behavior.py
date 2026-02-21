@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from typing import Any, cast
 
 from dialogue_visual_editor.app import DialogueVisualEditor
 from dialogue_visual_editor.helpers.core.models import DialogueSegment, NO_SPEAKER_KEY
 from dialogue_visual_editor.helpers.ui.ui_components import SpeakerManagerDialog
+
+
+def _call_editor_method(name: str, self_obj: object, *args: Any) -> Any:
+    method = cast(Any, getattr(DialogueVisualEditor, name))
+    return method(self_obj, *args)
+
+
+def _call_speaker_dialog_method(name: str, self_obj: object, *args: Any) -> Any:
+    method = cast(Any, getattr(SpeakerManagerDialog, name))
+    return method(self_obj, *args)
 
 
 def _segment_with_speaker(speaker_text: str) -> DialogueSegment:
@@ -24,7 +35,7 @@ class _SpeakerKeyHarness:
         self.resolve_calls = 0
 
     def _normalize_speaker_key(self, value: str) -> str:
-        return DialogueVisualEditor._normalize_speaker_key(self, value)
+        return cast(str, _call_editor_method("_normalize_speaker_key", self, value))
 
     def _inferred_speaker_from_segment_line1(self, segment: DialogueSegment) -> str:
         _ = segment
@@ -48,7 +59,7 @@ class _SpeakerTranslationHarness:
         self._resolved_lookup: dict[str, str] = {}
 
     def _normalize_speaker_key(self, value: str) -> str:
-        return DialogueVisualEditor._normalize_speaker_key(self, value)
+        return cast(str, _call_editor_method("_normalize_speaker_key", self, value))
 
     def _resolve_name_tokens_in_text(
         self,
@@ -83,7 +94,7 @@ class _Line1InferenceHarness:
         return text
 
     def _matches_name_token(self, text: str) -> bool:
-        return DialogueVisualEditor._matches_name_token(self, text)
+        return cast(bool, _call_editor_method("_matches_name_token", self, text))
 
 
 class SpeakerKeyBehaviorTests(unittest.TestCase):
@@ -91,7 +102,7 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         harness = _SpeakerKeyHarness()
         segment = _segment_with_speaker(r"\C[2]\N[1]\C[0]")
 
-        key = DialogueVisualEditor._speaker_key_for_segment(harness, segment)
+        key = cast(str, _call_editor_method("_speaker_key_for_segment", harness, segment))
 
         self.assertIn(r"\N[1]", key)
         self.assertEqual(harness.resolve_calls, 0)
@@ -103,15 +114,19 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         harness._resolved_lookup[raw_key] = legacy_resolved_key
         harness.speaker_translation_map[legacy_resolved_key] = "Masa"
 
-        result = DialogueVisualEditor._speaker_translation_for_key(harness, raw_key)
+        result = cast(
+            str,
+            _call_editor_method("_speaker_translation_for_key", harness, raw_key),
+        )
 
         self.assertEqual(result, "Masa")
 
     def test_speaker_translation_returns_empty_for_none_key(self) -> None:
         harness = _SpeakerTranslationHarness()
 
-        result = DialogueVisualEditor._speaker_translation_for_key(
-            harness, NO_SPEAKER_KEY
+        result = cast(
+            str,
+            _call_editor_method("_speaker_translation_for_key", harness, NO_SPEAKER_KEY),
         )
 
         self.assertEqual(result, "")
@@ -124,7 +139,10 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         editor.speaker_translation_map[legacy_resolved_key] = "Masatoki"
         dialog_like = SimpleNamespace(editor=editor)
 
-        result = SpeakerManagerDialog._raw_translation_for_key(dialog_like, raw_key)
+        result = cast(
+            str,
+            _call_speaker_dialog_method("_raw_translation_for_key", dialog_like, raw_key),
+        )
 
         self.assertEqual(result, "Masatoki")
 
@@ -140,8 +158,9 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
             source_lines=["???", quoted_line],
         )
 
-        inferred = DialogueVisualEditor._inferred_speaker_from_segment_line1(
-            harness, segment
+        inferred = cast(
+            str,
+            _call_editor_method("_inferred_speaker_from_segment_line1", harness, segment),
         )
 
         self.assertEqual(inferred, "???")

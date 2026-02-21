@@ -107,12 +107,12 @@ class _StructuralResetHarness(StructuralEditingMixin):
 
     def _refresh_after_structure_change_without_full_rerender(
         self,
-        _session: FileSession,
+        session: FileSession,
         *,
         focus_uid: str | None = None,
         preserve_scroll: bool = True,
     ) -> bool:
-        _ = (focus_uid, preserve_scroll)
+        _ = (session, focus_uid, preserve_scroll)
         self.structure_refresh_calls += 1
         return self._structure_refresh_result
 
@@ -128,11 +128,11 @@ class _StructuralResetHarness(StructuralEditingMixin):
 
     def _restore_merged_segments_after(
         self,
-        _session: FileSession,
-        uid: str,
+        session: FileSession,
+        anchor_uid: str,
         merged_segments: list[DialogueSegment],
     ) -> int:
-        _ = (uid, merged_segments)
+        _ = (session, anchor_uid, merged_segments)
         return self._restore_merged_count
 
     def statusBar(self) -> _StatusBarHarness:
