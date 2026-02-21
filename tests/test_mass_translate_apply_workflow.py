@@ -77,6 +77,8 @@ class _ApplyWorkflowHarness:
         MassTranslateDialog._scope_has_pending_entries_for_value
     )
     _next_incomplete_scope_value = MassTranslateDialog._next_incomplete_scope_value
+    _copy_prompt_for_current_chunk = MassTranslateDialog._copy_prompt_for_current_chunk
+    _copy_after_switch_if_needed = MassTranslateDialog._copy_after_switch_if_needed
     _next_chunk_index_after_apply = staticmethod(
         MassTranslateDialog._next_chunk_index_after_apply
     )
@@ -87,6 +89,8 @@ class _ApplyWorkflowHarness:
         self.misc_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.speaker_segment_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.warning_level_combo = _ComboStub("all_line_and_control_mismatches")
+        self.chunk_combo = _ChunkComboStub(0)
+        self.copied_prompt_indices: list[int] = []
         self.scope_combo = _ScopeComboStub(
             [
                 ("All Files", "all"),
@@ -101,6 +105,12 @@ class _ApplyWorkflowHarness:
 
     def _scope_completion_counts(self, scope_value: str) -> tuple[int, int]:
         return self._scope_counts.get(scope_value, (0, 0))
+
+    def _copy_prompt_for_chunk_index(self, index: int) -> bool:
+        if index < 0:
+            return False
+        self.copied_prompt_indices.append(index)
+        return True
 
 
 class _ComboStub:
@@ -134,6 +144,17 @@ class _ScopeComboStub:
 
     def currentData(self) -> str:
         return self._items[self._current_index][1]
+
+
+class _ChunkComboStub:
+    def __init__(self, current_index: int) -> None:
+        self._current_index = current_index
+
+    def currentIndex(self) -> int:
+        return self._current_index
+
+    def setCurrentIndex(self, index: int) -> None:
+        self._current_index = index
 
 
 def _segment(uid: str, lines: list[str]) -> DialogueSegment:
@@ -272,6 +293,32 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
             copy_next_prompt=True,
         )
         self.assertEqual(idx, 2)
+
+    def test_copy_after_switch_if_needed_copies_active_chunk_prompt(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.chunk_combo = _ChunkComboStub(3)
+
+        copied = harness._copy_after_switch_if_needed(
+            copy_next_prompt=True,
+            copied_next_prompt=False,
+            switched_destination=True,
+        )
+
+        self.assertTrue(copied)
+        self.assertEqual(harness.copied_prompt_indices, [3])
+
+    def test_copy_after_switch_if_needed_skips_without_switch(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.chunk_combo = _ChunkComboStub(2)
+
+        copied = harness._copy_after_switch_if_needed(
+            copy_next_prompt=True,
+            copied_next_prompt=False,
+            switched_destination=False,
+        )
+
+        self.assertFalse(copied)
+        self.assertEqual(harness.copied_prompt_indices, [])
 
     def test_next_chunk_index_after_apply_only_advances_on_clean_apply(self) -> None:
         same_idx = _ApplyWorkflowHarness._next_chunk_index_after_apply(

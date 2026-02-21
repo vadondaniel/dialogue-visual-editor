@@ -1789,6 +1789,24 @@ class MassTranslateDialog(QDialog):
     def _apply_pasted_chunk_and_copy_next_prompt(self) -> None:
         self._apply_pasted_chunk_core(copy_next_prompt=True)
 
+    def _copy_prompt_for_current_chunk(self) -> bool:
+        return self._copy_prompt_for_chunk_index(self.chunk_combo.currentIndex())
+
+    def _copy_after_switch_if_needed(
+        self,
+        *,
+        copy_next_prompt: bool,
+        copied_next_prompt: bool,
+        switched_destination: bool,
+    ) -> bool:
+        if not copy_next_prompt:
+            return copied_next_prompt
+        if copied_next_prompt:
+            return True
+        if not switched_destination:
+            return False
+        return self._copy_prompt_for_current_chunk()
+
     def _build_chunks(self) -> None:
         include_dialogue, include_misc, include_speakers = self._content_mode_flags()
         if not include_dialogue and not include_misc and not include_speakers:
@@ -2502,11 +2520,6 @@ class MassTranslateDialog(QDialog):
             summary_lines.extend(warning_messages[:8])
             if len(warning_messages) > 8:
                 summary_lines.append("...")
-        if copy_next_prompt:
-            if copied_next_prompt:
-                summary_lines.append("Copied prompt for next chunk.")
-            else:
-                summary_lines.append("No next chunk to copy.")
 
         self.result_box.setPlainText("\n".join(summary_lines))
         self.editor.statusBar().showMessage(
@@ -2517,6 +2530,7 @@ class MassTranslateDialog(QDialog):
         self._refresh_scope_items()
 
         switched_content_mode = False
+        switched_scope = False
         current_mode = str(self.content_scope_combo.currentData())
         if (
             current_mode in self._WORKFLOW_CONTENT_MODES
@@ -2542,7 +2556,19 @@ class MassTranslateDialog(QDialog):
                 if next_scope_value is not None:
                     next_scope_label = self._set_scope_value(next_scope_value)
                     if next_scope_label:
+                        switched_scope = True
                         self.result_box.appendPlainText(
                             f"\nSwitched scope to '{next_scope_label}' (next incomplete scope)."
                         )
+
+        copied_next_prompt = self._copy_after_switch_if_needed(
+            copy_next_prompt=copy_next_prompt,
+            copied_next_prompt=copied_next_prompt,
+            switched_destination=(switched_content_mode or switched_scope),
+        )
+        if copy_next_prompt:
+            if copied_next_prompt:
+                self.result_box.appendPlainText("\nCopied prompt for next chunk.")
+            else:
+                self.result_box.appendPlainText("\nNo next chunk to copy.")
         return True
