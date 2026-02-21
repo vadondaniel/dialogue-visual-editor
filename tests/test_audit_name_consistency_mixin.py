@@ -163,6 +163,45 @@ class AuditNameConsistencyMixinTests(unittest.TestCase):
 
         self.assertEqual(groups, [])
 
+    def test_collect_groups_can_include_non_discrepant_terms(self) -> None:
+        harness = _Harness()
+        misc_path = Path("Classes.json")
+        misc_session = FileSession(
+            path=misc_path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("Classes.json:C:1:name", "剣士", "Swordsman", segment_kind="name_index"),
+            ],
+        )
+        setattr(misc_session, "is_name_index_session", True)
+        setattr(misc_session, "name_index_label", "Class")
+
+        map_path = Path("Map002.json")
+        map_session = FileSession(
+            path=map_path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("Map002.json:L0:0", "剣士が来た", "A Swordsman has arrived."),
+                _segment("Map002.json:L1:0", "剣士は強い", "The Swordsman is strong."),
+            ],
+        )
+        harness.file_paths = [misc_path, map_path]
+        harness.sessions[misc_path] = misc_session
+        harness.sessions[map_path] = map_session
+
+        groups = harness._collect_audit_name_consistency_groups(
+            dialogue_only=True,
+            only_discrepancies=False,
+        )
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(str(groups[0]["source_term"]), "剣士")
+        self.assertEqual(bool(groups[0]["has_discrepancy"]), False)
+        self.assertEqual(int(groups[0]["entry_count"]), 0)
+        self.assertEqual(int(groups[0]["checked_count"]), 2)
+
     def test_collect_groups_ranks_by_missing_hits(self) -> None:
         harness = _Harness()
         misc_path = Path("Items.json")

@@ -350,6 +350,7 @@ class DialogueVisualEditor(
         self.audit_term_variants_progress_overlay: Optional[QLabel] = None
         self.audit_term_hits_progress_overlay: Optional[QLabel] = None
         self.audit_name_consistency_dialogue_only_check: Optional[QCheckBox] = None
+        self.audit_name_consistency_only_discrepancy_check: Optional[QCheckBox] = None
         self.audit_name_consistency_filter_edit: Optional[QLineEdit] = None
         self.audit_name_consistency_sort_combo: Optional[QComboBox] = None
         self.audit_name_consistency_groups_list: Optional[QListWidget] = None

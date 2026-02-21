@@ -215,6 +215,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
     def _collect_audit_name_consistency_groups(
         self,
         dialogue_only: bool,
+        only_discrepancies: bool = True,
         filter_text: str = "",
         sort_mode: str = "hits_desc",
     ) -> list[dict[str, Any]]:
@@ -279,7 +280,9 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                         "misc_entry": misc_entry,
                     }
                 )
-            if checked_count <= 0 or not mismatch_entries:
+            if checked_count <= 0:
+                continue
+            if only_discrepancies and not mismatch_entries:
                 continue
             groups.append(
                 {
@@ -290,6 +293,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                     "misc_entry": misc_entry,
                     "checked_count": checked_count,
                     "entry_count": len(mismatch_entries),
+                    "has_discrepancy": bool(mismatch_entries),
                     "entries": mismatch_entries,
                 }
             )
@@ -578,11 +582,13 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
     def _refresh_audit_name_consistency_panel(self) -> None:
         if (
             self.audit_name_consistency_dialogue_only_check is None
+            or self.audit_name_consistency_only_discrepancy_check is None
             or self.audit_name_consistency_groups_list is None
             or self.audit_name_consistency_status_label is None
         ):
             return
         dialogue_only = self.audit_name_consistency_dialogue_only_check.isChecked()
+        only_discrepancies = self.audit_name_consistency_only_discrepancy_check.isChecked()
         filter_text = ""
         if self.audit_name_consistency_filter_edit is not None:
             filter_text = self.audit_name_consistency_filter_edit.text()
@@ -594,12 +600,14 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
 
         groups = self._collect_audit_name_consistency_groups(
             dialogue_only=dialogue_only,
+            only_discrepancies=only_discrepancies,
             filter_text=filter_text,
             sort_mode=sort_mode,
         )
         self.audit_name_consistency_groups_list.clear()
         total_hits = 0
         total_checked = 0
+        groups_with_discrepancy = 0
         for group in groups:
             source_term = str(group.get("source_term", ""))
             expected_tl = str(group.get("expected_tl", ""))
@@ -608,6 +616,8 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             misc_context = str(group.get("misc_context", ""))
             total_hits += hit_count
             total_checked += checked_count
+            if bool(group.get("has_discrepancy", False)):
+                groups_with_discrepancy += 1
             label = (
                 f"miss {hit_count}/{checked_count} | "
                 f"{preview_text(source_term, 48)} -> {preview_text(expected_tl, 48)} | "
@@ -618,9 +628,14 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             self.audit_name_consistency_groups_list.addItem(item)
         if groups:
             self.audit_name_consistency_groups_list.setCurrentRow(0)
-            self.audit_name_consistency_status_label.setText(
-                f"Glossary misses: {len(groups)} | Missing lines: {total_hits} | Checked lines: {total_checked}"
-            )
+            if only_discrepancies:
+                self.audit_name_consistency_status_label.setText(
+                    f"Glossary misses: {len(groups)} | Missing lines: {total_hits} | Checked lines: {total_checked}"
+                )
+            else:
+                self.audit_name_consistency_status_label.setText(
+                    f"Glossary terms: {len(groups)} | Terms with misses: {groups_with_discrepancy} | Missing lines: {total_hits} | Checked lines: {total_checked}"
+                )
         else:
             self.audit_name_consistency_status_label.setText(
                 "No glossary misses found between misc entries and dialogue translations."

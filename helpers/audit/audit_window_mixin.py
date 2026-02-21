@@ -532,7 +532,10 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         name_consistency_dialogue_only_check = QCheckBox("Dialogue only")
         name_consistency_dialogue_only_check.setChecked(True)
         name_consistency_controls_row.addWidget(name_consistency_dialogue_only_check)
-        name_consistency_controls_row.addWidget(QLabel("Filter"))
+        name_consistency_only_discrepancy_check = QCheckBox("Only discrepancies")
+        name_consistency_only_discrepancy_check.setChecked(True)
+        name_consistency_controls_row.addWidget(name_consistency_only_discrepancy_check)
+        name_consistency_controls_row.addWidget(QLabel("Search"))
         name_consistency_filter_edit = QLineEdit()
         name_consistency_filter_edit.setPlaceholderText(
             "Source / expected TL / misc context"
@@ -671,6 +674,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_term_variants_progress_overlay = term_variants_progress_overlay
         self.audit_term_hits_progress_overlay = term_hits_progress_overlay
         self.audit_name_consistency_dialogue_only_check = name_consistency_dialogue_only_check
+        self.audit_name_consistency_only_discrepancy_check = (
+            name_consistency_only_discrepancy_check
+        )
         self.audit_name_consistency_filter_edit = name_consistency_filter_edit
         self.audit_name_consistency_sort_combo = name_consistency_sort_combo
         self.audit_name_consistency_groups_list = name_consistency_groups_list
@@ -885,6 +891,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         term_goto_btn.clicked.connect(self._go_to_selected_audit_term_hit)
         name_consistency_dialogue_only_check.toggled.connect(
+            lambda _checked: self._refresh_audit_name_consistency_panel()
+        )
+        name_consistency_only_discrepancy_check.toggled.connect(
             lambda _checked: self._refresh_audit_name_consistency_panel()
         )
         name_consistency_filter_edit.textChanged.connect(
