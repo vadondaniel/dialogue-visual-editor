@@ -497,7 +497,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
             "<LB:\\i[150]アズミさん>",
         )
 
-    def test_apply_session_to_json_updates_tyrano_dialogue_and_tag_text(self) -> None:
+    def test_apply_session_to_json_updates_tyrano_dialogue_choice_and_tag_text(self) -> None:
         harness = _Harness()
         source = (
             "[tb_start_text mode=1 ]\n"
@@ -505,6 +505,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
             "こんにちは[p]\n"
             "[_tb_end_text]\n"
             "[glink text=\"選択肢A\" target=\"*A\"]\n"
+            "[button text=\"補助ラベル\" target=\"*B\"]\n"
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "scene.ks"
@@ -515,6 +516,11 @@ class PersistenceExportMixinTests(unittest.TestCase):
             segment
             for segment in session.segments
             if segment.segment_kind == "tyrano_dialogue"
+        )
+        choice_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
         )
         tag_segment = next(
             segment
@@ -527,7 +533,8 @@ class PersistenceExportMixinTests(unittest.TestCase):
         params[4] = "Narrator"
         dialogue_segment.code101["parameters"] = params
         dialogue_segment.lines = ["Hello", "World"]
-        tag_segment.lines = ["Choice A"]
+        choice_segment.lines = ["Choice A"]
+        tag_segment.lines = ["Label B"]
 
         harness._apply_session_to_json(session)
         rebuilt = tyrano_script_source_from_data(session.data)
@@ -536,6 +543,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertIn("Hello[p]", rebuilt)
         self.assertIn("World[p]", rebuilt)
         self.assertIn('text="Choice A"', rebuilt)
+        self.assertIn('text="Label B"', rebuilt)
 
     def test_apply_session_to_json_updates_tyrano_multi_page_chunk(self) -> None:
         harness = _Harness()

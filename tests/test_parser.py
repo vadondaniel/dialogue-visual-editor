@@ -355,13 +355,14 @@ class ParserTests(unittest.TestCase):
             (1, "note"),
         )
 
-    def test_parse_tyrano_script_file_extracts_dialogue_and_tag_text(self) -> None:
+    def test_parse_tyrano_script_file_extracts_dialogue_choice_and_tag_text(self) -> None:
         source = (
             "[tb_start_text mode=1 ]\n"
             "#NPC\n"
             "こんにちは[p]\n"
             "[_tb_end_text]\n"
             "[glink text=\"選択肢\" target=\"*A\"]\n"
+            "[button text=\"補助テキスト\" target=\"*B\"]\n"
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "scene1.ks"
@@ -372,6 +373,11 @@ class ParserTests(unittest.TestCase):
             segment
             for segment in session.segments
             if segment.segment_kind == "tyrano_dialogue"
+        ]
+        choice_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
         ]
         tag_segments = [
             segment
@@ -385,8 +391,10 @@ class ParserTests(unittest.TestCase):
             getattr(dialogue_segments[0], "tyrano_line_suffixes", ()),
             ("[p]",),
         )
+        self.assertEqual(len(choice_segments), 1)
+        self.assertEqual(choice_segments[0].lines, ["選択肢"])
         self.assertEqual(len(tag_segments), 1)
-        self.assertEqual(tag_segments[0].lines, ["選択肢"])
+        self.assertEqual(tag_segments[0].lines, ["補助テキスト"])
 
     def test_parse_tyrano_script_file_splits_dialogue_by_page_break(self) -> None:
         source = (

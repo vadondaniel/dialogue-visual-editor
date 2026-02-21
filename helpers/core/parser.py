@@ -540,11 +540,97 @@ def _build_tyrano_dialogue_segments(path: Path, data: dict[str, Any]) -> list[Di
     return segments
 
 
-def _build_tyrano_tag_text_segments(path: Path, data: dict[str, Any]) -> list[DialogueSegment]:
+def _is_tyrano_glink_tag_line(line: str) -> bool:
+    lowered = line.strip().lower()
+    return lowered.startswith("[glink")
+
+
+def _build_tyrano_choice_segments(
+    path: Path,
+    data: dict[str, Any],
+) -> tuple[list[DialogueSegment], set[int]]:
     chunks = _coerce_tyrano_script_chunks(data)
     segments: list[DialogueSegment] = []
+    used_chunk_indexes: set[int] = set()
+    choice_index = 1
+
+    chunk_index = 0
+    while chunk_index < len(chunks):
+        chunk = chunks[chunk_index]
+        kind_raw = chunk.get("kind") if isinstance(chunk, dict) else ""
+        kind = kind_raw.strip().lower() if isinstance(kind_raw, str) else ""
+        if kind != "raw_line":
+            chunk_index += 1
+            continue
+
+        line_raw = chunk.get("line") if isinstance(chunk, dict) else ""
+        line = line_raw if isinstance(line_raw, str) else ""
+        if not _is_tyrano_glink_tag_line(line):
+            chunk_index += 1
+            continue
+        if _extract_tyrano_tag_attribute_value(line, "text") is None:
+            chunk_index += 1
+            continue
+
+        option_lines: list[str] = []
+        option_items: list[tuple[int, int, int, str]] = []
+        scan_index = chunk_index
+        while scan_index < len(chunks):
+            scan_chunk = chunks[scan_index]
+            scan_kind_raw = scan_chunk.get("kind") if isinstance(scan_chunk, dict) else ""
+            scan_kind = scan_kind_raw.strip().lower() if isinstance(scan_kind_raw, str) else ""
+            if scan_kind != "raw_line":
+                break
+            scan_line_raw = scan_chunk.get("line") if isinstance(scan_chunk, dict) else ""
+            scan_line = scan_line_raw if isinstance(scan_line_raw, str) else ""
+            if not _is_tyrano_glink_tag_line(scan_line):
+                break
+            attr_payload = _extract_tyrano_tag_attribute_value(scan_line, "text")
+            if attr_payload is None:
+                break
+            value_start, value_end, decoded_value, quote_char = attr_payload
+            option_lines.append(decoded_value)
+            option_items.append((scan_index, value_start, value_end, quote_char))
+            used_chunk_indexes.add(scan_index)
+            scan_index += 1
+
+        if option_items:
+            uid = f"{path.name}:KQ:{choice_index}"
+            segment = DialogueSegment(
+                uid=uid,
+                context=f"{path.name} > choice[{choice_index}]",
+                code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+                lines=list(option_lines),
+                original_lines=list(option_lines),
+                source_lines=list(option_lines),
+                segment_kind="choice",
+                line_entry_code=402,
+            )
+            setattr(segment, "tyrano_chunk_index", option_items[0][0])
+            setattr(segment, "tyrano_choice_items", tuple(option_items))
+            segments.append(segment)
+            choice_index += 1
+            chunk_index = scan_index
+            continue
+
+        chunk_index += 1
+
+    return segments, used_chunk_indexes
+
+
+def _build_tyrano_tag_text_segments(
+    path: Path,
+    data: dict[str, Any],
+    *,
+    excluded_chunk_indexes: set[int] | None = None,
+) -> list[DialogueSegment]:
+    chunks = _coerce_tyrano_script_chunks(data)
+    segments: list[DialogueSegment] = []
+    excluded_indexes = excluded_chunk_indexes or set()
     tag_index = 1
     for chunk_index, chunk in enumerate(chunks):
+        if chunk_index in excluded_indexes:
+            continue
         kind_raw = chunk.get("kind")
         kind = kind_raw.strip().lower() if isinstance(kind_raw, str) else ""
         if kind != "raw_line":
@@ -1014,12 +1100,19 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
 
     if is_tyrano_script_data(data):
         dialogue_segments = _build_tyrano_dialogue_segments(path, data)
-        tag_text_segments = _build_tyrano_tag_text_segments(path, data)
-        tyrano_segments = dialogue_segments + tag_text_segments
+        choice_segments, choice_chunk_indexes = _build_tyrano_choice_segments(path, data)
+        tag_text_segments = _build_tyrano_tag_text_segments(
+            path,
+            data,
+            excluded_chunk_indexes=choice_chunk_indexes,
+        )
+        tyrano_segments = dialogue_segments + choice_segments + tag_text_segments
         tyrano_segments.sort(
             key=lambda segment: (
                 int(getattr(segment, "tyrano_chunk_index", 0)),
-                0 if segment.segment_kind == "tyrano_dialogue" else 1,
+                0 if segment.segment_kind == "tyrano_dialogue" else (
+                    1 if segment.segment_kind == "choice" else 2
+                ),
             )
         )
         tyrano_session = FileSession(

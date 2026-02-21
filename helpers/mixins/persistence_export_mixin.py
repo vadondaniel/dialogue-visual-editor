@@ -34,6 +34,7 @@ from ..core.script_message_utils import (
 from ..core.text_utils import (
     CONTROL_TOKEN_RE,
     chunk_lines_by_row_budget,
+    split_lines_preserve_empty,
     strip_control_tokens,
     total_display_rows,
     visible_length,
@@ -982,6 +983,32 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return min(text_indexes)
         return 1_000_000_000
 
+    @staticmethod
+    def _coerce_tyrano_choice_items(
+        segment: DialogueSegment,
+    ) -> list[tuple[int, int, int, str]]:
+        raw_items = getattr(segment, "tyrano_choice_items", ())
+        if not isinstance(raw_items, (list, tuple)):
+            return []
+        items: list[tuple[int, int, int, str]] = []
+        for item in raw_items:
+            if not isinstance(item, (list, tuple)) or len(item) != 4:
+                continue
+            chunk_index_raw, value_start_raw, value_end_raw, quote_raw = item
+            if (
+                not isinstance(chunk_index_raw, int)
+                or not isinstance(value_start_raw, int)
+                or not isinstance(value_end_raw, int)
+            ):
+                continue
+            quote_char = (
+                quote_raw
+                if isinstance(quote_raw, str) and quote_raw in {'"', "'"}
+                else '"'
+            )
+            items.append((chunk_index_raw, value_start_raw, value_end_raw, quote_char))
+        return items
+
     def _apply_session_to_tyrano_script_data(self, session: FileSession) -> bool:
         if not is_tyrano_script_data(session.data):
             return False
@@ -1149,6 +1176,53 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 next_text_index += line_count
 
             chunk_raw["body_items"] = new_body_items
+
+        for segment in session.segments:
+            if segment.segment_kind != "choice":
+                continue
+            choice_items = self._coerce_tyrano_choice_items(segment)
+            if not choice_items:
+                continue
+            incoming_lines = self._normalized_tyrano_segment_lines(segment)
+            updated_items: list[tuple[int, int, int, str]] = []
+            for option_index, item in enumerate(choice_items):
+                chunk_index, value_start, value_end, quote_char = item
+                if option_index >= len(incoming_lines):
+                    updated_items.append(item)
+                    continue
+                if chunk_index < 0 or chunk_index >= len(raw_chunks):
+                    updated_items.append(item)
+                    continue
+                chunk_raw = raw_chunks[chunk_index]
+                if not isinstance(chunk_raw, dict):
+                    updated_items.append(item)
+                    continue
+                chunk_kind_raw = chunk_raw.get("kind")
+                chunk_kind = (
+                    chunk_kind_raw.strip().lower()
+                    if isinstance(chunk_kind_raw, str)
+                    else ""
+                )
+                if chunk_kind != "raw_line":
+                    updated_items.append(item)
+                    continue
+                line_raw = chunk_raw.get("line")
+                line = line_raw if isinstance(line_raw, str) else ""
+                if value_start < 0 or value_end < value_start or value_end > len(line):
+                    updated_items.append(item)
+                    continue
+                option_value = "[r]".join(
+                    split_lines_preserve_empty(incoming_lines[option_index])
+                )
+                escaped_value = self._escape_tyrano_tag_attribute_value(
+                    option_value,
+                    quote_char,
+                )
+                chunk_raw["line"] = f"{line[:value_start]}{escaped_value}{line[value_end:]}"
+                updated_items.append(
+                    (chunk_index, value_start, value_start + len(escaped_value), quote_char)
+                )
+            setattr(segment, "tyrano_choice_items", tuple(updated_items))
 
         for segment in session.segments:
             if segment.segment_kind != "tyrano_tag_text":
