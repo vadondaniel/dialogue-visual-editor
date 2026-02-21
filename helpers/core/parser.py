@@ -64,6 +64,29 @@ _PLUGINS_JS_ARRAY_KEY = "__dve_plugins_js_array__"
 _PLUGINS_JS_DEFAULT_PREFIX = "var $plugins =\n"
 _PLUGINS_JS_DEFAULT_SUFFIX = ";\n"
 _MAP_FILE_NAME_RE = re.compile(r"^map\d+\.json$", re.IGNORECASE)
+_PLUGIN_ARG_NUMBER_RE = re.compile(
+    r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"
+)
+_PLUGIN_ARG_HEX_COLOR_RE = re.compile(
+    r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+)
+_PLUGIN_ARG_LITERAL_WORDS: set[str] = {
+    "true",
+    "false",
+    "on",
+    "off",
+    "none",
+    "null",
+    "nil",
+}
+_PLUGIN_ARG_ALIGNMENT_WORDS: set[str] = {
+    "left",
+    "right",
+    "center",
+    "middle",
+    "top",
+    "bottom",
+}
 
 
 def is_plugins_js_path(path: Path) -> bool:
@@ -322,6 +345,119 @@ def _collect_script_block_entries(
     return block_entries, idx
 
 
+def _build_plugin_command_text_segments_for_entry(
+    *,
+    path: Path,
+    context: str,
+    list_id: str,
+    list_path_tokens: list[Any],
+    command_index: int,
+    command_entry: dict[str, Any],
+) -> list[DialogueSegment]:
+    params = command_entry.get("parameters")
+    if not isinstance(params, list) or len(params) <= 3:
+        return []
+    args_raw = params[3]
+    if not isinstance(args_raw, dict):
+        return []
+
+    plugin_name_raw = params[0] if len(params) > 0 else ""
+    command_display_name_raw = params[2] if len(params) > 2 else ""
+    plugin_name = (
+        plugin_name_raw.strip()
+        if isinstance(plugin_name_raw, str) and plugin_name_raw.strip()
+        else "Plugin Command"
+    )
+    command_display_name = (
+        command_display_name_raw.strip()
+        if isinstance(command_display_name_raw, str) and command_display_name_raw.strip()
+        else ""
+    )
+    speaker = plugin_name
+    if command_display_name:
+        speaker = f"{plugin_name} | {command_display_name}"
+
+    indent_raw = command_entry.get("indent", 0)
+    indent = indent_raw if isinstance(indent_raw, int) else 0
+    segments: list[DialogueSegment] = []
+    for arg_key, arg_value_raw in args_raw.items():
+        if not isinstance(arg_key, str):
+            continue
+        if not isinstance(arg_value_raw, str):
+            continue
+        if not arg_value_raw.strip():
+            continue
+        if _plugin_command_argument_value_is_non_meaningful(arg_value_raw):
+            continue
+        lines = split_lines_preserve_empty(arg_value_raw)
+        uid = (
+            f"{path.name}:{list_id}:G:{command_index}:"
+            f"{_safe_system_field_slug(arg_key)}"
+        )
+        segment = DialogueSegment(
+            uid=uid,
+            context=(
+                f"{context} | plugin_command[{command_index}]"
+                f".{plugin_name}.{command_display_name or 'command'}.{arg_key}"
+            ),
+            code101={
+                "code": 101,
+                "indent": indent,
+                "parameters": ["", 0, 0, 2, speaker],
+            },
+            lines=list(lines),
+            original_lines=list(lines),
+            source_lines=list(lines),
+            segment_kind="plugin_command_text",
+        )
+        setattr(
+            segment,
+            "plugin_command_text_path",
+            tuple(list_path_tokens + [command_index, "parameters", 3, arg_key]),
+        )
+        setattr(
+            segment,
+            "json_text_path",
+            tuple(list_path_tokens + [command_index, "parameters", 3, arg_key]),
+        )
+        segments.append(segment)
+    return segments
+
+
+def _plugin_command_argument_part_is_non_meaningful(value: str) -> bool:
+    lowered = value.strip().lower()
+    if not lowered:
+        return True
+    if lowered in _PLUGIN_ARG_LITERAL_WORDS:
+        return True
+    if lowered in _PLUGIN_ARG_ALIGNMENT_WORDS:
+        return True
+    if bool(_PLUGIN_ARG_NUMBER_RE.fullmatch(lowered)):
+        return True
+    if bool(_PLUGIN_ARG_HEX_COLOR_RE.fullmatch(lowered)):
+        return True
+    if lowered.startswith(("rgb(", "rgba(", "hsl(", "hsla(")) and lowered.endswith(")"):
+        return True
+    return False
+
+
+def _plugin_command_argument_value_is_non_meaningful(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if _plugin_command_argument_part_is_non_meaningful(stripped):
+        return True
+    candidate = stripped
+    if candidate.startswith("[") and candidate.endswith("]"):
+        candidate = candidate[1:-1].strip()
+    if "," not in candidate:
+        return False
+    parts = [part.strip() for part in candidate.split(",")]
+    if not parts or any(not part for part in parts):
+        return False
+    return all(_plugin_command_argument_part_is_non_meaningful(part) for part in parts)
+
+
 def _safe_system_field_slug(field_path: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_]+", "_", field_path)
     collapsed = re.sub(r"_+", "_", cleaned).strip("_")
@@ -406,11 +542,11 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
     list_counter = 0
     segment_counter = 0
 
-    def walk(value: Any, breadcrumb: list[str]) -> None:
+    def walk(value: Any, breadcrumb: list[str], path_tokens: list[Any]) -> None:
         nonlocal list_counter, segment_counter
         if isinstance(value, dict):
             for key, child in value.items():
-                walk(child, breadcrumb + [str(key)])
+                walk(child, breadcrumb + [str(key)], path_tokens + [key])
             return
 
         if isinstance(value, list):
@@ -607,6 +743,17 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                 segments.append(segment)
                                 i = j
                                 continue
+                    if is_command_entry(entry) and entry.get("code") == 357:
+                        plugin_command_segments = _build_plugin_command_text_segments_for_entry(
+                            path=path,
+                            context=context,
+                            list_id=list_id,
+                            list_path_tokens=path_tokens,
+                            command_index=i,
+                            command_entry=entry,
+                        )
+                        if plugin_command_segments:
+                            segments.extend(plugin_command_segments)
                     if is_command_entry(entry):
                         tokens.append(CommandToken(
                             kind="raw", raw_entry=entry))
@@ -621,9 +768,9 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                 return
 
             for idx, child in enumerate(value):
-                walk(child, breadcrumb + [f"[{idx}]"])
+                walk(child, breadcrumb + [f"[{idx}]"], path_tokens + [idx])
 
-    walk(data, [])
+    walk(data, [], [])
     session = FileSession(path=path, data=data,
                           bundles=bundles, segments=segments)
 

@@ -788,6 +788,14 @@ class MassTranslateDialog(QDialog):
             if kind == "actor":
                 return "speaker_segment"
             return "misc"
+        if segment.segment_kind in {
+            "name_index",
+            "system_text",
+            "plugin_text",
+            "plugin_command_text",
+            "actor_name_alias",
+        }:
+            return "misc"
         return "dialogue"
 
     @staticmethod

@@ -413,6 +413,52 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertEqual(session.data[0]["name"], "Troop Updated")
 
+    def test_apply_session_to_json_updates_plugin_command_argument_path(self) -> None:
+        harness = _Harness()
+        segment = _dialogue_segment("Map001.json:L0:G:0:text", "old")
+        segment.segment_kind = "plugin_command_text"
+        segment.lines = ["new value"]
+        segment.original_lines = ["old"]
+        setattr(
+            segment,
+            "json_text_path",
+            ("events", 0, "pages", 0, "list", 0, "parameters", 3, "text"),
+        )
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={
+                "events": [
+                    {
+                        "pages": [
+                            {
+                                "list": [
+                                    {
+                                        "code": 357,
+                                        "indent": 0,
+                                        "parameters": [
+                                            "DTextPicture",
+                                            "dText",
+                                            "Label",
+                                            {"text": "old"},
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            bundles=[],
+            segments=[segment],
+        )
+
+        harness._apply_session_to_json(session)
+
+        self.assertEqual(
+            session.data["events"][0]["pages"][0]["list"][0]["parameters"][3]["text"],
+            "new value",
+        )
+
     def test_apply_session_to_json_rebuilds_command_list(self) -> None:
         harness = _Harness()
         commands_ref: list[Any] = []

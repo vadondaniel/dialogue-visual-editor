@@ -227,6 +227,51 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(bool(getattr(session, "is_name_index_session", False)))
         self.assertTrue(bool(getattr(session, "has_mixed_dialogue_misc_segments", False)))
 
+    def test_parse_plugin_command_argument_text_segments_from_code357(self) -> None:
+        data = {
+            "events": [
+                {
+                    "pages": [
+                        {
+                            "list": [
+                                {
+                                    "code": 357,
+                                    "indent": 0,
+                                    "parameters": [
+                                        "DTextPicture",
+                                        "dText",
+                                        "文字列ピクチャ準備",
+                                        {
+                                            "text": "\\i[7]\\C[27]メイドレベル\\C[0]",
+                                            "fontSize": "24",
+                                            "align": "left",
+                                            "windowColor": "#ff99ff",
+                                            "bold": "true",
+                                        },
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        session = parse_dialogue_data(Path("Map099.json"), data)
+        plugin_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "plugin_command_text"
+        ]
+
+        self.assertEqual(len(plugin_segments), 1)
+        by_path = {
+            getattr(segment, "plugin_command_text_path", ()): segment
+            for segment in plugin_segments
+        }
+        text_path = ("events", 0, "pages", 0, "list", 0, "parameters", 3, "text")
+        self.assertIn(text_path, by_path)
+        self.assertEqual(by_path[text_path].lines, ["\\i[7]\\C[27]メイドレベル\\C[0]"])
+
 
 if __name__ == "__main__":
     unittest.main()

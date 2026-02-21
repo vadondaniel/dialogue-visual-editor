@@ -216,6 +216,30 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
         self.assertEqual([segment.uid for segment in dialogue_view], ["Troops.json:L0:0"])
         self.assertEqual([segment.uid for segment in misc_view], ["Troops.json:P:1"])
 
+    def test_toggle_on_hides_non_meaningful_plugin_command_parameters(self) -> None:
+        harness = _Harness(hide_non_meaningful=True)
+        numeric_arg = _segment("pc_num", "24", segment_kind="plugin_command_text")
+        setattr(
+            numeric_arg,
+            "plugin_command_text_path",
+            ("events", 0, "pages", 0, "list", 0, "parameters", 3, "fontSize"),
+        )
+        text_arg = _segment("pc_text", "メイドレベル", segment_kind="plugin_command_text")
+        setattr(
+            text_arg,
+            "plugin_command_text_path",
+            ("events", 0, "pages", 0, "list", 0, "parameters", 3, "text"),
+        )
+        session = _session_with_segments([numeric_arg, text_arg])
+
+        display = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=True,
+        )
+
+        self.assertEqual([segment.uid for segment in display], ["pc_text"])
+
     def test_translation_state_entry_filter_respects_toggle_for_plugin_parameters(self) -> None:
         entry = {
             "source_uid": "plugins.js:J:3:param_1_enabled",

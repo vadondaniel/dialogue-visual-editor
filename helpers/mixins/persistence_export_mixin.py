@@ -861,6 +861,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 new_value = "\n".join(segment.lines) if segment.lines else ""
                 self._set_json_value_by_path(session.data, path_tokens_raw, new_value)
 
+        for segment in session.segments:
+            path_tokens_raw = getattr(segment, "json_text_path", ())
+            if not isinstance(path_tokens_raw, tuple):
+                continue
+            new_value = "\n".join(segment.lines) if segment.lines else ""
+            self._set_json_value_by_path(session.data, path_tokens_raw, new_value)
+
         if is_name_index_session and isinstance(session.data, dict):
             name_index_kind_raw = getattr(session, "name_index_kind", "")
             name_index_kind = name_index_kind_raw.strip().lower(

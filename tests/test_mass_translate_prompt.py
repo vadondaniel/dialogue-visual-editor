@@ -58,6 +58,7 @@ class _PromptDialogHarness:
     _persistent_speaker_key_for_segment = (
         MassTranslateDialog._persistent_speaker_key_for_segment
     )
+    _segment_content_type = MassTranslateDialog._segment_content_type
     _segments_for_session_mass_translate = (
         MassTranslateDialog._segments_for_session_mass_translate
     )
@@ -239,6 +240,22 @@ class MassTranslatePromptTests(unittest.TestCase):
             [segment.uid for segment in resolved],
             ["Actors.json:A:1", "Actors.json:A:1:alt_1"],
         )
+
+    def test_segment_content_type_treats_plugin_command_text_as_misc(self) -> None:
+        editor = _SpeakerKeyEditorMeta()
+        segment = _segment("Map001.json:L0:G:0:text", "テキスト")
+        segment.segment_kind = "plugin_command_text"
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+        harness = _PromptDialogHarness(editor)
+
+        content_type = harness._segment_content_type(session.path, session, segment)
+
+        self.assertEqual(content_type, "misc")
 
 
 if __name__ == "__main__":

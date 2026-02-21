@@ -5148,6 +5148,7 @@ class DialogueVisualEditor(
             "name_index",
             "system_text",
             "plugin_text",
+            "plugin_command_text",
             "actor_name_alias",
         }
 

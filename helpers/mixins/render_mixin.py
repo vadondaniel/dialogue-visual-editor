@@ -60,6 +60,7 @@ class RenderMixin(_RenderHostTypingFallback):
             "name_index",
             "system_text",
             "plugin_text",
+            "plugin_command_text",
             "actor_name_alias",
         }
 
@@ -281,18 +282,38 @@ class RenderMixin(_RenderHostTypingFallback):
         return not bool(visible)
 
     def _is_plugin_non_meaningful_parameter_segment(self, segment: DialogueSegment) -> bool:
-        if segment.segment_kind != "plugin_text":
+        if segment.segment_kind not in {"plugin_text", "plugin_command_text"}:
             return False
-        path_tokens_raw = getattr(segment, "plugin_text_path", ())
-        path_tokens = (
-            path_tokens_raw
-            if isinstance(path_tokens_raw, tuple)
-            else tuple(path_tokens_raw) if isinstance(path_tokens_raw, list) else ()
-        )
-        if len(path_tokens) < 4:
-            return False
-        if path_tokens[2] != "parameters":
-            return False
+        if segment.segment_kind == "plugin_text":
+            path_tokens_raw = getattr(segment, "plugin_text_path", ())
+            path_tokens = (
+                path_tokens_raw
+                if isinstance(path_tokens_raw, tuple)
+                else tuple(path_tokens_raw) if isinstance(path_tokens_raw, list) else ()
+            )
+            if len(path_tokens) < 4:
+                return False
+            if path_tokens[2] != "parameters":
+                return False
+        else:
+            path_tokens_raw = getattr(segment, "plugin_command_text_path", ())
+            path_tokens = (
+                path_tokens_raw
+                if isinstance(path_tokens_raw, tuple)
+                else tuple(path_tokens_raw) if isinstance(path_tokens_raw, list) else ()
+            )
+            if not path_tokens:
+                return False
+            has_parameter_marker = any(
+                (
+                    index + 1 < len(path_tokens)
+                    and path_tokens[index] == "parameters"
+                    and path_tokens[index + 1] == 3
+                )
+                for index in range(len(path_tokens))
+            )
+            if not has_parameter_marker:
+                return False
         source_text = self._segment_source_text_for_meaningful_check(segment)
         return self._text_is_non_meaningful_parameter_value(source_text)
 
