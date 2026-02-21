@@ -521,7 +521,12 @@ class PersistenceExportMixinTests(unittest.TestCase):
             for segment in session.segments
             if segment.segment_kind == "tyrano_tag_text"
         )
-        dialogue_segment.lines = ["#Narrator", "Hello[p]", "World[p]"]
+        params = dialogue_segment.params
+        while len(params) <= 4:
+            params.append("")
+        params[4] = "Narrator"
+        dialogue_segment.code101["parameters"] = params
+        dialogue_segment.lines = ["Hello[p]", "World[p]"]
         tag_segment.lines = ["Choice A"]
 
         harness._apply_session_to_json(session)

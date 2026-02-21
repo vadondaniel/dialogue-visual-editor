@@ -236,6 +236,13 @@ def _tyrano_body_item_kind_for_line(line: str) -> str:
     return "raw"
 
 
+def _tyrano_speaker_name_from_line(line: str) -> str:
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return ""
+    return stripped[1:].strip()
+
+
 def _parse_tyrano_script_source(source: str) -> dict[str, Any]:
     newline = "\r\n" if "\r\n" in source else "\n"
     has_trailing_newline = source.endswith(("\n", "\r"))
@@ -443,34 +450,46 @@ def _build_tyrano_dialogue_segments(path: Path, data: dict[str, Any]) -> list[Di
         body_items_raw = chunk.get("body_items")
         if not isinstance(body_items_raw, list):
             continue
-        editable_item_indexes: list[int] = []
+        speaker_item_index: int | None = None
+        speaker_name = ""
+        text_item_indexes: list[int] = []
         lines: list[str] = []
         for body_index, body_item in enumerate(body_items_raw):
             if not isinstance(body_item, dict):
                 continue
             item_kind_raw = body_item.get("kind")
             item_kind = item_kind_raw.strip().lower() if isinstance(item_kind_raw, str) else ""
-            if item_kind not in {"speaker", "text"}:
-                continue
             item_line_raw = body_item.get("line")
             item_line = item_line_raw if isinstance(item_line_raw, str) else ""
-            editable_item_indexes.append(body_index)
+            if item_kind == "speaker":
+                if speaker_item_index is None:
+                    speaker_item_index = body_index
+                    speaker_name = _tyrano_speaker_name_from_line(item_line)
+                continue
+            if item_kind != "text":
+                continue
+            text_item_indexes.append(body_index)
             lines.append(item_line)
-        if not lines:
+        if speaker_item_index is None and not lines:
             continue
         uid = f"{path.name}:K:{block_index}"
         block_index += 1
+        if not lines:
+            lines = [""]
         segment = DialogueSegment(
             uid=uid,
             context=f"{path.name} > text_block[{block_index - 1}]",
-            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, speaker_name]},
             lines=list(lines),
             original_lines=list(lines),
             source_lines=list(lines),
             segment_kind="tyrano_dialogue",
         )
         setattr(segment, "tyrano_chunk_index", chunk_index)
-        setattr(segment, "tyrano_editable_item_indexes", tuple(editable_item_indexes))
+        setattr(segment, "tyrano_speaker_item_index", speaker_item_index)
+        setattr(segment, "tyrano_text_item_indexes", tuple(text_item_indexes))
+        # Backward-compatible alias used by older save logic paths.
+        setattr(segment, "tyrano_editable_item_indexes", tuple(text_item_indexes))
         segments.append(segment)
     return segments
 

@@ -957,24 +957,57 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     else self._tyrano_body_item_kind_for_line(line)
                 )
                 body_items.append({"kind": kind, "line": line})
-            editable_indexes_raw = getattr(
-                segment, "tyrano_editable_item_indexes", ()
+            speaker_item_index_raw = getattr(segment, "tyrano_speaker_item_index", None)
+            speaker_item_index = (
+                speaker_item_index_raw if isinstance(speaker_item_index_raw, int) else None
             )
-            editable_indexes = (
-                [int(index) for index in editable_indexes_raw if isinstance(index, int)]
-                if isinstance(editable_indexes_raw, (list, tuple))
+            if (
+                speaker_item_index is not None
+                and (speaker_item_index < 0 or speaker_item_index >= len(body_items))
+            ):
+                speaker_item_index = None
+            if speaker_item_index is None:
+                for idx, body_item in enumerate(body_items):
+                    if body_item.get("kind") == "speaker":
+                        speaker_item_index = idx
+                        break
+
+            text_indexes_raw = getattr(segment, "tyrano_text_item_indexes", ())
+            text_indexes = (
+                [int(index) for index in text_indexes_raw if isinstance(index, int)]
+                if isinstance(text_indexes_raw, (list, tuple))
                 else []
             )
-            editable_indexes = [
+            text_indexes = [
                 index
-                for index in editable_indexes
-                if 0 <= index < len(body_items)
+                for index in text_indexes
+                if 0 <= index < len(body_items) and body_items[index].get("kind") == "text"
             ]
-            if not editable_indexes:
-                editable_indexes = [
-                    index
-                    for index, body_item in enumerate(body_items)
-                    if body_item.get("kind") in {"speaker", "text"}
+            if not text_indexes:
+                text_indexes = [
+                    idx
+                    for idx, body_item in enumerate(body_items)
+                    if body_item.get("kind") == "text"
+                ]
+
+            speaker_value_raw = segment.speaker_name
+            speaker_value = (
+                speaker_value_raw.strip()
+                if isinstance(speaker_value_raw, str) and speaker_value_raw != NO_SPEAKER_KEY
+                else ""
+            )
+            desired_speaker_line = f"#{speaker_value}" if speaker_value else "#"
+
+            if speaker_item_index is not None:
+                if 0 <= speaker_item_index < len(body_items):
+                    body_items[speaker_item_index]["kind"] = "speaker"
+                    body_items[speaker_item_index]["line"] = desired_speaker_line
+            elif speaker_value:
+                insert_at = min(text_indexes) if text_indexes else 0
+                body_items.insert(insert_at, {"kind": "speaker", "line": desired_speaker_line})
+                speaker_item_index = insert_at
+                text_indexes = [
+                    index + 1 if index >= insert_at else index for index in text_indexes
                 ]
 
             incoming_lines_raw = list(segment.lines) if segment.lines else [""]
@@ -982,21 +1015,16 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 line if isinstance(line, str) else ("" if line is None else str(line))
                 for line in incoming_lines_raw
             ] or [""]
-            replacement_items = [
-                {
-                    "kind": self._tyrano_body_item_kind_for_line(line),
-                    "line": line,
-                }
-                for line in incoming_lines
-            ]
-            if editable_indexes:
-                first_index = min(editable_indexes)
-                last_index = max(editable_indexes)
-                sorted_indexes = sorted(editable_indexes)
+            replacement_items = [{"kind": "text", "line": line} for line in incoming_lines]
+
+            if text_indexes:
+                first_index = min(text_indexes)
+                last_index = max(text_indexes)
+                sorted_indexes = sorted(text_indexes)
                 is_contiguous = sorted_indexes == list(range(first_index, last_index + 1))
                 if is_contiguous:
                     body_items[first_index:last_index + 1] = replacement_items
-                    editable_indexes = list(
+                    text_indexes = list(
                         range(first_index, first_index + len(replacement_items))
                     )
                 else:
@@ -1008,7 +1036,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                         insert_at = sorted_indexes[-1] + 1
                         for offset, extra_item in enumerate(extra_items):
                             body_items.insert(insert_at + offset, extra_item)
-                        editable_indexes.extend(
+                        text_indexes.extend(
                             range(insert_at, insert_at + len(extra_items))
                         )
                     elif len(replacement_items) < len(sorted_indexes):
@@ -1017,11 +1045,21 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                                 body_items[idx]["line"] = ""
                                 body_items[idx]["kind"] = "text"
             else:
-                insert_at = len(body_items)
-                body_items.extend(replacement_items)
-                editable_indexes = list(range(insert_at, insert_at + len(replacement_items)))
+                should_insert_blank = not (len(replacement_items) == 1 and replacement_items[0]["line"] == "")
+                if should_insert_blank:
+                    insert_at = (
+                        speaker_item_index + 1
+                        if isinstance(speaker_item_index, int)
+                        else len(body_items)
+                    )
+                    body_items[insert_at:insert_at] = replacement_items
+                    text_indexes = list(range(insert_at, insert_at + len(replacement_items)))
+                else:
+                    text_indexes = []
             chunk_raw["body_items"] = body_items
-            setattr(segment, "tyrano_editable_item_indexes", tuple(editable_indexes))
+            setattr(segment, "tyrano_speaker_item_index", speaker_item_index)
+            setattr(segment, "tyrano_text_item_indexes", tuple(text_indexes))
+            setattr(segment, "tyrano_editable_item_indexes", tuple(text_indexes))
 
         for segment in session.segments:
             if segment.segment_kind != "tyrano_tag_text":
