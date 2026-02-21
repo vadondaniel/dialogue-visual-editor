@@ -73,6 +73,7 @@ def _widget_with_options(
         Callable[[str], tuple[str, list[tuple[int, int, str, float]]]]
     ] = None,
     highlight_contains_japanese: bool = False,
+    hide_control_codes_when_unfocused: bool = False,
 ) -> DialogueBlockWidget:
     return DialogueBlockWidget(
         segment=segment,
@@ -86,7 +87,7 @@ def _widget_with_options(
         smart_collapse_ellipsis_lowercase_rule=True,
         smart_collapse_collapse_if_no_punctuation=False,
         smart_collapse_min_soft_ratio=0.5,
-        hide_control_codes_when_unfocused=False,
+        hide_control_codes_when_unfocused=hide_control_codes_when_unfocused,
         hidden_control_line_transform=None,
         hidden_control_colored_line_resolver=hidden_control_colored_line_resolver,
         speaker_display_resolver=speaker_display_resolver,
@@ -230,6 +231,31 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertEqual(segment.lines, ["after", "next"])
         self.assertIn("after", widget._preview.text())
         self.assertIn("next", widget._preview.text())
+        widget.deleteLater()
+
+    def test_unmounted_preview_uses_masked_lines_when_hide_control_codes_enabled(self) -> None:
+        segment = _segment([r"\V[12] \C[3]HP\C[0]"])
+        segment.segment_kind = "note_text"
+
+        def colored_mask(value: str) -> tuple[str, list[tuple[int, int, str, float]]]:
+            masked = value.replace(r"\V[12]", "<V12>")
+            masked = masked.replace(r"\C[3]", "").replace(r"\C[0]", "")
+            return masked, []
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=False,
+            speaker_display_resolver=None,
+            inferred_speaker_name_resolver=None,
+            hidden_control_colored_line_resolver=colored_mask,
+        )
+
+        self.assertIn(r"\V[12]", widget._preview.text())
+
+        widget.set_hide_control_codes_when_unfocused(True)
+
+        self.assertIn("<V12>", widget._preview.text())
+        self.assertNotIn(r"\C[3]", widget._preview.text())
         widget.deleteLater()
 
     def test_editor_shows_width_limit_marker_tooltip(self) -> None:

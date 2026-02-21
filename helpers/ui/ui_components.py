@@ -58,7 +58,7 @@ from ..core.text_utils import (
 )
 
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
-VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
+VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)(?:,[^\]]*)?\]")
 ICON_TOKEN_RE = re.compile(r"\\[Ii]\[(\d+)\]")
 PARTY_TOKEN_RE = re.compile(r"\\[Pp]\[(\d+)\]")
 CURRENCY_TOKEN_RE = re.compile(r"\\[Gg](?![A-Za-z0-9_])")
@@ -2055,6 +2055,8 @@ class DialogueBlockWidget(QFrame):
 
     def _preview_text(self) -> str:
         lines = self._raw_lines if self._raw_lines else self._segment_storage_lines()
+        if self.hide_control_codes_when_unfocused:
+            lines = self._masked_lines_from_raw(lines)
         if not lines:
             return ""
         visible = lines[: self.max_lines]
@@ -3104,6 +3106,7 @@ class DialogueBlockWidget(QFrame):
         if self.editor is None:
             self._displaying_masked_text = False
             self._masked_color_spans = []
+            self._preview.setText(self._preview_text())
             self._refresh_source_hint_overlay()
             self._refresh_status()
             return

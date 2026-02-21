@@ -20,7 +20,7 @@ from ..core.text_utils import (
 
 NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
 NAME_TOKEN_RE = re.compile(r"\\[Nn]\[(\d+)\]")
-VAR_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
+VAR_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)(?:,([^\]]+))?\]")
 ICON_TOKEN_RE = re.compile(r"\\[Ii]\[(\d+)\]")
 PARTY_TOKEN_RE = re.compile(r"\\[Pp]\[(\d+)\]")
 CURRENCY_TOKEN_RE = re.compile(r"\\[Gg](?![A-Za-z0-9_])")
@@ -556,7 +556,7 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             prefer_translated=True,
             unresolved_placeholder=True,
         )
-        resolved = VAR_TOKEN_RE.sub(lambda m: f"<V{m.group(1)}>", resolved)
+        resolved = VAR_TOKEN_RE.sub(self._variable_token_preview_label, resolved)
         resolved = ICON_TOKEN_RE.sub(lambda m: f"<I{m.group(1)}>", resolved)
         resolved = PARTY_TOKEN_RE.sub(lambda m: f"<P{m.group(1)}>", resolved)
         resolved = CURRENCY_TOKEN_RE.sub("<G>", resolved)
@@ -688,7 +688,7 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             prefer_translated=True,
             unresolved_placeholder=True,
         )
-        resolved = VAR_TOKEN_RE.sub(lambda m: f"<V{m.group(1)}>", resolved)
+        resolved = VAR_TOKEN_RE.sub(self._variable_token_preview_label, resolved)
         resolved = ICON_TOKEN_RE.sub(lambda m: f"<I{m.group(1)}>", resolved)
         resolved = PARTY_TOKEN_RE.sub(lambda m: f"<P{m.group(1)}>", resolved)
         resolved = CURRENCY_TOKEN_RE.sub("<G>", resolved)
@@ -747,3 +747,7 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
     def _hidden_control_line_transform(self, line: str) -> str:
         masked, _spans = self._hidden_control_line_with_color_spans(line)
         return masked
+
+    @staticmethod
+    def _variable_token_preview_label(match: re.Match[str]) -> str:
+        return f"<V{match.group(1)}>"

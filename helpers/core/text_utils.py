@@ -52,7 +52,7 @@ NAME_CONNECTOR_WORDS = {
     "der",
 }
 _FONT_SIZE_SET_TOKEN_RE = re.compile(r"^\\[Ff][Ss]\[(\d+)\]$")
-_VARIABLE_TOKEN_RE = re.compile(r"^\\[Vv]\[(\d+)\]$")
+_VARIABLE_TOKEN_RE = re.compile(r"^\\[Vv]\[(\d+)(?:,[^\]]*)?\]$")
 _ICON_TOKEN_RE = re.compile(r"^\\[Ii]\[(\d+)\]$")
 _PARTY_TOKEN_RE = re.compile(r"^\\[Pp]\[(\d+)\]$")
 _CURRENCY_TOKEN_RE = re.compile(r"^\\[Gg]$")

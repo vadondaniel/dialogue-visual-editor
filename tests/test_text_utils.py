@@ -17,6 +17,10 @@ class TextUtilsTests(unittest.TestCase):
         self.assertEqual(normalized, r"\C[2]x\N[1]\V[3]")
         self.assertEqual(replacements, 2)
 
+    def test_visible_length_variable_token_allows_extra_args(self) -> None:
+        base_length = text_utils.visible_length(r"\V[5]x")
+        self.assertEqual(text_utils.visible_length(r"\V[5,4]x"), base_length)
+
     def test_wrap_lines_keep_breaks_splits_on_hyphen(self) -> None:
         wrapped = text_utils.wrap_lines_keep_breaks(["Demon-Lord"], 6)
         self.assertEqual(wrapped, ["Demon-", "Lord"])

@@ -22,6 +22,13 @@ class _Harness(PresentationHelpersMixin):
         return "#22aa22" if int(color_code) == 2 else ""
 
 
+class _VariableResolverHarness(_Harness):
+    def _variable_label_for_rpgm_index(self, variable_id: int) -> str:
+        if int(variable_id) == 5:
+            return "system.variables[5]: Hero Name"
+        return ""
+
+
 class PresentationColorCodeHtmlTests(unittest.TestCase):
     def test_default_render_hides_style_tokens(self) -> None:
         harness = _Harness()
@@ -61,6 +68,24 @@ class PresentationColorCodeHtmlTests(unittest.TestCase):
         self.assertEqual(masked, "BIG text")
         self.assertTrue(spans)
         self.assertGreater(spans[0][3], 1.0)
+
+    def test_hidden_control_spans_render_variable_token_with_extra_args(self) -> None:
+        harness = _Harness()
+
+        masked, _spans = harness._hidden_control_line_with_color_spans(
+            r"\V[5,4] apples"
+        )
+
+        self.assertEqual(masked, "<V5> apples")
+
+    def test_hidden_control_spans_keep_compact_placeholder_even_with_resolver(self) -> None:
+        harness = _VariableResolverHarness()
+
+        masked, _spans = harness._hidden_control_line_with_color_spans(
+            r"\V[5,4] apples"
+        )
+
+        self.assertEqual(masked, "<V5> apples")
 
 
 if __name__ == "__main__":
