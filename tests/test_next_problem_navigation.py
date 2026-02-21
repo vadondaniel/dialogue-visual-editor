@@ -28,6 +28,8 @@ class _NextProblemHarness:
         self.current_path: Path | None = None
         self.selected_segment_uid: str | None = None
         self.problem_uids: set[str] = set()
+        self.file_view_scope_by_path: dict[Path, str] = {}
+        self._last_problem_target: tuple[int, int, int, Path, str, str] | None = None
         self._status_bar = _StatusBarHarness()
         self.open_calls: list[tuple[Path, str | None, str | None]] = []
 
@@ -55,6 +57,21 @@ class _NextProblemHarness:
             "note_text",
             "actor_name_alias",
         }
+
+    def _normalized_view_scope_for_path(
+        self,
+        path: Path,
+        session: FileSession,
+        requested_scope: str | None = None,
+    ) -> str:
+        _ = session
+        if isinstance(requested_scope, str) and requested_scope.strip().lower() in {
+            "dialogue",
+            "misc",
+        }:
+            return requested_scope.strip().lower()
+        scoped = self.file_view_scope_by_path.get(path, "dialogue")
+        return scoped if scoped in {"dialogue", "misc"} else "dialogue"
 
     def _open_file(
         self,
@@ -175,6 +192,34 @@ class NextProblemNavigationTests(unittest.TestCase):
         _call_editor_method("_jump_to_next_problem", harness)
 
         self.assertEqual(harness.open_calls, [(path_b, "seg-b-dialogue", "dialogue")])
+
+    def test_jump_to_next_problem_continues_misc_when_selection_uid_is_missing(self) -> None:
+        harness = _NextProblemHarness()
+        path_a = Path("Map001.json")
+        path_b = Path("Map002.json")
+        path_c = Path("Map003.json")
+        seg_a_dialogue = _make_segment("seg-a-dialogue", kind="dialogue")
+        seg_b_misc = _make_segment("seg-b-misc", kind="plugin_command_text")
+        seg_c_misc = _make_segment("seg-c-misc", kind="plugin_command_text")
+        harness.sessions[path_a] = FileSession(
+            path=path_a, data={}, bundles=[], segments=[seg_a_dialogue]
+        )
+        harness.sessions[path_b] = FileSession(
+            path=path_b, data={}, bundles=[], segments=[seg_b_misc]
+        )
+        harness.sessions[path_c] = FileSession(
+            path=path_c, data={}, bundles=[], segments=[seg_c_misc]
+        )
+        harness.file_paths = [path_a, path_b, path_c]
+        harness.current_path = path_b
+        harness.file_view_scope_by_path[path_b] = "misc"
+        harness.selected_segment_uid = ""
+        harness.problem_uids = {"seg-a-dialogue", "seg-b-misc", "seg-c-misc"}
+        harness._last_problem_target = (1, 1, 0, path_b, "seg-b-misc", "misc")
+
+        _call_editor_method("_jump_to_next_problem", harness)
+
+        self.assertEqual(harness.open_calls, [(path_c, "seg-c-misc", "misc")])
 
 
 if __name__ == "__main__":

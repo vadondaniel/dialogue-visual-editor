@@ -6425,6 +6425,7 @@ class DialogueVisualEditor(
         cursor_scope_priority = 0
         cursor_file_index = -1
         cursor_segment_index = -1
+        cursor_resolved = False
         if self.current_path is not None and self.current_path in ordered_files:
             cursor_file_index = ordered_files.index(self.current_path)
             current_session = self.sessions.get(self.current_path)
@@ -6439,7 +6440,38 @@ class DialogueVisualEditor(
                             else "dialogue"
                         )
                         cursor_scope_priority = 1 if current_scope == "misc" else 0
+                        cursor_resolved = True
                         break
+            if not cursor_resolved and current_session is not None:
+                current_scope = self._normalized_view_scope_for_path(
+                    self.current_path,
+                    current_session,
+                )
+                cursor_scope_priority = 1 if current_scope == "misc" else 0
+
+        if not cursor_resolved:
+            last_problem_target_raw = getattr(self, "_last_problem_target", None)
+            if (
+                isinstance(last_problem_target_raw, tuple)
+                and len(last_problem_target_raw) == 6
+            ):
+                (
+                    last_scope_priority,
+                    last_file_index,
+                    last_segment_index,
+                    _last_path,
+                    _last_uid,
+                    _last_scope,
+                ) = last_problem_target_raw
+                if (
+                    isinstance(last_scope_priority, int)
+                    and isinstance(last_file_index, int)
+                    and isinstance(last_segment_index, int)
+                ):
+                    cursor_scope_priority = last_scope_priority
+                    cursor_file_index = last_file_index
+                    cursor_segment_index = last_segment_index
+                    cursor_resolved = True
 
         target_index = 0
         if cursor_file_index >= 0:
@@ -6479,6 +6511,7 @@ class DialogueVisualEditor(
             target_uid,
             target_scope,
         ) = problem_targets[target_index]
+        self._last_problem_target = problem_targets[target_index]
         self._open_file(target_path, focus_uid=target_uid, view_scope=target_scope)
         self.statusBar().showMessage(
             f"Jumped to next problem ({target_index + 1}/{len(problem_targets)})."
