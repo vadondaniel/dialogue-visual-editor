@@ -72,6 +72,7 @@ _TYRANO_SCRIPT_HAS_TRAILING_NEWLINE_KEY = "__dve_tyrano_script_has_trailing_newl
 _TYRANO_SCRIPT_CHUNKS_KEY = "__dve_tyrano_script_chunks__"
 _MAP_FILE_NAME_RE = re.compile(r"^map\d+\.json$", re.IGNORECASE)
 _TYRANO_PAGE_BREAK_TAG_RE = re.compile(r"\[\s*p(?:\s+[^\]]*)?\s*\]", re.IGNORECASE)
+_TYRANO_INLINE_LINE_BREAK_TAG_RE = re.compile(r"\[\s*r\s*\]", re.IGNORECASE)
 _TYRANO_TRAILING_DIALOGUE_MARKERS_RE = re.compile(
     r"(?:\s*\[\s*(?:p|r)\s*\]\s*)+$",
     re.IGNORECASE,
@@ -261,6 +262,27 @@ def split_tyrano_dialogue_line_and_suffix(line: str) -> tuple[str, str]:
     text_part = line[:marker_match.start()]
     suffix_part = line[marker_match.start():]
     return text_part, suffix_part
+
+
+def _split_tyrano_inline_line_breaks(text: str) -> tuple[list[str], list[str]]:
+    if not text:
+        return [""], [""]
+    lines: list[str] = []
+    suffixes: list[str] = []
+    cursor = 0
+    for match in _TYRANO_INLINE_LINE_BREAK_TAG_RE.finditer(text):
+        lines.append(text[cursor:match.start()])
+        suffixes.append(match.group(0))
+        cursor = match.end()
+    lines.append(text[cursor:])
+    suffixes.append("")
+    return lines, suffixes
+
+
+def _replace_tyrano_inline_line_breaks_with_newlines(text: str) -> str:
+    if not text:
+        return ""
+    return _TYRANO_INLINE_LINE_BREAK_TAG_RE.sub("\n", text)
 
 
 def _group_tyrano_text_items_by_page_break(
@@ -514,8 +536,16 @@ def _build_tyrano_dialogue_segments(path: Path, data: dict[str, Any]) -> list[Di
             line_suffixes: list[str] = []
             for _, line in text_group:
                 visible_line, line_suffix = split_tyrano_dialogue_line_and_suffix(line)
-                lines.append(visible_line)
-                line_suffixes.append(line_suffix)
+                split_lines, split_suffixes = _split_tyrano_inline_line_breaks(visible_line)
+                if not split_lines:
+                    split_lines = [""]
+                    split_suffixes = [""]
+                for split_index, split_line in enumerate(split_lines):
+                    suffix = split_suffixes[split_index]
+                    if split_index == len(split_lines) - 1:
+                        suffix = f"{suffix}{line_suffix}"
+                    lines.append(split_line)
+                    line_suffixes.append(suffix)
             if not lines:
                 lines = [""]
                 line_suffixes = [""]
@@ -589,7 +619,7 @@ def _build_tyrano_choice_segments(
             if attr_payload is None:
                 break
             value_start, value_end, decoded_value, quote_char = attr_payload
-            option_lines.append(decoded_value)
+            option_lines.append(_replace_tyrano_inline_line_breaks_with_newlines(decoded_value))
             option_items.append((scan_index, value_start, value_end, quote_char))
             used_chunk_indexes.add(scan_index)
             scan_index += 1
@@ -644,7 +674,8 @@ def _build_tyrano_tag_text_segments(
         if attr_payload is None:
             continue
         value_start, value_end, decoded_value, quote_char = attr_payload
-        lines = split_lines_preserve_empty(decoded_value)
+        normalized_text = _replace_tyrano_inline_line_breaks_with_newlines(decoded_value)
+        lines = split_lines_preserve_empty(normalized_text)
         uid = f"{path.name}:KT:{tag_index}"
         segment = DialogueSegment(
             uid=uid,

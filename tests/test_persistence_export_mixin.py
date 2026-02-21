@@ -577,6 +577,52 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertNotIn("「前半」[r]", rebuilt)
         self.assertNotIn("「次のページ」[p][r]", rebuilt)
 
+    def test_apply_session_to_json_writes_inline_r_for_tyrano_dialogue_newlines(self) -> None:
+        harness = _Harness()
+        source = (
+            "[tb_start_text mode=3 ]\n"
+            "#NPC\n"
+            "A[r]B[p][r]\n"
+            "[_tb_end_text]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_inline_r.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        )
+        dialogue_segment.lines = ["First line", "Second line"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("First line[r]", rebuilt)
+        self.assertIn("Second line[p][r]", rebuilt)
+
+    def test_apply_session_to_json_writes_inline_r_for_tyrano_choice_newlines(self) -> None:
+        harness = _Harness()
+        source = '[glink text="A[r]B" target="*A"]\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_choice_inline_r.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        choice_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
+        )
+        choice_segment.lines = ["Choice\nLine"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn('text="Choice[r]Line"', rebuilt)
+
     def test_apply_session_to_json_rebuilds_command_list(self) -> None:
         harness = _Harness()
         commands_ref: list[Any] = []

@@ -432,6 +432,57 @@ class ParserTests(unittest.TestCase):
             ("[p][r]",),
         )
 
+    def test_parse_tyrano_dialogue_inline_r_becomes_newline(self) -> None:
+        source = (
+            "[tb_start_text mode=3 ]\n"
+            "#NPC\n"
+            "A[r]B[p][r]\n"
+            "[_tb_end_text]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_inline_r.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        )
+        self.assertEqual(dialogue_segment.lines, ["A", "B"])
+        self.assertEqual(
+            getattr(dialogue_segment, "tyrano_line_suffixes", ()),
+            ("[r]", "[p][r]"),
+        )
+
+    def test_parse_tyrano_glink_text_inline_r_becomes_newline_in_choice(self) -> None:
+        source = '[glink text="A[r]B" target="*A"]\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_choice_inline_r.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        choice_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
+        )
+        self.assertEqual(choice_segment.lines, ["A\nB"])
+
+    def test_parse_tyrano_tag_text_inline_r_becomes_newline(self) -> None:
+        source = '[button text="補助[r]ラベル" target="*A"]\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_tag_inline_r.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        tag_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+        )
+        self.assertEqual(tag_segment.lines, ["補助", "ラベル"])
+
     def test_parse_tyrano_script_blank_speaker_marker_is_no_speaker(self) -> None:
         source = (
             "[tb_start_text mode=1 ]\n"
