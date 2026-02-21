@@ -23,6 +23,15 @@ class _Harness(RenderMixin):
     def _is_actor_index_session(session: FileSession) -> bool:
         return bool(getattr(session, "is_actor_index_session", False))
 
+    @staticmethod
+    def _name_index_field_from_uid(uid: str) -> str:
+        if ":" not in uid:
+            return "name"
+        tail = uid.rsplit(":", 1)[-1]
+        if tail.isdigit():
+            return "name"
+        return tail
+
 
 def _segment(
     uid: str,
@@ -157,6 +166,26 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
         )
 
         self.assertEqual([segment.uid for segment in display], ["Actors.json:A:1", "Actors.json:A:5"])
+
+    def test_actor_session_keeps_non_name_fields_even_when_text_repeats(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        name_a = _segment("Actors.json:A:1", "Harold", segment_kind="name_index")
+        name_b = _segment("Actors.json:A:2", "Harold", segment_kind="name_index")
+        profile_a = _segment("Actors.json:A:1:profile", "Harpy", segment_kind="name_index")
+        profile_b = _segment("Actors.json:A:2:profile", "Harpy", segment_kind="name_index")
+        session = _session_with_segments([name_a, name_b, profile_a, profile_b])
+        setattr(session, "is_actor_index_session", True)
+
+        display = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=True,
+        )
+
+        self.assertEqual(
+            [segment.uid for segment in display],
+            ["Actors.json:A:1", "Actors.json:A:1:profile", "Actors.json:A:2:profile"],
+        )
 
     def test_non_actor_name_index_session_keeps_duplicate_and_empty_entries(self) -> None:
         harness = _Harness(hide_non_meaningful=False)

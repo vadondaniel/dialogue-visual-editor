@@ -345,15 +345,26 @@ class RenderMixin(_RenderHostTypingFallback):
             return segments
         filtered: list[DialogueSegment] = []
         seen_names: set[str] = set()
+        field_from_uid_resolver = getattr(self, "_name_index_field_from_uid", None)
         for segment in segments:
             source_text = self._segment_source_text_for_meaningful_check(segment)
             visible = strip_control_tokens(source_text).replace("\u3000", " ").strip()
             if not visible:
                 continue
-            key = visible.casefold()
-            if key in seen_names:
-                continue
-            seen_names.add(key)
+            field_name = "name"
+            if callable(field_from_uid_resolver):
+                try:
+                    resolved_field = field_from_uid_resolver(segment.uid)
+                except Exception:
+                    resolved_field = None
+                if isinstance(resolved_field, str) and resolved_field.strip():
+                    field_name = resolved_field.strip().lower()
+            is_alias_segment = bool(getattr(segment, "is_actor_name_alias", False))
+            if field_name == "name" or is_alias_segment:
+                key = visible.casefold()
+                if key in seen_names:
+                    continue
+                seen_names.add(key)
             filtered.append(segment)
         return filtered
 

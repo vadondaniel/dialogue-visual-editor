@@ -299,6 +299,35 @@ class ParserTests(unittest.TestCase):
             ("events", 1, "note"),
         )
 
+    def test_parse_actors_includes_profile_and_note_text_segments(self) -> None:
+        data = [
+            None,
+            {
+                "id": 34,
+                "name": "キヨヒコ",
+                "nickname": "",
+                "note": "<SAC道具封印スイッチ:148>\n<SACItemSwitch:148>",
+                "profile": "両手が変化し、ハーピーの羽のそれに変化した。",
+            },
+        ]
+        session = parse_dialogue_data(Path("Actors.json"), data)
+        self.assertTrue(bool(getattr(session, "is_name_index_session", False)))
+        self.assertEqual(getattr(session, "name_index_kind", ""), "actor")
+        uid_set = {segment.uid for segment in session.segments}
+        self.assertIn("Actors.json:A:34", uid_set)
+        self.assertIn("Actors.json:A:34:profile", uid_set)
+
+        note_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "note_text"
+        ]
+        self.assertEqual(len(note_segments), 1)
+        self.assertEqual(
+            getattr(note_segments[0], "json_text_path", ()),
+            (1, "note"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

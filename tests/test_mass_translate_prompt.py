@@ -122,6 +122,15 @@ class _SpeakerKeyEditorMeta:
         _ = (session, translator_mode, actor_mode)
         return list(self._display_segments or [])
 
+    @staticmethod
+    def _name_index_field_from_uid(uid: str) -> str:
+        if ":" not in uid:
+            return "name"
+        tail = uid.rsplit(":", 1)[-1]
+        if tail.isdigit():
+            return "name"
+        return tail
+
 
 def _segment(uid: str, text: str, speaker: str = "") -> DialogueSegment:
     lines = text.split("\n") if text else [""]
@@ -267,6 +276,24 @@ class MassTranslatePromptTests(unittest.TestCase):
             bundles=[],
             segments=[segment],
         )
+        harness = _PromptDialogHarness(editor)
+
+        content_type = harness._segment_content_type(session.path, session, segment)
+
+        self.assertEqual(content_type, "misc")
+
+    def test_segment_content_type_treats_actor_profile_as_misc(self) -> None:
+        editor = _SpeakerKeyEditorMeta()
+        segment = _segment("Actors.json:A:34:profile", "両手が変化した。")
+        segment.segment_kind = "name_index"
+        session = FileSession(
+            path=Path("Actors.json"),
+            data=[],
+            bundles=[],
+            segments=[segment],
+        )
+        setattr(session, "is_name_index_session", True)
+        setattr(session, "name_index_kind", "actor")
         harness = _PromptDialogHarness(editor)
 
         content_type = harness._segment_content_type(session.path, session, segment)

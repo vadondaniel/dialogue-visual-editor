@@ -786,7 +786,20 @@ class MassTranslateDialog(QDialog):
         if bool(getattr(session, "is_name_index_session", False)):
             kind = str(getattr(session, "name_index_kind", "")).strip().lower()
             if kind == "actor":
-                return "speaker_segment"
+                if bool(getattr(segment, "is_actor_name_alias", False)):
+                    return "speaker_segment"
+                field_name = "name"
+                field_from_uid = getattr(self.editor, "_name_index_field_from_uid", None)
+                if callable(field_from_uid):
+                    try:
+                        resolved = field_from_uid(segment.uid)
+                    except Exception:
+                        resolved = None
+                    if isinstance(resolved, str) and resolved.strip():
+                        field_name = resolved.strip().lower()
+                if field_name == "name":
+                    return "speaker_segment"
+                return "misc"
             return "misc"
         if segment.segment_kind in {
             "name_index",

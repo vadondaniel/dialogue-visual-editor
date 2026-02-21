@@ -20,7 +20,7 @@ from .text_utils import first_parameter_text, is_command_entry, split_lines_pres
 def _name_index_spec_for_file(path_name: str) -> tuple[str, str, str, str, tuple[str, ...]] | None:
     lowered = path_name.lower()
     if lowered == "actors.json":
-        return ("actor", "A", "Actor", "actor", ("name",))
+        return ("actor", "A", "Actor", "actor", ("name", "nickname", "profile"))
     if lowered == "classes.json":
         return ("class", "C", "Class", "class", ("name",))
     if lowered == "items.json":
@@ -483,15 +483,14 @@ def _json_path_label(path_tokens: tuple[Any, ...]) -> str:
     return label
 
 
-def _build_event_note_segments(path: Path, data: Any) -> list[DialogueSegment]:
+def _build_note_text_segments(path: Path, data: Any) -> list[DialogueSegment]:
     segments: list[DialogueSegment] = []
 
     def walk(node: Any, path_tokens: list[Any]) -> None:
         if isinstance(node, dict):
             note_raw = node.get("note")
             if (
-                "events" in path_tokens
-                and isinstance(note_raw, str)
+                isinstance(note_raw, str)
                 and _event_note_is_translatable(note_raw)
             ):
                 note_path_tokens = tuple(path_tokens + ["note"])
@@ -937,9 +936,9 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
     map_display_name_segment = _build_map_display_name_segment(path, data)
     if map_display_name_segment is not None:
         session.segments.insert(0, map_display_name_segment)
-    event_note_segments = _build_event_note_segments(path, data)
-    if event_note_segments:
-        session.segments.extend(event_note_segments)
+    note_text_segments = _build_note_text_segments(path, data)
+    if note_text_segments:
+        session.segments.extend(note_text_segments)
 
     return session
 
