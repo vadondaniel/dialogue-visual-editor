@@ -95,8 +95,38 @@ class _Harness(AuditCoreMixin):
             "actor_name_alias",
         }
 
+    @staticmethod
+    def _normalize_translation_lines(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) if item is not None else "" for item in value] or [""]
+        if isinstance(value, str):
+            return value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        return [""]
+
 
 class AuditCoreMixinTests(unittest.TestCase):
+    def test_normalize_audit_translation_lines_for_segment_splits_tyrano_markers(self) -> None:
+        harness = _Harness()
+        segment = _segment("scene.ks:K:1", kind="tyrano_dialogue")
+
+        normalized = harness._normalize_audit_translation_lines_for_segment(
+            segment,
+            "A[p][r]B",
+        )
+
+        self.assertEqual(normalized, ["A", "B"])
+
+    def test_normalize_audit_translation_lines_for_segment_keeps_non_tyrano(self) -> None:
+        harness = _Harness()
+        segment = _segment("Map001.json:1", kind="dialogue")
+
+        normalized = harness._normalize_audit_translation_lines_for_segment(
+            segment,
+            "A[p][r]B",
+        )
+
+        self.assertEqual(normalized, ["A[p][r]B"])
+
     def test_jump_to_audit_location_uses_misc_scope_for_misc_uid(self) -> None:
         harness = _Harness()
         path = Path("Map001.json")

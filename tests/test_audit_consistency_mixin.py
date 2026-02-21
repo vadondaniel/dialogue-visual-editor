@@ -7,6 +7,7 @@ from typing import Any
 from dialogue_visual_editor.helpers.audit.audit_consistency_mixin import (
     AuditConsistencyMixin,
 )
+from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
 from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
 
 
@@ -33,6 +34,10 @@ def _segment(
 
 
 class _Harness(AuditConsistencyMixin):
+    _normalize_audit_translation_lines_for_segment = (
+        AuditCoreMixin._normalize_audit_translation_lines_for_segment
+    )
+
     def __init__(self) -> None:
         self.file_paths: list[Path] = []
         self.sessions: dict[Path, FileSession] = {}
@@ -100,6 +105,28 @@ class _Harness(AuditConsistencyMixin):
 
 
 class AuditConsistencyMixinTests(unittest.TestCase):
+    def test_collect_groups_normalizes_tyrano_inline_r_markers(self) -> None:
+        harness = _Harness()
+        path = Path("scene.ks")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("scene.ks:K:1", "同一文", "Line A[r]Line B", segment_kind="tyrano_dialogue"),
+                _segment("scene.ks:K:2", "同一文", "Line A\nLine B", segment_kind="tyrano_dialogue"),
+            ],
+        )
+
+        groups = harness._collect_audit_consistency_groups(
+            only_inconsistent=True,
+            dialogue_only=True,
+            sort_mode="source_order",
+        )
+
+        self.assertEqual(groups, [])
+
     def test_dialogue_only_excludes_non_dialogue_sources(self) -> None:
         harness = _Harness()
         path = Path("Mixed.json")

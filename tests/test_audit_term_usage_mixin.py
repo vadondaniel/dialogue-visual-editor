@@ -6,6 +6,7 @@ from pathlib import Path
 from dialogue_visual_editor.helpers.audit.audit_term_usage_mixin import (
     AuditTermUsageMixin,
 )
+from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
 from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
 
 
@@ -29,6 +30,10 @@ def _segment(
 
 
 class _Harness(AuditTermUsageMixin):
+    _normalize_audit_translation_lines_for_segment = (
+        AuditCoreMixin._normalize_audit_translation_lines_for_segment
+    )
+
     def __init__(self) -> None:
         self.file_paths: list[Path] = []
         self.sessions: dict[Path, FileSession] = {}
@@ -159,6 +164,30 @@ class _RefreshHarness(AuditTermUsageMixin):
 
 
 class AuditTermUsageMixinTests(unittest.TestCase):
+    def test_term_groups_match_tyrano_inline_r_candidate_text(self) -> None:
+        harness = _Harness()
+        path = Path("scene.ks")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("scene.ks:K:1", "魔王", "Demon[r]Lord", segment_kind="tyrano_dialogue"),
+            ],
+        )
+
+        groups = harness._compute_audit_term_groups_worker(
+            [(path, harness.sessions[path])],
+            term="魔王",
+            candidates_text="Demon Lord",
+            dialogue_only=True,
+        )
+
+        keys = [str(group["group_key"]) for group in groups]
+        self.assertIn("Demon Lord", keys)
+        self.assertNotIn("__unmatched__", keys)
+
     def test_collect_hits_dialogue_only_excludes_non_dialogue_segments(self) -> None:
         harness = _Harness()
         path = Path("Mixed.json")

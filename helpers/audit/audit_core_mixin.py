@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtCore import Qt, QTimer
@@ -16,6 +17,31 @@ class _AuditCoreHostTypingFallback:
 
 
 class AuditCoreMixin(_AuditCoreHostTypingFallback):
+    def _normalize_audit_translation_lines_for_segment(
+        self,
+        segment: Any,
+        value: Any,
+    ) -> list[str]:
+        normalized = self._normalize_translation_lines(value)
+        segment_kind_raw = getattr(segment, "segment_kind", "")
+        segment_kind = (
+            segment_kind_raw.strip().lower()
+            if isinstance(segment_kind_raw, str)
+            else ""
+        )
+        if segment_kind not in {"tyrano_dialogue", "choice", "tyrano_tag_text"}:
+            return normalized
+
+        rewritten: list[str] = []
+        for line in normalized:
+            cleaned = re.sub(r"(?i)\[p\]", "", line)
+            split_lines = re.split(r"(?i)\[r\]", cleaned)
+            if split_lines:
+                rewritten.extend(split_lines)
+            else:
+                rewritten.append(cleaned)
+        return rewritten or [""]
+
     def _scope_for_audit_target_uid(self, path: Path, uid_raw: str) -> Optional[str]:
         session = self.sessions.get(path)
         if session is None:

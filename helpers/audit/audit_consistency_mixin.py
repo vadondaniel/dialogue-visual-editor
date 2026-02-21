@@ -108,9 +108,18 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         segment: DialogueSegment,
     ) -> tuple[str, str]:
         source_text = "\n".join(self._segment_source_lines_for_display(segment)).strip()
-        translation_text = "\n".join(
-            self._normalize_translation_lines(segment.translation_lines)
-        ).strip()
+        normalize_for_segment = getattr(
+            self, "_normalize_audit_translation_lines_for_segment", None
+        )
+        if callable(normalize_for_segment):
+            try:
+                tl_lines_raw = normalize_for_segment(segment, segment.translation_lines)
+            except Exception:
+                tl_lines_raw = self._normalize_translation_lines(segment.translation_lines)
+        else:
+            tl_lines_raw = self._normalize_translation_lines(segment.translation_lines)
+        tl_lines = self._normalize_translation_lines(tl_lines_raw)
+        translation_text = "\n".join(tl_lines).strip()
         return source_text, translation_text
 
     def _find_consistency_entry_segment(
@@ -524,7 +533,19 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         if segment is None:
             return
 
-        target_lines = self._normalize_translation_lines(target_edit.toPlainText())
+        normalize_for_segment = getattr(
+            self, "_normalize_audit_translation_lines_for_segment", None
+        )
+        if callable(normalize_for_segment):
+            try:
+                target_lines_raw = normalize_for_segment(
+                    segment, target_edit.toPlainText()
+                )
+            except Exception:
+                target_lines_raw = self._normalize_translation_lines(target_edit.toPlainText())
+        else:
+            target_lines_raw = self._normalize_translation_lines(target_edit.toPlainText())
+        target_lines = self._normalize_translation_lines(target_lines_raw)
         metrics = self._consistency_target_overflow_metrics_for_segment(
             segment,
             target_lines,
@@ -605,10 +626,23 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 if source_text not in first_seen_order:
                     first_seen_order[source_text] = source_order
                     source_order += 1
-                tl_text = "\n".join(
-                    self._normalize_translation_lines(
-                        segment.translation_lines)
+                normalize_for_segment = getattr(
+                    self, "_normalize_audit_translation_lines_for_segment", None
                 )
+                if callable(normalize_for_segment):
+                    try:
+                        tl_lines_raw = normalize_for_segment(
+                            segment, segment.translation_lines
+                        )
+                    except Exception:
+                        tl_lines_raw = self._normalize_translation_lines(
+                            segment.translation_lines
+                        )
+                else:
+                    tl_lines_raw = self._normalize_translation_lines(
+                        segment.translation_lines
+                    )
+                tl_text = "\n".join(self._normalize_translation_lines(tl_lines_raw))
                 entry = {
                     "path": str(path),
                     "uid": segment.uid,
@@ -1002,12 +1036,40 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     break
             if target_segment is None:
                 continue
-            current_lines = self._normalize_translation_lines(
-                target_segment.translation_lines
+            normalize_for_segment = getattr(
+                self, "_normalize_audit_translation_lines_for_segment", None
             )
-            if current_lines == target_lines:
+            if callable(normalize_for_segment):
+                try:
+                    current_lines_raw = normalize_for_segment(
+                        target_segment,
+                        target_segment.translation_lines,
+                    )
+                except Exception:
+                    current_lines_raw = self._normalize_translation_lines(
+                        target_segment.translation_lines
+                    )
+            else:
+                current_lines_raw = self._normalize_translation_lines(
+                    target_segment.translation_lines
+                )
+            current_lines = self._normalize_translation_lines(current_lines_raw)
+            if callable(normalize_for_segment):
+                try:
+                    target_lines_for_segment_raw = normalize_for_segment(
+                        target_segment,
+                        target_lines,
+                    )
+                except Exception:
+                    target_lines_for_segment_raw = list(target_lines)
+            else:
+                target_lines_for_segment_raw = list(target_lines)
+            target_lines_for_segment = self._normalize_translation_lines(
+                target_lines_for_segment_raw
+            )
+            if current_lines == target_lines_for_segment:
                 continue
-            target_segment.translation_lines = list(target_lines)
+            target_segment.translation_lines = list(target_lines_for_segment)
             changed_entries += 1
             touched_paths.add(path)
             if self.current_path is not None and path == self.current_path:

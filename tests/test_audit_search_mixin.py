@@ -6,9 +6,17 @@ from typing import Any
 
 from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
 from dialogue_visual_editor.helpers.audit.audit_search_mixin import AuditSearchMixin
+from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
 
 
 class _Harness(AuditSearchMixin):
+    _normalize_audit_translation_lines_for_segment = (
+        AuditCoreMixin._normalize_audit_translation_lines_for_segment
+    )
+
+    def __init__(self) -> None:
+        self.sessions: dict[Path, FileSession] = {}
+
     @staticmethod
     def _is_name_index_session(_session: FileSession) -> bool:
         return False
@@ -49,6 +57,10 @@ class _Harness(AuditSearchMixin):
             if candidate.uid == segment.uid:
                 return f"Block {block_index}"
         return f"Block {index}"
+
+    @staticmethod
+    def _refresh_dirty_state(_session: FileSession) -> None:
+        return
 
 
 def _segment(uid: str, source: str, translation: str, *, kind: str = "dialogue") -> DialogueSegment:
@@ -152,6 +164,30 @@ class AuditSearchMixinTests(unittest.TestCase):
 
         self.assertEqual(count, 2)
         self.assertEqual(replaced, [r"Szintosszeg: \V", r"Szintosszeg: \V \V"])
+
+    def test_replace_in_session_entry_normalizes_tyrano_markers(self) -> None:
+        harness = _Harness()
+        path = Path("scene.ks")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[_segment("scene.ks:K:1", "src", "Hello", kind="tyrano_dialogue")],
+        )
+        harness.sessions = {path: session}
+
+        changed, replacements = harness._replace_in_session_entry(
+            str(path),
+            "scene.ks:K:1",
+            "Hello",
+            "Hi[r]There[p]",
+            "translation",
+            True,
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(replacements, 1)
+        self.assertEqual(session.segments[0].translation_lines, ["Hi", "There"])
 
 
 if __name__ == "__main__":

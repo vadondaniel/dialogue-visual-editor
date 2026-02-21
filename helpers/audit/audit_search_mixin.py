@@ -216,10 +216,24 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             for idx, segment in enumerate(list(session.segments), start=1):
                 original_text = "\n".join(
                     self._segment_source_lines_for_display(segment))
-                translation_text = "\n".join(
-                    self._normalize_translation_lines(
-                        segment.translation_lines)
+                normalize_for_segment = getattr(
+                    self, "_normalize_audit_translation_lines_for_segment", None
                 )
+                if callable(normalize_for_segment):
+                    try:
+                        tl_lines_raw = normalize_for_segment(
+                            segment, segment.translation_lines
+                        )
+                    except Exception:
+                        tl_lines_raw = self._normalize_translation_lines(
+                            segment.translation_lines
+                        )
+                else:
+                    tl_lines_raw = self._normalize_translation_lines(
+                        segment.translation_lines
+                    )
+                tl_lines = self._normalize_translation_lines(tl_lines_raw)
+                translation_text = "\n".join(tl_lines)
                 if callable(entry_resolver):
                     entry_text = str(entry_resolver(session, segment, idx))
                 else:
@@ -797,12 +811,37 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
                 changed = True
                 replacements += count
         if matched_scope in {"translation", "both"}:
-            tl_lines = self._normalize_translation_lines(target.translation_lines)
+            normalize_for_segment = getattr(
+                self, "_normalize_audit_translation_lines_for_segment", None
+            )
+            if callable(normalize_for_segment):
+                try:
+                    tl_lines_raw = normalize_for_segment(
+                        target, target.translation_lines
+                    )
+                except Exception:
+                    tl_lines_raw = self._normalize_translation_lines(
+                        target.translation_lines
+                    )
+            else:
+                tl_lines_raw = self._normalize_translation_lines(target.translation_lines)
+            tl_lines = self._normalize_translation_lines(tl_lines_raw)
             replaced_lines, count = self._replace_in_lines(
                 tl_lines, find_text, replace_text, case_sensitive
             )
             if count > 0 and replaced_lines != tl_lines:
-                target.translation_lines = list(replaced_lines)
+                if callable(normalize_for_segment):
+                    try:
+                        stored_lines_raw = normalize_for_segment(
+                            target, replaced_lines
+                        )
+                        target.translation_lines = list(
+                            self._normalize_translation_lines(stored_lines_raw)
+                        )
+                    except Exception:
+                        target.translation_lines = list(replaced_lines)
+                else:
+                    target.translation_lines = list(replaced_lines)
                 changed = True
                 replacements += count
         if changed:

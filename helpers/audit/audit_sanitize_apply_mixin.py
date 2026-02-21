@@ -52,14 +52,40 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
                 replacements += replaced_count
                 changed = True
         if scope in ("translation", "both"):
-            translation_lines = self._normalize_translation_lines(
-                target_segment.translation_lines)
+            normalize_for_segment = getattr(
+                self, "_normalize_audit_translation_lines_for_segment", None
+            )
+            if callable(normalize_for_segment):
+                try:
+                    translation_lines_raw = normalize_for_segment(
+                        target_segment, target_segment.translation_lines
+                    )
+                except Exception:
+                    translation_lines_raw = self._normalize_translation_lines(
+                        target_segment.translation_lines
+                    )
+            else:
+                translation_lines_raw = self._normalize_translation_lines(
+                    target_segment.translation_lines
+                )
+            translation_lines = self._normalize_translation_lines(translation_lines_raw)
             replaced_lines, replaced_count = self._apply_sanitize_rules_to_lines(
                 translation_lines,
                 [rule],
             )
             if replaced_count > 0 and replaced_lines != translation_lines:
-                target_segment.translation_lines = list(replaced_lines)
+                if callable(normalize_for_segment):
+                    try:
+                        stored_lines_raw = normalize_for_segment(
+                            target_segment, replaced_lines
+                        )
+                        target_segment.translation_lines = list(
+                            self._normalize_translation_lines(stored_lines_raw)
+                        )
+                    except Exception:
+                        target_segment.translation_lines = list(replaced_lines)
+                else:
+                    target_segment.translation_lines = list(replaced_lines)
                 replacements += replaced_count
                 changed = True
 
@@ -149,14 +175,40 @@ class AuditSanitizeApplyMixin(_AuditSanitizeHostTypingFallback):
                         total_replacements += replaced_count
                         segment_changed = True
                 if scope in ("translation", "both"):
-                    translation_lines = self._normalize_translation_lines(
-                        segment.translation_lines)
+                    normalize_for_segment = getattr(
+                        self, "_normalize_audit_translation_lines_for_segment", None
+                    )
+                    if callable(normalize_for_segment):
+                        try:
+                            translation_lines_raw = normalize_for_segment(
+                                segment, segment.translation_lines
+                            )
+                        except Exception:
+                            translation_lines_raw = self._normalize_translation_lines(
+                                segment.translation_lines
+                            )
+                    else:
+                        translation_lines_raw = self._normalize_translation_lines(
+                            segment.translation_lines
+                        )
+                    translation_lines = self._normalize_translation_lines(translation_lines_raw)
                     replaced_lines, replaced_count = self._apply_sanitize_rules_to_lines(
                         translation_lines,
                         segment_rules,
                     )
                     if replaced_count > 0 and replaced_lines != translation_lines:
-                        segment.translation_lines = list(replaced_lines)
+                        if callable(normalize_for_segment):
+                            try:
+                                stored_lines_raw = normalize_for_segment(
+                                    segment, replaced_lines
+                                )
+                                segment.translation_lines = list(
+                                    self._normalize_translation_lines(stored_lines_raw)
+                                )
+                            except Exception:
+                                segment.translation_lines = list(replaced_lines)
+                        else:
+                            segment.translation_lines = list(replaced_lines)
                         total_replacements += replaced_count
                         segment_changed = True
                 if segment_changed:

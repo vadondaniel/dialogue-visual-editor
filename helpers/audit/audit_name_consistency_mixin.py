@@ -116,7 +116,20 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 if field_name != "name":
                     continue
                 source_lines = self._segment_source_lines_for_display(segment)
-                tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                normalize_for_segment = getattr(
+                    self, "_normalize_audit_translation_lines_for_segment", None
+                )
+                if callable(normalize_for_segment):
+                    try:
+                        tl_lines = normalize_for_segment(
+                            segment, segment.translation_lines
+                        )
+                    except Exception:
+                        tl_lines = self._normalize_translation_lines(
+                            segment.translation_lines
+                        )
+                else:
+                    tl_lines = self._normalize_translation_lines(segment.translation_lines)
                 if not isinstance(source_lines, list) or not source_lines:
                     continue
                 if not isinstance(tl_lines, list):
@@ -163,7 +176,20 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
                     continue
                 source_lines = self._segment_source_lines_for_display(segment)
-                tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                normalize_for_segment = getattr(
+                    self, "_normalize_audit_translation_lines_for_segment", None
+                )
+                if callable(normalize_for_segment):
+                    try:
+                        tl_lines = normalize_for_segment(
+                            segment, segment.translation_lines
+                        )
+                    except Exception:
+                        tl_lines = self._normalize_translation_lines(
+                            segment.translation_lines
+                        )
+                else:
+                    tl_lines = self._normalize_translation_lines(segment.translation_lines)
                 if not isinstance(source_lines, list) or not source_lines:
                     continue
                 if not isinstance(tl_lines, list):
@@ -546,9 +572,23 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                     break
             if target_segment is None:
                 continue
-            current_lines = self._normalize_translation_lines(
-                target_segment.translation_lines
+            normalize_for_segment = getattr(
+                self, "_normalize_audit_translation_lines_for_segment", None
             )
+            if callable(normalize_for_segment):
+                try:
+                    current_lines_raw = normalize_for_segment(
+                        target_segment, target_segment.translation_lines
+                    )
+                except Exception:
+                    current_lines_raw = self._normalize_translation_lines(
+                        target_segment.translation_lines
+                    )
+            else:
+                current_lines_raw = self._normalize_translation_lines(
+                    target_segment.translation_lines
+                )
+            current_lines = self._normalize_translation_lines(current_lines_raw)
             next_lines: list[str] = []
             block_replacements = 0
             for line in current_lines:
@@ -561,7 +601,18 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 block_replacements += count
             if block_replacements <= 0:
                 continue
-            target_segment.translation_lines = list(next_lines)
+            if callable(normalize_for_segment):
+                try:
+                    stored_lines_raw = normalize_for_segment(
+                        target_segment, next_lines
+                    )
+                    target_segment.translation_lines = list(
+                        self._normalize_translation_lines(stored_lines_raw)
+                    )
+                except Exception:
+                    target_segment.translation_lines = list(next_lines)
+            else:
+                target_segment.translation_lines = list(next_lines)
             changed_blocks += 1
             replaced_total += block_replacements
             touched_paths.add(path)

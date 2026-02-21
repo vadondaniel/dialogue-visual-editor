@@ -207,7 +207,19 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
         segments: list[DialogueSegment],
     ) -> list[str]:
         lines: list[str] = []
+        normalize_for_segment = getattr(
+            self, "_normalize_audit_translation_lines_for_segment", None
+        )
         for segment in segments:
+            if callable(normalize_for_segment):
+                try:
+                    tl_lines_raw = normalize_for_segment(
+                        segment, segment.translation_lines
+                    )
+                    lines.extend(self._normalize_translation_lines(tl_lines_raw))
+                    continue
+                except Exception:
+                    pass
             lines.extend(self._normalize_translation_lines(segment.translation_lines))
         return lines if lines else [""]
 
