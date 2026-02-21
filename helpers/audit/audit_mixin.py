@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .audit_name_consistency_mixin import AuditNameConsistencyMixin
 from .audit_consistency_mixin import AuditConsistencyMixin
 from .audit_control_mismatch_mixin import AuditControlMismatchMixin
 from .audit_core_mixin import AuditCoreMixin
@@ -17,5 +18,6 @@ class AuditMixin(
     AuditControlMismatchMixin,
     AuditConsistencyMixin,
     AuditTermUsageMixin,
+    AuditNameConsistencyMixin,
 ):
     pass

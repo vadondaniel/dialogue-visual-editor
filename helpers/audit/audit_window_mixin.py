@@ -37,6 +37,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
     _AUDIT_TAB_CONTROL_MISMATCH = 2
     _AUDIT_TAB_CONSISTENCY = 3
     _AUDIT_TAB_TERM_USAGE = 4
+    _AUDIT_TAB_NAME_CONSISTENCY = 5
 
     def _audit_case_toggle_icon(self, checked: bool) -> QIcon:
         pixmap = QPixmap(26, 26)
@@ -90,6 +91,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         if tab_index == self._AUDIT_TAB_TERM_USAGE:
             self._refresh_audit_term_panel()
             self._refresh_audit_term_suggestions_panel()
+            return
+        if tab_index == self._AUDIT_TAB_NAME_CONSISTENCY:
+            self._refresh_audit_name_consistency_panel()
 
     def _open_audit_window(self) -> None:
         if self.audit_window is None:
@@ -517,6 +521,73 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
 
         tabs.addTab(term_tab, "Term Usage")
 
+        name_consistency_tab = QWidget()
+        name_consistency_layout = QVBoxLayout(name_consistency_tab)
+        name_consistency_layout.setContentsMargins(8, 8, 8, 8)
+        name_consistency_layout.setSpacing(8)
+
+        name_consistency_controls_row = QHBoxLayout()
+        name_consistency_controls_row.setContentsMargins(0, 0, 0, 0)
+        name_consistency_controls_row.setSpacing(6)
+        name_consistency_dialogue_only_check = QCheckBox("Dialogue only")
+        name_consistency_dialogue_only_check.setChecked(True)
+        name_consistency_controls_row.addWidget(name_consistency_dialogue_only_check)
+        name_consistency_controls_row.addWidget(QLabel("Filter"))
+        name_consistency_filter_edit = QLineEdit()
+        name_consistency_filter_edit.setPlaceholderText(
+            "Source / expected TL / misc context"
+        )
+        name_consistency_filter_edit.setClearButtonEnabled(True)
+        name_consistency_controls_row.addWidget(name_consistency_filter_edit, 1)
+        name_consistency_controls_row.addWidget(QLabel("Sort"))
+        name_consistency_sort_combo = QComboBox()
+        name_consistency_sort_combo.addItem("Most misses", "hits_desc")
+        name_consistency_sort_combo.addItem("Most checked", "checked_desc")
+        name_consistency_sort_combo.addItem("Source A-Z", "source_az")
+        name_consistency_sort_combo.addItem("Source Z-A", "source_za")
+        name_consistency_sort_combo.addItem("Misc file A-Z", "path_az")
+        name_consistency_controls_row.addWidget(name_consistency_sort_combo)
+        name_consistency_controls_row.addStretch(1)
+        name_consistency_refresh_btn = QPushButton("Refresh")
+        name_consistency_controls_row.addWidget(name_consistency_refresh_btn)
+        name_consistency_layout.addLayout(name_consistency_controls_row)
+
+        name_consistency_splitter = QSplitter(Qt.Orientation.Horizontal)
+        name_consistency_layout.addWidget(name_consistency_splitter, 1)
+
+        name_consistency_groups_panel = QWidget()
+        name_consistency_groups_layout = QVBoxLayout(name_consistency_groups_panel)
+        name_consistency_groups_layout.setContentsMargins(0, 0, 0, 0)
+        name_consistency_groups_layout.setSpacing(6)
+        name_consistency_groups_layout.addWidget(QLabel("Inconsistent Source Terms"))
+        name_consistency_groups_list = QListWidget()
+        name_consistency_groups_layout.addWidget(name_consistency_groups_list, 1)
+        name_consistency_splitter.addWidget(name_consistency_groups_panel)
+
+        name_consistency_entries_panel = QWidget()
+        name_consistency_entries_layout = QVBoxLayout(name_consistency_entries_panel)
+        name_consistency_entries_layout.setContentsMargins(0, 0, 0, 0)
+        name_consistency_entries_layout.setSpacing(6)
+        name_consistency_entries_layout.addWidget(QLabel("Dialogue Hits"))
+        name_consistency_entries_list = QListWidget()
+        name_consistency_entries_layout.addWidget(name_consistency_entries_list, 1)
+        name_consistency_footer = QHBoxLayout()
+        name_consistency_footer.setContentsMargins(0, 0, 0, 0)
+        name_consistency_footer.setSpacing(6)
+        name_consistency_status_label = QLabel(
+            "Checks repeated source terms for inconsistent TL naming."
+        )
+        name_consistency_footer.addWidget(name_consistency_status_label, 1)
+        name_consistency_goto_btn = QPushButton("Go To")
+        name_consistency_goto_btn.setEnabled(False)
+        name_consistency_footer.addWidget(name_consistency_goto_btn)
+        name_consistency_entries_layout.addLayout(name_consistency_footer)
+        name_consistency_splitter.addWidget(name_consistency_entries_panel)
+        name_consistency_splitter.setStretchFactor(0, 4)
+        name_consistency_splitter.setStretchFactor(1, 6)
+
+        tabs.addTab(name_consistency_tab, "Name Consistency")
+
         search_progress_overlay = self._create_audit_progress_overlay(
             results_list)
         sanitize_progress_overlay = self._create_audit_progress_overlay(
@@ -585,6 +656,13 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_term_suggest_refresh_btn = term_suggest_refresh_btn
         self.audit_term_variants_progress_overlay = term_variants_progress_overlay
         self.audit_term_hits_progress_overlay = term_hits_progress_overlay
+        self.audit_name_consistency_dialogue_only_check = name_consistency_dialogue_only_check
+        self.audit_name_consistency_filter_edit = name_consistency_filter_edit
+        self.audit_name_consistency_sort_combo = name_consistency_sort_combo
+        self.audit_name_consistency_groups_list = name_consistency_groups_list
+        self.audit_name_consistency_entries_list = name_consistency_entries_list
+        self.audit_name_consistency_status_label = name_consistency_status_label
+        self.audit_name_consistency_goto_btn = name_consistency_goto_btn
 
         for rule_id, label, find_text, replace_text in SANITIZE_CHAR_RULES:
             item = QListWidgetItem()
@@ -790,6 +868,35 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             self._apply_selected_audit_term_variant_to_canonical
         )
         term_goto_btn.clicked.connect(self._go_to_selected_audit_term_hit)
+        name_consistency_dialogue_only_check.toggled.connect(
+            lambda _checked: self._refresh_audit_name_consistency_panel()
+        )
+        name_consistency_filter_edit.textChanged.connect(
+            lambda _text: self._refresh_audit_name_consistency_panel()
+        )
+        name_consistency_sort_combo.currentIndexChanged.connect(
+            lambda _index: self._refresh_audit_name_consistency_panel()
+        )
+        name_consistency_refresh_btn.clicked.connect(
+            self._refresh_audit_name_consistency_panel
+        )
+        name_consistency_groups_list.currentItemChanged.connect(
+            lambda _current, _previous: self._refresh_audit_name_consistency_entries()
+        )
+        name_consistency_entries_list.currentItemChanged.connect(
+            lambda current, _previous: name_consistency_goto_btn.setEnabled(
+                current is not None
+            )
+        )
+        name_consistency_entries_list.itemDoubleClicked.connect(
+            lambda _item: self._go_to_selected_audit_name_consistency_entry()
+        )
+        name_consistency_entries_list.itemActivated.connect(
+            lambda _item: self._go_to_selected_audit_name_consistency_entry()
+        )
+        name_consistency_goto_btn.clicked.connect(
+            self._go_to_selected_audit_name_consistency_entry
+        )
         tabs.currentChanged.connect(self._on_audit_tab_changed)
 
         self._refresh_audit_tab(tabs.currentIndex())

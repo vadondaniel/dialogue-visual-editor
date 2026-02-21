@@ -36,6 +36,9 @@ class _Harness(AuditWindowMixin):
     def _refresh_audit_term_suggestions_panel(self) -> None:
         self.calls.append("term_suggestions")
 
+    def _refresh_audit_name_consistency_panel(self) -> None:
+        self.calls.append("name_consistency")
+
     def _hide_audit_progress_overlay(self, overlay: object) -> None:
         self.hidden_overlays.append(overlay)
 
@@ -61,6 +64,13 @@ class AuditWindowMixinTests(unittest.TestCase):
         harness._refresh_audit_tab(harness._AUDIT_TAB_TERM_USAGE)
 
         self.assertEqual(harness.calls, ["term", "term_suggestions"])
+
+    def test_refresh_audit_tab_dispatches_name_consistency_panel(self) -> None:
+        harness = _Harness()
+
+        harness._refresh_audit_tab(harness._AUDIT_TAB_NAME_CONSISTENCY)
+
+        self.assertEqual(harness.calls, ["name_consistency"])
 
     def test_tab_change_hides_overlays_and_refreshes_target_tab(self) -> None:
         harness = _Harness()
