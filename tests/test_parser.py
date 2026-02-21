@@ -199,6 +199,34 @@ class ParserTests(unittest.TestCase):
         self.assertIn("plugins.js > plugin[1].parameters.mode", contexts)
         self.assertTrue(all(segment.segment_kind == "plugin_text" for segment in session.segments))
 
+    def test_parse_troops_keeps_dialogue_and_name_index_segments(self) -> None:
+        data = [
+            None,
+            {
+                "id": 1,
+                "name": "Troop A",
+                "pages": [
+                    {
+                        "list": [
+                            {
+                                "code": 101,
+                                "indent": 0,
+                                "parameters": ["", 0, 0, 2, "Narrator"],
+                            },
+                            {"code": 401, "indent": 0, "parameters": ["Hello from troop event"]},
+                        ]
+                    }
+                ],
+            },
+        ]
+        session = parse_dialogue_data(Path("Troops.json"), data)
+
+        kinds = [segment.segment_kind for segment in session.segments]
+        self.assertIn("dialogue", kinds)
+        self.assertIn("name_index", kinds)
+        self.assertFalse(bool(getattr(session, "is_name_index_session", False)))
+        self.assertTrue(bool(getattr(session, "has_mixed_dialogue_misc_segments", False)))
+
 
 if __name__ == "__main__":
     unittest.main()

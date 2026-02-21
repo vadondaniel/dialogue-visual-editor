@@ -383,7 +383,14 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         self._update_window_title()
         self._update_file_item_text(session.path)
         if self.current_path == session.path:
-            actor_mode = self._is_name_index_session(session)
+            actor_mode_resolver = getattr(self, "_actor_mode_for_path", None)
+            if callable(actor_mode_resolver):
+                try:
+                    actor_mode = bool(actor_mode_resolver(session.path, session))
+                except Exception:
+                    actor_mode = self._is_name_index_session(session)
+            else:
+                actor_mode = self._is_name_index_session(session)
             translator_mode = self._is_translator_mode()
             display_segments_resolver = getattr(self, "_display_segments_for_session", None)
             if callable(display_segments_resolver):
@@ -401,8 +408,20 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     block_count = len(session.segments)
             else:
                 block_count = len(session.segments)
-            block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
-            header = f"{session.path.name} | {block_count} {block_label}"
+            if actor_mode:
+                name_index_label_resolver = getattr(self, "_name_index_label", None)
+                if callable(name_index_label_resolver):
+                    try:
+                        name_index_label = str(name_index_label_resolver(session))
+                    except Exception:
+                        name_index_label = "Entry"
+                else:
+                    name_index_label = "Entry"
+                entry_label = "entry" if block_count == 1 else "entries"
+                header = f"{session.path.name} | {block_count} {name_index_label.lower()} {entry_label}"
+            else:
+                block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
+                header = f"{session.path.name} | {block_count} {block_label}"
             if source_dirty and tl_dirty:
                 header += " | UNSAVED SOURCE+TL"
             elif source_dirty:
@@ -413,37 +432,76 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             self._update_reset_json_button(session)
 
     def _update_file_item_text(self, path: Path) -> None:
-        item = self.file_items.get(path)
         session = self.sessions.get(path)
-        if item is None:
-            return
         if session is None:
-            item.setText(path.name)
+            item = self.file_items.get(path)
+            if item is not None:
+                item.setText(path.name)
             return
+
+        file_items_resolver = getattr(self, "_file_list_items_for_path", None)
+        if callable(file_items_resolver):
+            try:
+                scoped_items_raw = file_items_resolver(path)
+            except Exception:
+                scoped_items_raw = []
+        else:
+            scoped_items_raw = []
+
+        scoped_items: list[tuple[str, Any]] = []
+        if isinstance(scoped_items_raw, list):
+            for entry in scoped_items_raw:
+                if not isinstance(entry, tuple) or len(entry) != 2:
+                    continue
+                scope_raw, item = entry
+                if not isinstance(scope_raw, str):
+                    continue
+                scoped_items.append((scope_raw, item))
+        if not scoped_items:
+            item = self.file_items.get(path)
+            if item is None:
+                return
+            scoped_items = [("dialogue", item)]
+
         prefix = "* " if session.dirty else ""
-        actor_mode = self._is_name_index_session(session)
         translator_mode = self._is_translator_mode()
         display_segments_resolver = getattr(self, "_display_segments_for_session", None)
-        if callable(display_segments_resolver):
-            display_segments_raw = display_segments_resolver(
-                session,
-                translator_mode=translator_mode,
-                actor_mode=actor_mode,
-            )
-            if isinstance(display_segments_raw, list):
-                display_count = self._resolved_display_count(
-                    display_segments_raw,
+        actor_mode_resolver = getattr(self, "_actor_mode_for_path", None)
+        for scope, item in scoped_items:
+            actor_mode = scope.strip().lower() == "misc"
+            if callable(actor_mode_resolver):
+                if scope.strip().lower() not in {"dialogue", "misc"}:
+                    try:
+                        actor_mode = bool(actor_mode_resolver(path, session))
+                    except Exception:
+                        actor_mode = self._is_name_index_session(session)
+            if callable(display_segments_resolver):
+                display_segments_raw = display_segments_resolver(
+                    session,
+                    translator_mode=translator_mode,
                     actor_mode=actor_mode,
                 )
+                if isinstance(display_segments_raw, list):
+                    display_segments = display_segments_raw
+                    display_count = self._resolved_display_count(
+                        display_segments,
+                        actor_mode=actor_mode,
+                    )
+                else:
+                    display_segments = list(session.segments)
+                    display_count = len(session.segments)
             else:
+                display_segments = list(session.segments)
                 display_count = len(session.segments)
-        else:
-            display_count = len(session.segments)
-        suffix = " [empty]" if display_count == 0 else ""
-        problems = self._problem_count_for_session(session)
-        problem_badge = f" [!{problems}]" if problems > 0 else ""
-        item.setText(
-            f"{prefix}{path.name} ({display_count}){problem_badge}{suffix}")
+            problems = sum(
+                1
+                for segment in display_segments
+                if self._segment_has_layout_problem(session, segment, translator_mode)
+            )
+            problem_badge = f" [!{problems}]" if problems > 0 else ""
+            suffix = " [empty]" if display_count == 0 else ""
+            item.setText(
+                f"{prefix}{path.name} ({display_count}){problem_badge}{suffix}")
 
     def _build_entries_for_segment(self, segment: DialogueSegment) -> list[dict[str, Any]]:
         if segment.segment_kind == "choice":
@@ -790,6 +848,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             bool(getattr(session, "is_name_index_session", False))
             or bool(getattr(session, "is_actor_index_session", False))
         )
+        has_name_index_segments = any(
+            segment.segment_kind == "name_index"
+            for segment in session.segments
+        )
 
         if isinstance(session.data, dict):
             for segment in session.segments:
@@ -824,8 +886,19 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                         session.data, path_tokens_raw, new_value)
                 return
 
-        if is_name_index_session and isinstance(session.data, list):
-            uid_prefix_raw = getattr(session, "name_index_uid_prefix", "A")
+        if (is_name_index_session or has_name_index_segments) and isinstance(session.data, list):
+            uid_prefix_raw = getattr(session, "name_index_uid_prefix", "")
+            if not (isinstance(uid_prefix_raw, str) and uid_prefix_raw.strip()):
+                inferred_prefix = ""
+                for segment in session.segments:
+                    if segment.segment_kind != "name_index":
+                        continue
+                    match = re.search(r":([A-Za-z]):\d+(?::[A-Za-z0-9_]+)?$", segment.uid)
+                    if match is None:
+                        continue
+                    inferred_prefix = match.group(1)
+                    break
+                uid_prefix_raw = inferred_prefix or "A"
             uid_prefix = uid_prefix_raw.strip() if isinstance(uid_prefix_raw, str) else "A"
             id_pattern = re.compile(
                 rf":{re.escape(uid_prefix)}:(\d+)(?::([A-Za-z0-9_]+))?$")

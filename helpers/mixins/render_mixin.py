@@ -55,6 +55,15 @@ class RenderMixin(_RenderHostTypingFallback):
         return segment.segment_kind == "map_display_name"
 
     @staticmethod
+    def _is_misc_segment_for_display(segment: DialogueSegment) -> bool:
+        return segment.segment_kind in {
+            "name_index",
+            "system_text",
+            "plugin_text",
+            "actor_name_alias",
+        }
+
+    @staticmethod
     def _source_uid_is_plugins_parameter_entry(source_uid: str) -> bool:
         normalized = source_uid.strip().lower()
         if not normalized:
@@ -553,6 +562,30 @@ class RenderMixin(_RenderHostTypingFallback):
             segments = list(session.segments)
         else:
             segments = [segment for segment in session.segments if not segment.translation_only]
+        has_misc_segments = any(
+            self._is_misc_segment_for_display(segment)
+            for segment in segments
+        )
+        has_structural_dialogue_segments = any(
+            segment.segment_kind in {"dialogue", "choice", "script_message"}
+            for segment in segments
+        )
+        has_mixed_scope_segments = bool(
+            getattr(session, "has_mixed_dialogue_misc_segments", False)
+        ) or (has_misc_segments and has_structural_dialogue_segments)
+        if has_mixed_scope_segments:
+            if actor_mode:
+                segments = [
+                    segment
+                    for segment in segments
+                    if self._is_misc_segment_for_display(segment)
+                ]
+            else:
+                segments = [
+                    segment
+                    for segment in segments
+                    if not self._is_misc_segment_for_display(segment)
+                ]
         if not self._hide_non_meaningful_entries_enabled():
             filtered = segments
         else:
@@ -1226,7 +1259,14 @@ class RenderMixin(_RenderHostTypingFallback):
         ).value() if preserve_scroll else None
         if start_at_top and not preserve_scroll:
             self.scroll_area.verticalScrollBar().setValue(0)
-        actor_mode = self._is_name_index_session(session)
+        actor_mode_resolver = getattr(self, "_actor_mode_for_path", None)
+        if callable(actor_mode_resolver):
+            try:
+                actor_mode = bool(actor_mode_resolver(session.path, session))
+            except Exception:
+                actor_mode = self._is_name_index_session(session)
+        else:
+            actor_mode = self._is_name_index_session(session)
         name_index_kind = self._name_index_kind(session) if actor_mode else ""
         name_index_label = self._name_index_label(session)
         translator_mode = self._is_translator_mode()

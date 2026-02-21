@@ -175,6 +175,47 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
 
         self.assertEqual([segment.uid for segment in display], ["Items.json:I:1", "Items.json:I:2", "Items.json:I:3"])
 
+    def test_mixed_dialogue_and_misc_session_filters_by_actor_mode(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        dialogue = _segment("Troops.json:L0:0", "Hello", segment_kind="dialogue")
+        misc = _segment("Troops.json:P:1", "Troop A", segment_kind="name_index")
+        session = _session_with_segments([dialogue, misc])
+        setattr(session, "has_mixed_dialogue_misc_segments", True)
+
+        dialogue_view = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=False,
+        )
+        misc_view = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=True,
+        )
+
+        self.assertEqual([segment.uid for segment in dialogue_view], ["Troops.json:L0:0"])
+        self.assertEqual([segment.uid for segment in misc_view], ["Troops.json:P:1"])
+
+    def test_mixed_dialogue_and_misc_session_filters_without_mixed_flag(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        dialogue = _segment("Troops.json:L0:0", "Hello", segment_kind="dialogue")
+        misc = _segment("Troops.json:P:1", "Troop A", segment_kind="name_index")
+        session = _session_with_segments([dialogue, misc])
+
+        dialogue_view = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=False,
+        )
+        misc_view = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=True,
+        )
+
+        self.assertEqual([segment.uid for segment in dialogue_view], ["Troops.json:L0:0"])
+        self.assertEqual([segment.uid for segment in misc_view], ["Troops.json:P:1"])
+
     def test_translation_state_entry_filter_respects_toggle_for_plugin_parameters(self) -> None:
         entry = {
             "source_uid": "plugins.js:J:3:param_1_enabled",

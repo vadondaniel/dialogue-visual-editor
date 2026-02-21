@@ -695,13 +695,24 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                     )
                 )
         if index_segments:
-            session.segments = index_segments
-            setattr(session, "is_name_index_session", True)
-            setattr(session, "name_index_kind", kind)
-            setattr(session, "name_index_uid_prefix", uid_prefix)
-            setattr(session, "name_index_label", label)
-            if kind == "actor":
-                setattr(session, "is_actor_index_session", True)
+            has_dialogue_segments = any(
+                segment.segment_kind in {"dialogue", "choice", "script_message"}
+                for segment in session.segments
+            )
+            if has_dialogue_segments:
+                session.segments = list(session.segments) + index_segments
+                setattr(session, "has_mixed_dialogue_misc_segments", True)
+                setattr(session, "has_name_index_segments", True)
+                setattr(session, "name_index_uid_prefix", uid_prefix)
+                setattr(session, "name_index_label", label)
+            else:
+                session.segments = index_segments
+                setattr(session, "is_name_index_session", True)
+                setattr(session, "name_index_kind", kind)
+                setattr(session, "name_index_uid_prefix", uid_prefix)
+                setattr(session, "name_index_label", label)
+                if kind == "actor":
+                    setattr(session, "is_actor_index_session", True)
 
     if path.name.lower() == "system.json" and isinstance(data, dict):
         system_segments = _build_system_text_segments(path, data)

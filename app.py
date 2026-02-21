@@ -155,6 +155,7 @@ except ImportError:
 
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
 FILE_LIST_SECTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+FILE_LIST_SCOPE_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 logger = logging.getLogger(__name__)
 
 
@@ -221,6 +222,8 @@ class DialogueVisualEditor(
         self.version_db: Optional[DialogueVersionDB] = None
         self.file_paths: list[Path] = []
         self.file_items: dict[Path, QListWidgetItem] = {}
+        self.file_items_scoped: dict[tuple[Path, str], QListWidgetItem] = {}
+        self.file_view_scope_by_path: dict[Path, str] = {}
         self.sessions: dict[Path, FileSession] = {}
         self.current_path: Optional[Path] = None
         self.current_segment_lookup: dict[str, DialogueSegment] = {}
@@ -3084,7 +3087,7 @@ class DialogueVisualEditor(
         session = self.sessions.get(self.current_path)
         if session is None:
             return None
-        actor_mode = self._is_name_index_session(session)
+        actor_mode = self._actor_mode_for_path(session.path, session)
         translator_mode = self._is_translator_mode()
         display_segments = self._display_segments_for_session(
             session,
@@ -3242,7 +3245,10 @@ class DialogueVisualEditor(
             else None
         )
         actor_mode = bool(
-            current_session and self._is_name_index_session(current_session))
+            current_session
+            and self.current_path is not None
+            and self._actor_mode_for_path(self.current_path, current_session)
+        )
         name_index_label = self._name_index_label(
             current_session) if actor_mode else "Entry"
         segment = self.current_segment_lookup.get(
@@ -5136,6 +5142,67 @@ class DialogueVisualEditor(
         if callable(refresh_scope):
             refresh_scope()
 
+    @staticmethod
+    def _is_misc_segment_kind_for_scope(segment: DialogueSegment) -> bool:
+        return segment.segment_kind in {
+            "name_index",
+            "system_text",
+            "plugin_text",
+            "actor_name_alias",
+        }
+
+    def _session_supports_dialogue_scope(self, session: FileSession) -> bool:
+        return any(
+            not self._is_misc_segment_kind_for_scope(segment)
+            for segment in session.segments
+        )
+
+    def _session_supports_misc_scope(self, session: FileSession) -> bool:
+        if bool(getattr(session, "is_name_index_session", False)):
+            return True
+        return any(
+            self._is_misc_segment_kind_for_scope(segment)
+            for segment in session.segments
+        )
+
+    def _normalized_view_scope_for_path(
+        self,
+        path: Path,
+        session: FileSession,
+        requested_scope: Optional[str] = None,
+    ) -> str:
+        supports_dialogue = self._session_supports_dialogue_scope(session)
+        supports_misc = self._session_supports_misc_scope(session)
+        candidate_raw = requested_scope if requested_scope is not None else self.file_view_scope_by_path.get(path, "")
+        candidate = candidate_raw.strip().lower() if isinstance(candidate_raw, str) else ""
+        if candidate == "misc" and supports_misc:
+            return "misc"
+        if candidate == "dialogue" and supports_dialogue:
+            return "dialogue"
+        if supports_dialogue:
+            return "dialogue"
+        if supports_misc:
+            return "misc"
+        return "dialogue"
+
+    def _actor_mode_for_path(self, path: Path, session: FileSession) -> bool:
+        scope = self._normalized_view_scope_for_path(path, session)
+        return scope == "misc"
+
+    def _file_list_items_for_path(self, path: Path) -> list[tuple[str, QListWidgetItem]]:
+        scoped_items: list[tuple[str, QListWidgetItem]] = []
+        for (candidate_path, scope), item in self.file_items_scoped.items():
+            if candidate_path != path:
+                continue
+            scoped_items.append((scope, item))
+        if scoped_items:
+            scoped_items.sort(key=lambda row: 0 if row[0] == "dialogue" else 1)
+            return scoped_items
+        item = self.file_items.get(path)
+        if item is None:
+            return []
+        return [("dialogue", item)]
+
     def _visible_file_paths(self) -> list[Path]:
         visible_paths: list[Path] = []
         show_empty = self.show_empty_files_check.isChecked()
@@ -5144,13 +5211,21 @@ class DialogueVisualEditor(
             session = self.sessions.get(path)
             if session is None:
                 continue
-            actor_mode = self._is_name_index_session(session)
-            display_segments = self._display_segments_for_session(
+            supports_dialogue = self._session_supports_dialogue_scope(session)
+            supports_misc = self._session_supports_misc_scope(session)
+            dialogue_segments = self._display_segments_for_session(
                 session,
                 translator_mode=translator_mode,
-                actor_mode=actor_mode,
+                actor_mode=False,
             )
-            if not show_empty and not display_segments:
+            misc_segments = self._display_segments_for_session(
+                session,
+                translator_mode=translator_mode,
+                actor_mode=True,
+            )
+            has_visible_dialogue = supports_dialogue and bool(dialogue_segments)
+            has_visible_misc = supports_misc and bool(misc_segments)
+            if not show_empty and (not has_visible_dialogue) and (not has_visible_misc):
                 continue
             visible_paths.append(path)
         return visible_paths
@@ -5159,7 +5234,7 @@ class DialogueVisualEditor(
         session = self.sessions.get(path)
         if session is None:
             return False
-        return self._is_name_index_session(session)
+        return self._session_supports_misc_scope(session)
 
     def _add_file_list_section(self, title: str) -> None:
         header_item = QListWidgetItem(f"[ {title.upper()} ]")
@@ -5174,35 +5249,81 @@ class DialogueVisualEditor(
         self.file_list.addItem(header_item)
 
     def _rebuild_file_list(self, preferred_path: Optional[Path] = None) -> None:
+        current_item = self.file_list.currentItem()
+        current_ref = self._file_ref_from_item(current_item)
         visible_paths = self._visible_file_paths()
-        target = preferred_path if preferred_path in visible_paths else None
-        if target is None and self.current_path in visible_paths:
-            target = self.current_path
-        if target is None and visible_paths:
-            target = visible_paths[0]
-        dialogue_paths = [
-            path for path in visible_paths if not self._is_misc_file_session(path)
-        ]
-        misc_paths = [path for path in visible_paths if self._is_misc_file_session(path)]
+        target_path = preferred_path if preferred_path in visible_paths else None
+        target_scope = ""
+        if current_ref is not None:
+            current_path, current_scope = current_ref
+            if target_path is None and current_path in visible_paths:
+                target_path = current_path
+            if target_path == current_path:
+                target_scope = current_scope
+        if target_path is None and self.current_path in visible_paths:
+            target_path = self.current_path
+        if target_path is None and visible_paths:
+            target_path = visible_paths[0]
+
+        show_empty = self.show_empty_files_check.isChecked()
+        translator_mode = self._is_translator_mode()
+        dialogue_paths: list[Path] = []
+        misc_paths: list[Path] = []
+        for path in visible_paths:
+            session = self.sessions.get(path)
+            if session is None:
+                continue
+            supports_dialogue_scope = self._session_supports_dialogue_scope(session)
+            supports_misc_scope = self._session_supports_misc_scope(session)
+            dialogue_segments = self._display_segments_for_session(
+                session,
+                translator_mode=translator_mode,
+                actor_mode=False,
+            )
+            misc_segments = self._display_segments_for_session(
+                session,
+                translator_mode=translator_mode,
+                actor_mode=True,
+            )
+            supports_dialogue = supports_dialogue_scope and (
+                bool(dialogue_segments) or show_empty
+            )
+            supports_misc = supports_misc_scope and (
+                bool(misc_segments) or show_empty
+            )
+            if supports_dialogue:
+                dialogue_paths.append(path)
+            if supports_misc:
+                misc_paths.append(path)
 
         self.file_list.blockSignals(True)
         self.file_list.clear()
         self.file_items.clear()
+        self.file_items_scoped.clear()
         if visible_paths:
             self._add_file_list_section("Dialogues")
             for path in dialogue_paths:
                 item = QListWidgetItem("")
                 item.setData(Qt.ItemDataRole.UserRole, str(path))
+                item.setData(FILE_LIST_SCOPE_ROLE, "dialogue")
                 self.file_list.addItem(item)
-                self.file_items[path] = item
+                self.file_items_scoped[(path, "dialogue")] = item
+                if path not in self.file_items:
+                    self.file_items[path] = item
                 self._update_file_item_text(path)
 
             self._add_file_list_section("Misc")
             for path in misc_paths:
                 item = QListWidgetItem("")
                 item.setData(Qt.ItemDataRole.UserRole, str(path))
+                item.setData(FILE_LIST_SCOPE_ROLE, "misc")
                 self.file_list.addItem(item)
-                self.file_items[path] = item
+                self.file_items_scoped[(path, "misc")] = item
+                preferred_scope = self.file_view_scope_by_path.get(path, "")
+                if preferred_scope == "misc":
+                    self.file_items[path] = item
+                elif path not in self.file_items:
+                    self.file_items[path] = item
                 self._update_file_item_text(path)
         self.file_list.blockSignals(False)
 
@@ -5226,8 +5347,20 @@ class DialogueVisualEditor(
             self._refresh_translator_detail_panel()
             return
 
-        assert target is not None
-        target_item = self.file_items.get(target)
+        assert target_path is not None
+        target_session = self.sessions.get(target_path)
+        if target_session is not None:
+            normalized_scope = self._normalized_view_scope_for_path(
+                target_path,
+                target_session,
+                target_scope or self.file_view_scope_by_path.get(target_path, ""),
+            )
+            self.file_view_scope_by_path[target_path] = normalized_scope
+            target_item = self.file_items_scoped.get((target_path, normalized_scope))
+        else:
+            target_item = None
+        if target_item is None:
+            target_item = self.file_items.get(target_path)
         if target_item is not None:
             self.file_list.setCurrentItem(target_item)
 
@@ -5724,6 +5857,8 @@ class DialogueVisualEditor(
 
         self.file_list.clear()
         self.file_items.clear()
+        self.file_items_scoped.clear()
+        self.file_view_scope_by_path.clear()
         self._clear_blocks()
         self._update_reset_json_button(None)
         self._refresh_translator_detail_panel()
@@ -6007,16 +6142,27 @@ class DialogueVisualEditor(
         )
         self._update_window_title()
 
-    def _file_path_from_item(self, item: Optional[QListWidgetItem]) -> Optional[Path]:
+    def _file_ref_from_item(self, item: Optional[QListWidgetItem]) -> Optional[tuple[Path, str]]:
         if item is None:
             return None
         raw = item.data(Qt.ItemDataRole.UserRole)
         if not raw:
             return None
-        return Path(str(raw))
+        path = Path(str(raw))
+        scope_raw = item.data(FILE_LIST_SCOPE_ROLE)
+        scope = scope_raw if isinstance(scope_raw, str) else "dialogue"
+        normalized_scope = scope.strip().lower()
+        if normalized_scope not in {"dialogue", "misc"}:
+            normalized_scope = "dialogue"
+        return path, normalized_scope
 
     def _sync_file_list_selection(self, path: Path) -> None:
-        target_item = self.file_items.get(path)
+        preferred_scope = self.file_view_scope_by_path.get(path, "")
+        target_item = None
+        if preferred_scope:
+            target_item = self.file_items_scoped.get((path, preferred_scope))
+        if target_item is None:
+            target_item = self.file_items.get(path)
         if target_item is None:
             return
         if self.file_list.currentItem() is target_item:
@@ -6028,16 +6174,24 @@ class DialogueVisualEditor(
             self.file_list.blockSignals(False)
 
     def _on_file_selected(self, current: Optional[QListWidgetItem], _previous: Optional[QListWidgetItem]) -> None:
-        path = self._file_path_from_item(current)
-        if path is None:
+        file_ref = self._file_ref_from_item(current)
+        if file_ref is None:
             if self.current_path is not None:
-                selected_item = self.file_items.get(self.current_path)
+                preferred_scope = self.file_view_scope_by_path.get(self.current_path, "")
+                selected_item = self.file_items_scoped.get((self.current_path, preferred_scope))
+                if selected_item is None:
+                    selected_item = self.file_items.get(self.current_path)
                 if selected_item is not None and self.file_list.currentItem() is not selected_item:
                     self.file_list.blockSignals(True)
                     self.file_list.setCurrentItem(selected_item)
                     self.file_list.blockSignals(False)
             return
-        self._open_file(path)
+        path, scope = file_ref
+        self.file_view_scope_by_path[path] = scope
+        selected_item = self.file_items_scoped.get((path, scope))
+        if selected_item is not None:
+            self.file_items[path] = selected_item
+        self._open_file(path, view_scope=scope)
 
     def _relative_path(self, path: Path) -> str:
         if self.data_dir is None:
@@ -6067,8 +6221,18 @@ class DialogueVisualEditor(
         QTimer.singleShot(0, focus_and_reveal)
         return True
 
-    def _open_file(self, path: Path, force_reload: bool = False, focus_uid: Optional[str] = None) -> None:
+    def _open_file(
+        self,
+        path: Path,
+        force_reload: bool = False,
+        focus_uid: Optional[str] = None,
+        view_scope: Optional[str] = None,
+    ) -> None:
         should_reload_session = force_reload or path not in self.sessions
+        requested_scope_raw = view_scope.strip().lower() if isinstance(view_scope, str) else ""
+        current_scope_raw = self.file_view_scope_by_path.get(path, "")
+        current_scope = current_scope_raw.strip().lower() if isinstance(current_scope_raw, str) else ""
+        scope_changed = bool(requested_scope_raw) and requested_scope_raw != current_scope
         previous_path = self.current_path
         if (
             not force_reload
@@ -6076,14 +6240,15 @@ class DialogueVisualEditor(
             and previous_path == path
             and self._pending_render_state is None
         ):
-            if focus_uid is None:
+            if focus_uid is None and not scope_changed:
                 return
-            if self._focus_existing_block_widget(focus_uid):
+            if focus_uid is not None and self._focus_existing_block_widget(focus_uid):
                 return
 
         if (
             not force_reload
             and focus_uid is None
+            and not scope_changed
             and previous_path is not None
             and previous_path == path
             and self._pending_render_state is None
@@ -6130,6 +6295,12 @@ class DialogueVisualEditor(
             QMessageBox.critical(
                 self, "Error", f"Failed to open file:\n{path}\n\n{exc}")
             return
+
+        normalized_scope = self._normalized_view_scope_for_path(path, session, view_scope)
+        self.file_view_scope_by_path[path] = normalized_scope
+        scoped_item = self.file_items_scoped.get((path, normalized_scope))
+        if scoped_item is not None:
+            self.file_items[path] = scoped_item
 
         self.current_path = path
         self._sync_file_list_selection(path)

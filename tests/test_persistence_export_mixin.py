@@ -16,6 +16,7 @@ from dialogue_visual_editor.helpers.core.models import (
 from dialogue_visual_editor.helpers.mixins.persistence_export_mixin import (
     PersistenceExportMixin,
 )
+from dialogue_visual_editor.helpers.mixins.render_mixin import RenderMixin
 
 
 class _BoolControl:
@@ -58,6 +59,14 @@ class _StatusBarHarness:
 
     def showMessage(self, message: str) -> None:
         self.messages.append(message)
+
+
+class _ListItemHarness:
+    def __init__(self) -> None:
+        self.text = ""
+
+    def setText(self, text: str) -> None:
+        self.text = text
 
 
 class _BatchSaveHarness(PersistenceExportMixin):
@@ -292,6 +301,44 @@ class _ActorAliasSaveHarness(PersistenceExportMixin):
         return self._status_bar
 
 
+class _ScopedWarningBadgeHarness(PersistenceExportMixin, RenderMixin):
+    def __init__(self) -> None:
+        self.sessions: dict[Path, FileSession] = {}
+        self.file_items: dict[Path, _ListItemHarness] = {}
+        self.file_items_scoped: dict[tuple[Path, str], _ListItemHarness] = {}
+        self.problem_char_limit_check = _BoolControl(True)
+        self.problem_line_limit_check = _BoolControl(False)
+        self.problem_control_mismatch_check = _BoolControl(False)
+        self.problem_trailing_color_code_check = _BoolControl(False)
+        self.problem_missing_translation_check = _BoolControl(False)
+        self.problem_contains_japanese_check = _BoolControl(False)
+        self.thin_width_spin = _SpinControl(1)
+        self.wide_width_spin = _SpinControl(1)
+        self.max_lines_spin = _SpinControl(4)
+        self.hide_non_meaningful_entries_check = _BoolControl(False)
+
+    def _is_translator_mode(self) -> bool:
+        return False
+
+    def _normalize_translation_lines(self, value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [item if isinstance(item, str) else "" for item in value] or [""]
+        if isinstance(value, str):
+            return value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        return [""]
+
+    def _is_name_index_session(self, session: FileSession) -> bool:
+        return bool(getattr(session, "is_name_index_session", False))
+
+    def _file_list_items_for_path(self, path: Path) -> list[tuple[str, _ListItemHarness]]:
+        items: list[tuple[str, _ListItemHarness]] = []
+        for (candidate_path, scope), item in self.file_items_scoped.items():
+            if candidate_path == path:
+                items.append((scope, item))
+        items.sort(key=lambda row: 0 if row[0] == "dialogue" else 1)
+        return items
+
+
 def _dialogue_segment(uid: str, text: str) -> DialogueSegment:
     return DialogueSegment(
         uid=uid,
@@ -348,6 +395,23 @@ class PersistenceExportMixinTests(unittest.TestCase):
         row = session.data[0]
         self.assertEqual(row["name"], "Potion")
         self.assertEqual(row["description"], "Heals HP")
+
+    def test_apply_session_to_json_updates_name_index_fields_in_mixed_session(self) -> None:
+        harness = _Harness()
+        dialogue_segment = _dialogue_segment("Troops.json:L0:0", "Hello")
+        name_segment = _dialogue_segment("Troops.json:P:1", "Troop Updated")
+        name_segment.segment_kind = "name_index"
+        session = FileSession(
+            path=Path("Troops.json"),
+            data=[{"id": 1, "name": "Troop Old"}],
+            bundles=[],
+            segments=[dialogue_segment, name_segment],
+        )
+        setattr(session, "name_index_uid_prefix", "P")
+
+        harness._apply_session_to_json(session)
+
+        self.assertEqual(session.data[0]["name"], "Troop Updated")
 
     def test_apply_session_to_json_rebuilds_command_list(self) -> None:
         harness = _Harness()
@@ -719,6 +783,30 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual(harness.refresh_dirty_calls, 1)
         self.assertEqual(harness.rerender_nearby_calls, 1)
         self.assertEqual(harness.render_session_calls, 0)
+
+    def test_update_file_item_text_scopes_problem_badges_for_mixed_session(self) -> None:
+        harness = _ScopedWarningBadgeHarness()
+        path = Path("Troops.json")
+        dialogue = _dialogue_segment("Troops.json:L0:0", "Too long")
+        misc = _dialogue_segment("Troops.json:P:1", "Troop A")
+        misc.segment_kind = "name_index"
+        session = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[dialogue, misc],
+        )
+        harness.sessions[path] = session
+        dialogue_item = _ListItemHarness()
+        misc_item = _ListItemHarness()
+        harness.file_items[path] = dialogue_item
+        harness.file_items_scoped[(path, "dialogue")] = dialogue_item
+        harness.file_items_scoped[(path, "misc")] = misc_item
+
+        harness._update_file_item_text(path)
+
+        self.assertIn("[!1]", dialogue_item.text)
+        self.assertNotIn("[!1]", misc_item.text)
 
 
 if __name__ == "__main__":
