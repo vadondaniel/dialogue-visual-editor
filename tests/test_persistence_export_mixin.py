@@ -977,6 +977,10 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         harness._update_file_item_text(path)
 
+        self.assertIn("Troops (", dialogue_item.text)
+        self.assertIn("Troops (", misc_item.text)
+        self.assertNotIn(".json", dialogue_item.text)
+        self.assertNotIn(".json", misc_item.text)
         self.assertIn("[!1]", dialogue_item.text)
         self.assertNotIn("[!1]", misc_item.text)
 

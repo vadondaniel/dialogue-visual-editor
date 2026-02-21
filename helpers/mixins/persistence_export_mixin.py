@@ -443,11 +443,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             self._update_reset_json_button(session)
 
     def _update_file_item_text(self, path: Path) -> None:
+        display_name = path.stem if path.stem else path.name
         session = self.sessions.get(path)
         if session is None:
             item = self.file_items.get(path)
             if item is not None:
-                item.setText(path.name)
+                item.setText(display_name)
             return
 
         file_items_resolver = getattr(self, "_file_list_items_for_path", None)
@@ -512,7 +513,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             problem_badge = f" [!{problems}]" if problems > 0 else ""
             suffix = " [empty]" if display_count == 0 else ""
             item.setText(
-                f"{prefix}{path.name} ({display_count}){problem_badge}{suffix}")
+                f"{prefix}{display_name} ({display_count}){problem_badge}{suffix}")
 
     def _build_entries_for_segment(self, segment: DialogueSegment) -> list[dict[str, Any]]:
         if segment.segment_kind == "choice":

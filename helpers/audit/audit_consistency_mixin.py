@@ -4,11 +4,11 @@ from collections import Counter
 import hashlib
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QApplication, QListWidgetItem, QMessageBox, QTextEdit
+from PySide6.QtWidgets import QApplication, QListWidgetItem, QMessageBox, QTextEdit, QWidget
 
 from ..core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
 from ..core.text_utils import (
@@ -559,8 +559,8 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 QTextCursor.MoveMode.KeepAnchor,
             )
             extra = QTextEdit.ExtraSelection()
-            extra.cursor = cursor
-            extra.format = char_fmt
+            setattr(extra, "cursor", cursor)
+            setattr(extra, "format", char_fmt)
             selections.append(extra)
 
         kept_lines, overflow_lines = split_lines_by_row_budget(target_lines, row_limit)
@@ -576,8 +576,8 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 QTextCursor.MoveMode.KeepAnchor,
             )
             extra = QTextEdit.ExtraSelection()
-            extra.cursor = cursor
-            extra.format = line_fmt
+            setattr(extra, "cursor", cursor)
+            setattr(extra, "format", line_fmt)
             selections.append(extra)
 
         target_edit.setExtraSelections(selections)
@@ -908,8 +908,12 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             "Apply current target translation to this duplicate group?\n\n"
             f"{preview_text(source_text, 120)}"
         )
+        parent_widget = cast(
+            Optional[QWidget],
+            getattr(self, "audit_window", None),
+        )
         answer = QMessageBox.question(
-            self,
+            parent_widget,
             "Confirm Apply",
             prompt,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
