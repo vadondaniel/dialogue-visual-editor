@@ -202,6 +202,7 @@ class MassTranslateDialog(QDialog):
         self.chunk_expected_ids: list[set[str]] = []
         self.chunk_status: dict[int, str] = {}
         self.chunk_drafts: dict[int, str] = {}
+        self.chunk_result_messages: dict[int, str] = {}
         self.dialogue_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.misc_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.speaker_segment_targets: dict[str, tuple[Path, DialogueSegment]] = {}
@@ -1578,6 +1579,36 @@ class MassTranslateDialog(QDialog):
         self.paste_box.setPlainText(text)
         self._updating_paste_box = False
 
+    @staticmethod
+    def _default_chunk_result_message() -> str:
+        return "Awaiting pasted output for this chunk. Paste JSON and apply."
+
+    def _result_message_for_chunk(self, index: int) -> str:
+        if index < 0:
+            return ""
+        return self.chunk_result_messages.get(
+            index,
+            self._default_chunk_result_message(),
+        )
+
+    def _set_result_message_for_chunk(self, index: int, message: str) -> None:
+        if index < 0:
+            self.result_box.setPlainText(message)
+            return
+        self.chunk_result_messages[index] = message
+        if self.chunk_combo.currentIndex() == index:
+            self.result_box.setPlainText(message)
+
+    def _append_result_message_for_chunk(self, index: int, line: str) -> None:
+        if index < 0:
+            self.result_box.appendPlainText(line)
+            return
+        base = self.chunk_result_messages.get(index, "")
+        updated = f"{base}\n{line}" if base else line
+        self.chunk_result_messages[index] = updated
+        if self.chunk_combo.currentIndex() == index:
+            self.result_box.setPlainText(updated)
+
     def _set_chunk_combo_items(self) -> None:
         self.chunk_combo.blockSignals(True)
         self.chunk_combo.clear()
@@ -1626,6 +1657,7 @@ class MassTranslateDialog(QDialog):
         if index < 0 or index >= len(self.chunk_payloads):
             self.chunk_preview.setPlainText("")
             self._set_paste_text("")
+            self.result_box.setPlainText("")
             self._update_chunk_controls()
             return
 
@@ -1633,6 +1665,7 @@ class MassTranslateDialog(QDialog):
         self.chunk_preview.setPlainText(json.dumps(
             payload, ensure_ascii=False, indent=2))
         self._set_paste_text(self.chunk_drafts.get(index, ""))
+        self.result_box.setPlainText(self._result_message_for_chunk(index))
         entries_raw = payload.get("entries")
         entry_count = len(entries_raw) if isinstance(entries_raw, list) else 0
         self.chunk_summary_label.setText(
@@ -1658,8 +1691,10 @@ class MassTranslateDialog(QDialog):
         QApplication.clipboard().setText(
             json.dumps(self.chunk_payloads[idx], ensure_ascii=False, indent=2)
         )
-        self.result_box.setPlainText(
-            "Copied selected chunk JSON to clipboard.")
+        self._set_result_message_for_chunk(
+            idx,
+            "Copied selected chunk JSON to clipboard.",
+        )
 
     @staticmethod
     def _normalize_prompt_language_code(raw_value: Any, default: str) -> str:
@@ -1781,7 +1816,10 @@ class MassTranslateDialog(QDialog):
         idx = self.chunk_combo.currentIndex()
         if not self._copy_prompt_for_chunk_index(idx):
             return
-        self.result_box.setPlainText("Copied prompt + selected chunk JSON to clipboard.")
+        self._set_result_message_for_chunk(
+            idx,
+            "Copied prompt + selected chunk JSON to clipboard.",
+        )
 
     def _copy_prompt_for_chunk_index(self, index: int) -> bool:
         if index < 0 or index >= len(self.chunk_payloads):
@@ -1837,6 +1875,7 @@ class MassTranslateDialog(QDialog):
             self.chunk_expected_ids = []
             self.chunk_status = {}
             self.chunk_drafts = {}
+            self.chunk_result_messages = {}
             self._set_chunk_combo_items()
             self.chunk_preview.setPlainText("")
             self._set_paste_text("")
@@ -1854,6 +1893,7 @@ class MassTranslateDialog(QDialog):
         self.chunk_expected_ids = []
         self.chunk_status = {}
         self.chunk_drafts = {}
+        self.chunk_result_messages = {}
 
         for idx, group in enumerate(groups, start=1):
             context_before, context_after = self._chunk_context_blocks(
@@ -1875,6 +1915,7 @@ class MassTranslateDialog(QDialog):
                 }
             )
             self.chunk_status[idx - 1] = "ready"
+            self.chunk_result_messages[idx - 1] = self._default_chunk_result_message()
 
         self._set_chunk_combo_items()
         if self.chunk_combo.count() > 0:
@@ -1897,9 +1938,10 @@ class MassTranslateDialog(QDialog):
         self.chunk_summary_label.setText(
             f"Built {chunk_count} {chunk_label} from {entry_count} {entry_label}.{dedupe_suffix}"
         )
-        self.result_box.setPlainText(
-            "Chunks built. Use Copy Prompt, send to your LLM, then paste JSON output and apply."
-        )
+        if self.chunk_combo.currentIndex() < 0:
+            self.result_box.setPlainText(
+                "Chunks built. Use Copy Prompt, send to your LLM, then paste JSON output and apply."
+            )
         self._update_chunk_controls()
 
     @classmethod
@@ -2252,12 +2294,13 @@ class MassTranslateDialog(QDialog):
         try:
             payload = self._parse_json_payload(raw)
         except Exception as exc:
-            self.result_box.setPlainText(str(exc))
+            self._set_result_message_for_chunk(idx, str(exc))
             return False
 
         parsed_entries = self._entries_from_payload(payload)
         if not parsed_entries:
-            self.result_box.setPlainText(
+            self._set_result_message_for_chunk(
+                idx,
                 "No entries found. Expected `entries`, a list of entry objects, or an `id -> translation` map."
             )
             return False
@@ -2289,8 +2332,10 @@ class MassTranslateDialog(QDialog):
                     updates_by_id[base_id] = mapped
                 positional_fallback_used = bool(updates_by_id)
             if not updates_by_id:
-                self.result_box.setPlainText(
-                    "No usable `id` fields found in pasted entries.")
+                self._set_result_message_for_chunk(
+                    idx,
+                    "No usable `id` fields found in pasted entries.",
+                )
                 return False
 
         expected_ids = self.chunk_expected_ids[idx] if idx < len(
@@ -2319,8 +2364,9 @@ class MassTranslateDialog(QDialog):
                 warning_issues
             )
             if reviewed_selection is None:
-                self.result_box.setPlainText(
-                    "Apply canceled while reviewing warnings."
+                self._set_result_message_for_chunk(
+                    idx,
+                    "Apply canceled while reviewing warnings.",
                 )
                 return False
             selected_warning_ids = reviewed_selection
@@ -2526,7 +2572,7 @@ class MassTranslateDialog(QDialog):
             if len(warning_messages) > 8:
                 summary_lines.append("...")
 
-        self.result_box.setPlainText("\n".join(summary_lines))
+        self._set_result_message_for_chunk(idx, "\n".join(summary_lines))
         self.editor.statusBar().showMessage(
             "Mass translate apply: "
             f"{dialogue_applied} dialogues, {misc_applied} misc, "
@@ -2546,8 +2592,9 @@ class MassTranslateDialog(QDialog):
                 next_label = self._set_content_scope_mode(next_mode)
                 if next_label:
                     switched_content_mode = True
-                    self.result_box.appendPlainText(
-                        f"\nSwitched content scope to '{next_label}' (next incomplete section)."
+                    self._append_result_message_for_chunk(
+                        self.chunk_combo.currentIndex(),
+                        f"Switched content scope to '{next_label}' (next incomplete section)."
                     )
         if not switched_content_mode:
             current_scope_value = str(self.scope_combo.currentData())
@@ -2562,8 +2609,9 @@ class MassTranslateDialog(QDialog):
                     next_scope_label = self._set_scope_value(next_scope_value)
                     if next_scope_label:
                         switched_scope = True
-                        self.result_box.appendPlainText(
-                            f"\nSwitched scope to '{next_scope_label}' (next incomplete scope)."
+                        self._append_result_message_for_chunk(
+                            self.chunk_combo.currentIndex(),
+                            f"Switched scope to '{next_scope_label}' (next incomplete scope)."
                         )
 
         copied_next_prompt = self._copy_after_switch_if_needed(
@@ -2573,7 +2621,13 @@ class MassTranslateDialog(QDialog):
         )
         if copy_next_prompt:
             if copied_next_prompt:
-                self.result_box.appendPlainText("\nCopied prompt for next chunk.")
+                self._append_result_message_for_chunk(
+                    self.chunk_combo.currentIndex(),
+                    "Copied prompt for next chunk.",
+                )
             else:
-                self.result_box.appendPlainText("\nNo next chunk to copy.")
+                self._append_result_message_for_chunk(
+                    self.chunk_combo.currentIndex(),
+                    "No next chunk to copy.",
+                )
         return True

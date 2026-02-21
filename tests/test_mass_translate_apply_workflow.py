@@ -72,6 +72,14 @@ class _ApplyWorkflowHarness:
     _overall_translation_progress_counts = (
         MassTranslateDialog._overall_translation_progress_counts
     )
+    _default_chunk_result_message = staticmethod(
+        MassTranslateDialog._default_chunk_result_message
+    )
+    _result_message_for_chunk = MassTranslateDialog._result_message_for_chunk
+    _set_result_message_for_chunk = MassTranslateDialog._set_result_message_for_chunk
+    _append_result_message_for_chunk = (
+        MassTranslateDialog._append_result_message_for_chunk
+    )
     _set_scope_value = MassTranslateDialog._set_scope_value
     _scope_has_pending_entries_for_value = (
         MassTranslateDialog._scope_has_pending_entries_for_value
@@ -89,7 +97,9 @@ class _ApplyWorkflowHarness:
         self.misc_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.speaker_segment_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.warning_level_combo = _ComboStub("all_line_and_control_mismatches")
+        self.chunk_result_messages: dict[int, str] = {}
         self.chunk_combo = _ChunkComboStub(0)
+        self.result_box = _TextBoxStub()
         self.copied_prompt_indices: list[int] = []
         self.scope_combo = _ScopeComboStub(
             [
@@ -155,6 +165,20 @@ class _ChunkComboStub:
 
     def setCurrentIndex(self, index: int) -> None:
         self._current_index = index
+
+
+class _TextBoxStub:
+    def __init__(self) -> None:
+        self.text = ""
+
+    def setPlainText(self, text: str) -> None:
+        self.text = text
+
+    def appendPlainText(self, text: str) -> None:
+        if self.text:
+            self.text = f"{self.text}\n{text}"
+        else:
+            self.text = text
 
 
 def _segment(uid: str, lines: list[str]) -> DialogueSegment:
@@ -319,6 +343,27 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
 
         self.assertFalse(copied)
         self.assertEqual(harness.copied_prompt_indices, [])
+
+    def test_set_result_message_for_chunk_keeps_per_chunk_values(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.chunk_combo = _ChunkComboStub(0)
+
+        harness._set_result_message_for_chunk(0, "chunk0 status")
+        harness._set_result_message_for_chunk(1, "chunk1 status")
+
+        self.assertEqual(harness._result_message_for_chunk(0), "chunk0 status")
+        self.assertEqual(harness._result_message_for_chunk(1), "chunk1 status")
+        self.assertEqual(harness.result_box.text, "chunk0 status")
+
+    def test_append_result_message_for_chunk_appends_lines(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.chunk_combo = _ChunkComboStub(2)
+
+        harness._set_result_message_for_chunk(2, "line1")
+        harness._append_result_message_for_chunk(2, "line2")
+
+        self.assertEqual(harness._result_message_for_chunk(2), "line1\nline2")
+        self.assertEqual(harness.result_box.text, "line1\nline2")
 
     def test_next_chunk_index_after_apply_only_advances_on_clean_apply(self) -> None:
         same_idx = _ApplyWorkflowHarness._next_chunk_index_after_apply(
