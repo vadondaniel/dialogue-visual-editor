@@ -13,6 +13,28 @@ class _ApplyWorkflowEditorMeta:
         self.sessions: dict[Path, FileSession] = {}
 
     @staticmethod
+    def _normalize_speaker_key(value: str) -> str:
+        return value.strip()
+
+    @staticmethod
+    def _speaker_key_for_segment(segment: DialogueSegment) -> str:
+        raw = getattr(segment, "speaker_name", "")
+        return raw.strip() if isinstance(raw, str) else ""
+
+    @staticmethod
+    def _resolve_name_tokens_in_text(
+        text: str,
+        prefer_translated: bool,
+        unresolved_placeholder: bool = False,
+    ) -> str:
+        _ = (prefer_translated, unresolved_placeholder)
+        return text
+
+    @staticmethod
+    def _resolve_speaker_display_name(raw_speaker: str) -> str:
+        return raw_speaker
+
+    @staticmethod
     def _normalize_translation_lines(value: Any) -> list[str]:
         if isinstance(value, list):
             return [str(item) if item is not None else "" for item in value]
@@ -42,8 +64,16 @@ class _ApplyWorkflowHarness:
         MassTranslateDialog._normalize_prompt_language_code
     )
     _language_field_prefix = staticmethod(MassTranslateDialog._language_field_prefix)
+    _source_text_field_name = MassTranslateDialog._source_text_field_name
     _target_translation_field_name = MassTranslateDialog._target_translation_field_name
     _translation_prompt_metadata = MassTranslateDialog._translation_prompt_metadata
+    _speaker_display_for_prompt = MassTranslateDialog._speaker_display_for_prompt
+    _resolve_name_tokens_for_prompt = MassTranslateDialog._resolve_name_tokens_for_prompt
+    _actor_source_name_map_for_prompt = MassTranslateDialog._actor_source_name_map_for_prompt
+    _context_blocks_for_anchor = MassTranslateDialog._context_blocks_for_anchor
+    _chunk_entry_runs = MassTranslateDialog._chunk_entry_runs
+    _chunk_context_windows = MassTranslateDialog._chunk_context_windows
+    _context_payload_for_chunk = MassTranslateDialog._context_payload_for_chunk
     _extract_dialogue_translation_lines = MassTranslateDialog._extract_dialogue_translation_lines
     _has_translatable_source_lines = staticmethod(MassTranslateDialog._has_translatable_source_lines)
     _segment_content_type = MassTranslateDialog._segment_content_type
@@ -95,6 +125,7 @@ class _ApplyWorkflowHarness:
         self.dialogue_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.misc_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.speaker_segment_targets: dict[str, tuple[Path, DialogueSegment]] = {}
+        self.entry_block_refs: dict[str, tuple[Path, int]] = {}
         self.warning_level_combo = _ComboStub("all_line_and_control_mismatches")
         self.chunk_result_messages: dict[int, str] = {}
         self.chunk_combo = _ChunkComboStub(0)
@@ -192,6 +223,64 @@ def _segment(uid: str, lines: list[str]) -> DialogueSegment:
 
 
 class MassTranslateApplyWorkflowTests(unittest.TestCase):
+    def test_context_payload_for_chunk_uses_top_level_context_for_continuous_run(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        segments = [_segment(f"Map001.json:{idx}", [f"line-{idx}"]) for idx in range(5)]
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=segments,
+        )
+        harness = _ApplyWorkflowHarness(editor)
+        harness.entry_block_refs = {
+            "D:1": (path, 1),
+            "D:2": (path, 2),
+        }
+
+        payload = harness._context_payload_for_chunk(
+            [{"id": "D:1"}, {"id": "D:2"}],
+            1,
+        )
+
+        self.assertNotIn("context_windows", payload)
+        self.assertEqual(payload["context_before"][0]["ja_text"], "line-0")
+        self.assertEqual(payload["context_after"][0]["ja_text"], "line-3")
+
+    def test_context_payload_for_chunk_uses_multiple_windows_for_gapped_runs(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        segments = [_segment(f"Map001.json:{idx}", [f"line-{idx}"]) for idx in range(7)]
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=segments,
+        )
+        harness = _ApplyWorkflowHarness(editor)
+        harness.entry_block_refs = {
+            "D:1": (path, 1),
+            "D:2": (path, 2),
+            "D:5": (path, 5),
+        }
+
+        payload = harness._context_payload_for_chunk(
+            [{"id": "D:1"}, {"id": "D:2"}, {"id": "D:5"}],
+            1,
+        )
+
+        self.assertNotIn("context_before", payload)
+        self.assertNotIn("context_after", payload)
+        windows = payload["context_windows"]
+        self.assertEqual(len(windows), 2)
+        self.assertEqual(windows[0]["entry_ids"], ["D:1", "D:2"])
+        self.assertEqual(windows[0]["context_before"][0]["ja_text"], "line-0")
+        self.assertEqual(windows[0]["context_after"][0]["ja_text"], "line-3")
+        self.assertEqual(windows[1]["entry_ids"], ["D:5"])
+        self.assertEqual(windows[1]["context_before"][0]["ja_text"], "line-4")
+        self.assertEqual(windows[1]["context_after"][0]["ja_text"], "line-6")
+
     def test_collect_apply_warning_issues_includes_line_warning_and_previews(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
         segment = _segment("Map001.json:1", ["src-a", "src-b"])

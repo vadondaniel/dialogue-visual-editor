@@ -209,7 +209,7 @@ class MassTranslateDialog(QDialog):
         self.dialogue_duplicate_targets: dict[str, list[tuple[Path, DialogueSegment]]] = {}
         self.misc_duplicate_targets: dict[str, list[tuple[Path, DialogueSegment]]] = {}
         self.speaker_segment_duplicate_targets: dict[str, list[tuple[Path, DialogueSegment]]] = {}
-        self.dialogue_block_refs: dict[str, tuple[Path, int]] = {}
+        self.entry_block_refs: dict[str, tuple[Path, int]] = {}
         self.speaker_targets: dict[str, str] = {}
         self._dedupe_collapsed_entries = 0
         self._active_chunk_index = -1
@@ -1251,32 +1251,105 @@ class MassTranslateDialog(QDialog):
         chunk_entries: list[dict[str, Any]],
         box_limit: int,
     ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-        if box_limit <= 0:
-            return [], []
+        context_payload = self._context_payload_for_chunk(chunk_entries, box_limit)
+        before_raw = context_payload.get("context_before")
+        after_raw = context_payload.get("context_after")
+        before = before_raw if isinstance(before_raw, list) else []
+        after = after_raw if isinstance(after_raw, list) else []
+        return cast(list[dict[str, str]], before), cast(list[dict[str, str]], after)
 
-        dialogue_ids: list[str] = []
+    def _chunk_entry_runs(
+        self,
+        chunk_entries: list[dict[str, Any]],
+    ) -> list[list[tuple[str, Path, int]]]:
+        runs: list[list[tuple[str, Path, int]]] = []
+        current_run: list[tuple[str, Path, int]] = []
+        previous_path: Optional[Path] = None
+        previous_index: Optional[int] = None
+
         for entry in chunk_entries:
             entry_id = entry.get("id")
-            if isinstance(entry_id, str) and entry_id.startswith("D:"):
-                dialogue_ids.append(entry_id)
-        if not dialogue_ids:
-            return [], []
+            if not isinstance(entry_id, str):
+                continue
+            entry_ref = self.entry_block_refs.get(entry_id)
+            if entry_ref is None:
+                continue
+            path, segment_index = entry_ref
+            is_continuous = (
+                bool(current_run)
+                and previous_path == path
+                and previous_index is not None
+                and segment_index == previous_index + 1
+            )
+            if not is_continuous:
+                if current_run:
+                    runs.append(current_run)
+                current_run = []
+            current_run.append((entry_id, path, segment_index))
+            previous_path = path
+            previous_index = segment_index
 
-        first_ref = self.dialogue_block_refs.get(dialogue_ids[0])
-        last_ref = self.dialogue_block_refs.get(dialogue_ids[-1])
-        before = (
-            self._context_blocks_for_anchor(
-                first_ref[0], first_ref[1], -1, box_limit)
-            if first_ref
-            else []
-        )
-        after = (
-            self._context_blocks_for_anchor(
-                last_ref[0], last_ref[1], +1, box_limit)
-            if last_ref
-            else []
-        )
-        return before, after
+        if current_run:
+            runs.append(current_run)
+        return runs
+
+    def _chunk_context_windows(
+        self,
+        chunk_entries: list[dict[str, Any]],
+        box_limit: int,
+    ) -> list[dict[str, Any]]:
+        if box_limit <= 0:
+            return []
+
+        context_windows: list[dict[str, Any]] = []
+        for run in self._chunk_entry_runs(chunk_entries):
+            _, first_path, first_index = run[0]
+            _, last_path, last_index = run[-1]
+            context_before = self._context_blocks_for_anchor(
+                first_path,
+                first_index,
+                -1,
+                box_limit,
+            )
+            context_after = self._context_blocks_for_anchor(
+                last_path,
+                last_index,
+                +1,
+                box_limit,
+            )
+            if context_before and context_after and context_before == context_after:
+                context_after = []
+
+            window: dict[str, Any] = {
+                "entry_ids": [entry_id for entry_id, _path, _idx in run]
+            }
+            if context_before:
+                window["context_before"] = context_before
+            if context_after:
+                window["context_after"] = context_after
+            if len(window) > 1:
+                context_windows.append(window)
+        return context_windows
+
+    def _context_payload_for_chunk(
+        self,
+        chunk_entries: list[dict[str, Any]],
+        box_limit: int,
+    ) -> dict[str, Any]:
+        context_windows = self._chunk_context_windows(chunk_entries, box_limit)
+        if not context_windows:
+            return {}
+        if len(context_windows) == 1:
+            window = context_windows[0]
+            payload: dict[str, Any] = {}
+            context_before_raw = window.get("context_before")
+            context_after_raw = window.get("context_after")
+            if isinstance(context_before_raw, list) and context_before_raw:
+                payload["context_before"] = context_before_raw
+            if isinstance(context_after_raw, list) and context_after_raw:
+                payload["context_after"] = context_after_raw
+            return payload
+        return {"context_windows": context_windows}
 
     def _collect_chunk_entries(
         self,
@@ -1292,7 +1365,7 @@ class MassTranslateDialog(QDialog):
         self.dialogue_duplicate_targets.clear()
         self.misc_duplicate_targets.clear()
         self.speaker_segment_duplicate_targets.clear()
-        self.dialogue_block_refs.clear()
+        self.entry_block_refs.clear()
         self.speaker_targets.clear()
         self._dedupe_collapsed_entries = 0
         entries: list[dict[str, Any]] = []
@@ -1404,13 +1477,15 @@ class MassTranslateDialog(QDialog):
                 if content_type == "dialogue":
                     self.dialogue_targets[entry_id] = (path, segment)
                     self.dialogue_duplicate_targets[entry_id] = []
-                    self.dialogue_block_refs[entry_id] = (path, idx)
+                    self.entry_block_refs[entry_id] = (path, idx)
                 elif content_type == "speaker_segment":
                     self.speaker_segment_targets[entry_id] = (path, segment)
                     self.speaker_segment_duplicate_targets[entry_id] = []
+                    self.entry_block_refs[entry_id] = (path, idx)
                 else:
                     self.misc_targets[entry_id] = (path, segment)
                     self.misc_duplicate_targets[entry_id] = []
+                    self.entry_block_refs[entry_id] = (path, idx)
 
         if include_speakers:
             used_entry_ids: set[str] = set()
@@ -1710,7 +1785,7 @@ class MassTranslateDialog(QDialog):
             "Translate `{source_field}` from {source_language_code} into "
             "{target_language_code} for each entry, writing output to `{target_field}`.\n"
             "Keep JSON structure and IDs unchanged.\n"
-            "Do not change `speaker`, `{source_field}`, `context_before`, or `context_after`.\n"
+            "Do not change `speaker`, `{source_field}`, `context_before`, `context_after`, or `context_windows`.\n"
             "Preserve all control codes and symbols exactly (`\\C[]` `\\V[]` `\\N[]` `\\I[]` `\\{` `♡`).\n"
             "Keep \\n line breaks from `{source_field}`.\n"
             "Use natural game dialogue in {target_language_code}; keep the same tone "
@@ -1881,16 +1956,9 @@ class MassTranslateDialog(QDialog):
         self.chunk_result_messages = {}
 
         for idx, group in enumerate(groups, start=1):
-            context_before, context_after = self._chunk_context_blocks(
-                group, context_boxes)
-            if context_before and context_after and context_before == context_after:
-                context_after = []
             payload: dict[str, Any] = {}
-            if context_before:
-                payload["context_before"] = context_before
+            payload.update(self._context_payload_for_chunk(group, context_boxes))
             payload["entries"] = group
-            if context_after:
-                payload["context_after"] = context_after
             self.chunk_payloads.append(payload)
             self.chunk_expected_ids.append(
                 {
