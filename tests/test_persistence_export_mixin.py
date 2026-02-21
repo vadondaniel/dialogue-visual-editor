@@ -42,6 +42,9 @@ class _Harness(PersistenceExportMixin):
         self.problem_missing_translation_check = _BoolControl(False)
         self.problem_contains_japanese_check = _BoolControl(False)
 
+    def _is_name_index_session(self, session: FileSession) -> bool:
+        return bool(getattr(session, "is_name_index_session", False))
+
     def _normalize_translation_lines(self, value: Any) -> list[str]:
         if isinstance(value, list):
             return [
@@ -711,6 +714,69 @@ class PersistenceExportMixinTests(unittest.TestCase):
             harness._segment_has_japanese_text_problem(
                 segment,
                 translator_mode=False,
+            )
+        )
+
+    def test_layout_problem_detects_missing_translation_for_misc_segment(self) -> None:
+        harness = _Harness()
+        harness.problem_missing_translation_check = _BoolControl(True)
+        segment = _dialogue_segment("Map001.json:L0:G:0:text", "JP line")
+        segment.segment_kind = "plugin_command_text"
+        segment.translation_lines = [""]
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+
+        self.assertTrue(
+            harness._segment_has_layout_problem(
+                session,
+                segment,
+                translator_mode=True,
+            )
+        )
+
+    def test_layout_problem_detects_control_mismatch_for_misc_segment(self) -> None:
+        harness = _Harness()
+        harness.problem_control_mismatch_check = _BoolControl(True)
+        segment = _dialogue_segment("Map001.json:N:abc", r"\C[2]JP line")
+        segment.segment_kind = "note_text"
+        segment.translation_lines = ["JP line"]
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+
+        self.assertTrue(
+            harness._segment_has_layout_problem(
+                session,
+                segment,
+                translator_mode=True,
+            )
+        )
+
+    def test_layout_problem_detects_japanese_text_for_misc_segment(self) -> None:
+        harness = _Harness()
+        harness.problem_contains_japanese_check = _BoolControl(True)
+        segment = _dialogue_segment("Map001.json:L0:G:1:text", "JP line")
+        segment.segment_kind = "plugin_command_text"
+        segment.translation_lines = ["これはテストです"]
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+
+        self.assertTrue(
+            harness._segment_has_layout_problem(
+                session,
+                segment,
+                translator_mode=True,
             )
         )
 

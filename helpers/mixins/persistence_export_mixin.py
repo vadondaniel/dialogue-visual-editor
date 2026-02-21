@@ -263,17 +263,25 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         segment: DialogueSegment,
         translator_mode: bool,
     ) -> bool:
-        if self._is_name_index_session(session):
-            return False
-        if not segment.is_structural_dialogue:
-            return False
         if (not translator_mode) and segment.translation_only:
             return False
 
-        check_char_limit = self._problem_check_char_limit_enabled()
-        check_line_limit = self._problem_check_line_limit_enabled()
+        is_structural_dialogue = segment.is_structural_dialogue
+        check_char_limit = (
+            is_structural_dialogue
+            and (not self._is_name_index_session(session))
+            and self._problem_check_char_limit_enabled()
+        )
+        check_line_limit = (
+            is_structural_dialogue
+            and (not self._is_name_index_session(session))
+            and self._problem_check_line_limit_enabled()
+        )
         check_control_mismatch = self._problem_check_control_mismatch_enabled()
-        check_trailing_color_code = self._problem_check_trailing_color_code_enabled()
+        check_trailing_color_code = (
+            is_structural_dialogue
+            and self._problem_check_trailing_color_code_enabled()
+        )
         check_missing_translation = self._problem_check_missing_translation_enabled()
         check_contains_japanese = self._problem_check_contains_japanese_enabled()
         if not (
