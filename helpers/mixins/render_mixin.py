@@ -601,7 +601,12 @@ class RenderMixin(_RenderHostTypingFallback):
             for segment in segments
         )
         has_structural_dialogue_segments = any(
-            segment.segment_kind in {"dialogue", "choice", "script_message"}
+            segment.segment_kind in {
+                "dialogue",
+                "choice",
+                "script_message",
+                "tyrano_dialogue",
+            }
             for segment in segments
         )
         has_mixed_scope_segments = bool(

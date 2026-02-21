@@ -245,6 +245,26 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
         self.assertEqual([segment.uid for segment in dialogue_view], ["Troops.json:L0:0"])
         self.assertEqual([segment.uid for segment in misc_view], ["Troops.json:P:1"])
 
+    def test_tyrano_mixed_dialogue_and_misc_filters_without_mixed_flag(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        dialogue = _segment("scene1.ks:K:1", "こんにちは", segment_kind="tyrano_dialogue")
+        misc = _segment("scene1.ks:KT:1", "選択肢", segment_kind="tyrano_tag_text")
+        session = _session_with_segments([dialogue, misc])
+
+        dialogue_view = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=False,
+        )
+        misc_view = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=True,
+        )
+
+        self.assertEqual([segment.uid for segment in dialogue_view], ["scene1.ks:K:1"])
+        self.assertEqual([segment.uid for segment in misc_view], ["scene1.ks:KT:1"])
+
     def test_toggle_on_hides_non_meaningful_plugin_command_parameters(self) -> None:
         harness = _Harness(hide_non_meaningful=True)
         numeric_arg = _segment("pc_num", "24", segment_kind="plugin_command_text")
