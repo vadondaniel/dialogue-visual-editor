@@ -154,6 +154,11 @@ except ImportError:
     from helpers.core.actor_name_change_utils import collect_actor_name_change_entries
 
 try:
+    from .helpers.core.project_path_utils import resolve_project_data_folder
+except ImportError:
+    from helpers.core.project_path_utils import resolve_project_data_folder
+
+try:
     from .helpers.core.parser import (
         is_tyrano_script_path,
         load_plugins_js_file,
@@ -5039,7 +5044,7 @@ class DialogueVisualEditor(
     def _choose_folder(self) -> None:
         start_dir = str(self.data_dir) if self.data_dir else str(Path.cwd())
         chosen = QFileDialog.getExistingDirectory(
-            self, "Select data folder", start_dir)
+            self, "Select game/project folder", start_dir)
         if not chosen:
             return
         self.last_folder_path = chosen
@@ -5051,7 +5056,7 @@ class DialogueVisualEditor(
             QMessageBox.warning(
                 self,
                 "Missing folder",
-                "Open a data folder first.",
+                "Open a project folder first.",
             )
             return
         if not self._prompt_unsaved_if_any():
@@ -5904,7 +5909,17 @@ class DialogueVisualEditor(
                                  f"Not a directory:\n{folder}")
             return
 
-        if self.data_dir is not None and folder.resolve() != self.data_dir.resolve():
+        selected_folder = folder
+        resolved_folder = resolve_project_data_folder(selected_folder)
+        if not resolved_folder.exists() or not resolved_folder.is_dir():
+            QMessageBox.critical(
+                self,
+                "Invalid folder",
+                f"Not a directory:\n{resolved_folder}",
+            )
+            return
+
+        if self.data_dir is not None and resolved_folder.resolve() != self.data_dir.resolve():
             if not self._prompt_unsaved_if_any():
                 return
         elif self.data_dir is None and not self._prompt_unsaved_if_any():
@@ -5913,8 +5928,16 @@ class DialogueVisualEditor(
         if self.data_dir is not None:
             self._store_current_project_ui_settings()
 
-        self.data_dir = folder.resolve()
+        self.data_dir = resolved_folder.resolve()
         self.last_folder_path = str(self.data_dir)
+        selected_folder_display = str(selected_folder)
+        resolved_folder_display = str(self.data_dir)
+        if selected_folder_display != resolved_folder_display:
+            logger.info(
+                "Resolved selected folder '%s' to project data folder '%s'.",
+                selected_folder_display,
+                resolved_folder_display,
+            )
         logger.info(
             "Loading data folder '%s' (force_disk_import=%s, import_target_version=%s).",
             self.data_dir,
