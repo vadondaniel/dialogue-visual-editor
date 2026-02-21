@@ -650,7 +650,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             self.audit_name_consistency_groups_list.setCurrentRow(0)
             if only_discrepancies:
                 self.audit_name_consistency_status_label.setText(
-                    f"Glossary consistency issues: {len(groups)} | Missing lines: {total_hits} | Checked lines: {total_checked}"
+                    f"Glossary issues: {len(groups)} | Missing lines: {total_hits} | Checked lines: {total_checked}"
                 )
             else:
                 self.audit_name_consistency_status_label.setText(
@@ -658,7 +658,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 )
         else:
             self.audit_name_consistency_status_label.setText(
-                "No glossary consistency issues found between misc entries and dialogue translations."
+                "No glossary issues found between misc entries and dialogue translations."
             )
         self._refresh_audit_name_consistency_entries()
         self._refresh_audit_name_consistency_replace_state()

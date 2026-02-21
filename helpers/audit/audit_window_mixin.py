@@ -606,7 +606,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         name_consistency_splitter.setStretchFactor(0, 4)
         name_consistency_splitter.setStretchFactor(1, 6)
 
-        tabs.addTab(name_consistency_tab, "Glossary Consistency")
+        tabs.addTab(name_consistency_tab, "Glossary")
 
         search_progress_overlay = self._create_audit_progress_overlay(
             results_list)
