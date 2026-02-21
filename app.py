@@ -6390,7 +6390,7 @@ class DialogueVisualEditor(
 
         translator_mode = self._is_translator_mode()
         ordered_files = [path for path in self.file_paths if path in self.sessions]
-        problem_targets: list[tuple[int, int, Path, str, str]] = []
+        problem_targets: list[tuple[int, int, int, Path, str, str]] = []
         for file_index, path in enumerate(ordered_files):
             session = self.sessions.get(path)
             if session is None:
@@ -6402,9 +6402,18 @@ class DialogueVisualEditor(
                         if self._is_misc_segment_kind_for_scope(segment)
                         else "dialogue"
                     )
+                    scope_priority = 1 if target_scope == "misc" else 0
                     problem_targets.append(
-                        (file_index, segment_index, path, segment.uid, target_scope)
+                        (
+                            scope_priority,
+                            file_index,
+                            segment_index,
+                            path,
+                            segment.uid,
+                            target_scope,
+                        )
                     )
+        problem_targets.sort(key=lambda row: (row[0], row[1], row[2]))
 
         if not problem_targets:
             mode_label = "translator" if translator_mode else "plain"
@@ -6413,6 +6422,7 @@ class DialogueVisualEditor(
             )
             return
 
+        cursor_scope_priority = 0
         cursor_file_index = -1
         cursor_segment_index = -1
         if self.current_path is not None and self.current_path in ordered_files:
@@ -6423,17 +6433,35 @@ class DialogueVisualEditor(
                 for idx, segment in enumerate(current_session.segments):
                     if segment.uid == current_uid:
                         cursor_segment_index = idx
+                        current_scope = (
+                            "misc"
+                            if self._is_misc_segment_kind_for_scope(segment)
+                            else "dialogue"
+                        )
+                        cursor_scope_priority = 1 if current_scope == "misc" else 0
                         break
 
         target_index = 0
         if cursor_file_index >= 0:
             found_after_cursor = False
             for idx, target in enumerate(problem_targets):
-                target_file_index, target_segment_index, _path, _uid, _scope = target
+                (
+                    target_scope_priority,
+                    target_file_index,
+                    target_segment_index,
+                    _path,
+                    _uid,
+                    _scope,
+                ) = target
                 if (
-                    target_file_index > cursor_file_index
+                    target_scope_priority > cursor_scope_priority
                     or (
-                        target_file_index == cursor_file_index
+                        target_scope_priority == cursor_scope_priority
+                        and target_file_index > cursor_file_index
+                    )
+                    or (
+                        target_scope_priority == cursor_scope_priority
+                        and target_file_index == cursor_file_index
                         and target_segment_index > cursor_segment_index
                     )
                 ):
@@ -6443,9 +6471,14 @@ class DialogueVisualEditor(
             if not found_after_cursor:
                 target_index = 0
 
-        _target_file_index, _target_segment_index, target_path, target_uid, target_scope = (
-            problem_targets[target_index]
-        )
+        (
+            _target_scope_priority,
+            _target_file_index,
+            _target_segment_index,
+            target_path,
+            target_uid,
+            target_scope,
+        ) = problem_targets[target_index]
         self._open_file(target_path, focus_uid=target_uid, view_scope=target_scope)
         self.statusBar().showMessage(
             f"Jumped to next problem ({target_index + 1}/{len(problem_targets)})."

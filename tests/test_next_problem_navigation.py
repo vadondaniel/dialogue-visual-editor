@@ -153,6 +153,29 @@ class NextProblemNavigationTests(unittest.TestCase):
 
         self.assertEqual(harness.open_calls, [(path, "seg-b", "dialogue")])
 
+    def test_jump_to_next_problem_prefers_dialogue_before_misc_across_files(self) -> None:
+        harness = _NextProblemHarness()
+        path_a = Path("Map001.json")
+        path_b = Path("Map002.json")
+        seg_a = _make_segment("seg-a", kind="dialogue")
+        seg_b_misc = _make_segment("seg-b-misc", kind="plugin_command_text")
+        seg_b_dialogue = _make_segment("seg-b-dialogue", kind="dialogue")
+        harness.sessions[path_a] = FileSession(path=path_a, data={}, bundles=[], segments=[seg_a])
+        harness.sessions[path_b] = FileSession(
+            path=path_b,
+            data={},
+            bundles=[],
+            segments=[seg_b_misc, seg_b_dialogue],
+        )
+        harness.file_paths = [path_a, path_b]
+        harness.current_path = path_a
+        harness.selected_segment_uid = "seg-a"
+        harness.problem_uids = {"seg-b-misc", "seg-b-dialogue"}
+
+        _call_editor_method("_jump_to_next_problem", harness)
+
+        self.assertEqual(harness.open_calls, [(path_b, "seg-b-dialogue", "dialogue")])
+
 
 if __name__ == "__main__":
     unittest.main()
