@@ -2119,6 +2119,30 @@ class MassTranslateDialog(QDialog):
                 return self.editor._normalize_translation_lines(value)
         return None
 
+    def _normalize_translation_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        lines: list[str],
+    ) -> list[str]:
+        normalized = self.editor._normalize_translation_lines(lines)
+        segment_kind = (
+            segment.segment_kind.strip().lower()
+            if isinstance(segment.segment_kind, str)
+            else ""
+        )
+        if segment_kind not in {"tyrano_dialogue", "choice", "tyrano_tag_text"}:
+            return normalized
+
+        rewritten: list[str] = []
+        for line in normalized:
+            cleaned = re.sub(r"(?i)\[p\]", "", line)
+            split_lines = re.split(r"(?i)\[r\]", cleaned)
+            if split_lines:
+                rewritten.extend(split_lines)
+            else:
+                rewritten.append(cleaned)
+        return rewritten or [""]
+
     def _extract_speaker_translation(self, entry: dict[str, Any]) -> Optional[str]:
         target_field = self._target_translation_field_name()
         fields = [
@@ -2250,6 +2274,7 @@ class MassTranslateDialog(QDialog):
             if primary_target is None:
                 continue
             path, segment = primary_target
+            lines = self._normalize_translation_lines_for_segment(segment, lines)
             source_lines = self._segment_source_lines_for_mass_translate(segment)
             actual_lines = len(lines)
             expected_lines = len(source_lines)
@@ -2468,10 +2493,15 @@ class MassTranslateDialog(QDialog):
                     self.editor, "_compose_translation_lines_for_segment", None
                 )
                 for path, segment in targets:
-                    stored_lines = list(lines)
+                    normalized_lines = self._normalize_translation_lines_for_segment(
+                        segment, lines
+                    )
+                    stored_lines = list(normalized_lines)
                     if callable(compose_resolver) and self._segment_uses_translation_storage(segment):
                         try:
-                            resolved_stored = compose_resolver(segment, lines)
+                            resolved_stored = compose_resolver(
+                                segment, normalized_lines
+                            )
                             if isinstance(resolved_stored, list):
                                 stored_lines = self.editor._normalize_translation_lines(
                                     resolved_stored
@@ -2494,9 +2524,12 @@ class MassTranslateDialog(QDialog):
                 if not targets:
                     continue
                 for path, segment in targets:
+                    normalized_lines = self._normalize_translation_lines_for_segment(
+                        segment, lines
+                    )
                     current_lines = self._segment_current_target_lines(segment)
-                    if current_lines != lines:
-                        self._set_segment_target_lines(segment, lines)
+                    if current_lines != normalized_lines:
+                        self._set_segment_target_lines(segment, normalized_lines)
                         touched_paths.add(path)
                         if entry_id.startswith("M:"):
                             misc_applied += 1

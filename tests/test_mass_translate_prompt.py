@@ -300,6 +300,38 @@ class MassTranslatePromptTests(unittest.TestCase):
 
         self.assertEqual(content_type, "misc")
 
+    def test_segment_content_type_treats_tyrano_dialogue_as_dialogue(self) -> None:
+        editor = _SpeakerKeyEditorMeta()
+        segment = _segment("scene.ks:K:1", "こんにちは", "NPC")
+        segment.segment_kind = "tyrano_dialogue"
+        session = FileSession(
+            path=Path("scene.ks"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+        harness = _PromptDialogHarness(editor)
+
+        content_type = harness._segment_content_type(session.path, session, segment)
+
+        self.assertEqual(content_type, "dialogue")
+
+    def test_segment_content_type_treats_choice_as_dialogue(self) -> None:
+        editor = _SpeakerKeyEditorMeta()
+        segment = _segment("scene.ks:KQ:1", "選択肢")
+        segment.segment_kind = "choice"
+        session = FileSession(
+            path=Path("scene.ks"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+        harness = _PromptDialogHarness(editor)
+
+        content_type = harness._segment_content_type(session.path, session, segment)
+
+        self.assertEqual(content_type, "dialogue")
+
 
 if __name__ == "__main__":
     unittest.main()

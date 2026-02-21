@@ -75,6 +75,9 @@ class _ApplyWorkflowHarness:
     _chunk_context_windows = MassTranslateDialog._chunk_context_windows
     _context_payload_for_chunk = MassTranslateDialog._context_payload_for_chunk
     _extract_dialogue_translation_lines = MassTranslateDialog._extract_dialogue_translation_lines
+    _normalize_translation_lines_for_segment = (
+        MassTranslateDialog._normalize_translation_lines_for_segment
+    )
     _has_translatable_source_lines = staticmethod(MassTranslateDialog._has_translatable_source_lines)
     _segment_content_type = MassTranslateDialog._segment_content_type
     _should_collect_global_speaker_key = staticmethod(
@@ -357,6 +360,33 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
         self.assertTrue(
             any("Control-code mismatch" in reason for reason in issue.warning_reasons)
         )
+
+    def test_collect_apply_warning_issues_treats_tyrano_inline_r_as_newlines(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.warning_level_combo = _ComboStub("all_line_mismatches")
+        segment = _segment("scene.ks:K:1", ["src-a", "src-b"])
+        segment.segment_kind = "tyrano_dialogue"
+        harness.dialogue_targets["D:TYRANO:1"] = (Path("scene.ks"), segment)
+        chunk_entries = [{"id": "D:TYRANO:1"}]
+        updates_by_id = {
+            "D:TYRANO:1": {"id": "D:TYRANO:1", "translation": "tl-a[r]tl-b"}
+        }
+
+        issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
+
+        self.assertEqual(issues, [])
+
+    def test_normalize_translation_lines_for_segment_strips_tyrano_p_and_splits_r(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        segment = _segment("scene.ks:KQ:1", ["src"])
+        segment.segment_kind = "choice"
+
+        normalized = harness._normalize_translation_lines_for_segment(
+            segment,
+            ["Alpha[p][r]Beta"],
+        )
+
+        self.assertEqual(normalized, ["Alpha", "Beta"])
 
     def test_all_line_warning_mode_does_not_flag_control_code_only_mismatch(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
