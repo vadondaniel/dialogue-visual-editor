@@ -6390,14 +6390,19 @@ class DialogueVisualEditor(
 
         translator_mode = self._is_translator_mode()
         ordered_files = [path for path in self.file_paths if path in self.sessions]
-        problem_targets: list[tuple[Path, str]] = []
+        problem_targets: list[tuple[Path, str, str]] = []
         for path in ordered_files:
             session = self.sessions.get(path)
             if session is None:
                 continue
             for segment in session.segments:
                 if self._segment_has_layout_problem(session, segment, translator_mode):
-                    problem_targets.append((path, segment.uid))
+                    target_scope = (
+                        "misc"
+                        if self._is_misc_segment_kind_for_scope(segment)
+                        else "dialogue"
+                    )
+                    problem_targets.append((path, segment.uid, target_scope))
 
         if not problem_targets:
             mode_label = "translator" if translator_mode else "plain"
@@ -6420,8 +6425,8 @@ class DialogueVisualEditor(
                         break
 
         target_index = (start_index + 1) % len(problem_targets)
-        target_path, target_uid = problem_targets[target_index]
-        self._open_file(target_path, focus_uid=target_uid)
+        target_path, target_uid, target_scope = problem_targets[target_index]
+        self._open_file(target_path, focus_uid=target_uid, view_scope=target_scope)
         self.statusBar().showMessage(
             f"Jumped to next problem ({target_index + 1}/{len(problem_targets)})."
         )
