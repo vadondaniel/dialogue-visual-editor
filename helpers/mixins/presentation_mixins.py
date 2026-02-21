@@ -178,15 +178,21 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
         *,
         translated_fallback_to_source: bool = True,
     ) -> str:
-        session = self._system_session()
-        if session is None:
+        candidates: list[tuple[int, DialogueSegment]] = []
+        for path, session in self.sessions.items():
+            path_name = path.name.strip().lower()
+            priority = 1 if path_name == "system.json" else 2
+            for segment in session.segments:
+                path_tokens_raw = getattr(segment, "system_text_path", ())
+                if not isinstance(path_tokens_raw, tuple):
+                    continue
+                if path_tokens_raw != ("gameTitle",):
+                    continue
+                candidates.append((priority, segment))
+        if not candidates:
             return ""
-        for segment in session.segments:
-            path_tokens_raw = getattr(segment, "system_text_path", ())
-            if not isinstance(path_tokens_raw, tuple):
-                continue
-            if path_tokens_raw != ("gameTitle",):
-                continue
+        candidates.sort(key=lambda item: item[0])
+        for _priority, segment in candidates:
             if translated:
                 translated_lines = self._normalize_translation_lines(
                     segment.translation_lines
@@ -210,7 +216,6 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
                 title_text = "\n".join(source_lines).strip()
             if title_text:
                 return title_text
-            return ""
         return ""
 
     def _variable_label_for_rpgm_index(self, variable_id: int) -> str:

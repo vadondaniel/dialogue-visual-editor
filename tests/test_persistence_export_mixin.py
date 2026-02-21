@@ -16,6 +16,7 @@ from dialogue_visual_editor.helpers.core.models import (
 )
 from dialogue_visual_editor.helpers.core.parser import (
     parse_dialogue_file,
+    tyrano_config_source_from_data,
     tyrano_script_source_from_data,
 )
 from dialogue_visual_editor.helpers.mixins.persistence_export_mixin import (
@@ -622,6 +623,27 @@ class PersistenceExportMixinTests(unittest.TestCase):
         rebuilt = tyrano_script_source_from_data(session.data)
 
         self.assertIn('text="Choice[r]Line"', rebuilt)
+
+    def test_apply_session_to_json_updates_tyrano_config_system_title(self) -> None:
+        harness = _Harness()
+        source = (
+            ";debugMenu.visible=false\n"
+            ";System.title=せんていトランス\n"
+            ";game_version=0.0\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "Config.tjs"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        title_segment = session.segments[0]
+        title_segment.lines = ["Sentei Trans"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_config_source_from_data(session.data)
+
+        self.assertIn(";System.title=Sentei Trans", rebuilt)
+        self.assertNotIn(";System.title=せんていトランス", rebuilt)
 
     def test_apply_session_to_json_rebuilds_command_list(self) -> None:
         harness = _Harness()

@@ -28,11 +28,31 @@ def _system_segment(
     return segment
 
 
+def _config_title_segment(
+    source_title: str,
+    translated_title: str = "",
+) -> DialogueSegment:
+    segment = DialogueSegment(
+        uid="Config.tjs:Y:1:gameTitle",
+        context="Config.tjs > System.title",
+        code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+        lines=[source_title],
+        original_lines=[source_title],
+        source_lines=[source_title],
+        segment_kind="system_text",
+    )
+    segment.translation_lines = [translated_title] if translated_title else [""]
+    setattr(segment, "system_text_path", ("gameTitle",))
+    setattr(segment, "tyrano_config_key", "System.title")
+    return segment
+
+
 class _Harness(PresentationHelpersMixin):
-    def __init__(self, segments: list[DialogueSegment]) -> None:
+    def __init__(self, segments: list[DialogueSegment], *, path: Path | None = None) -> None:
+        target_path = path if path is not None else Path("System.json")
         self.sessions = {
-            Path("System.json"): FileSession(
-                path=Path("System.json"),
+            target_path: FileSession(
+                path=target_path,
                 data={},
                 bundles=[],
                 segments=segments,
@@ -91,6 +111,17 @@ class PresentationSystemGameTitleTests(unittest.TestCase):
                 translated_fallback_to_source=False,
             ),
             "",
+        )
+
+    def test_game_title_from_tyrano_config_session(self) -> None:
+        harness = _Harness(
+            [_config_title_segment("せんていトランス")],
+            path=Path("Config.tjs"),
+        )
+
+        self.assertEqual(
+            harness._system_game_title_from_session(translated=False),
+            "せんていトランス",
         )
 
 

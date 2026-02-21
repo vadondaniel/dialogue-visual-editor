@@ -20,11 +20,15 @@ from ..core.models import (
     FileSession,
 )
 from ..core.parser import (
+    is_tyrano_config_data,
+    is_tyrano_config_path,
     is_plugins_js_path,
     is_tyrano_script_data,
     is_tyrano_script_path,
     plugins_js_source_from_data,
     split_tyrano_dialogue_line_and_suffix,
+    tyrano_config_source_from_data,
+    tyrano_config_title_from_data,
     tyrano_script_source_from_data,
 )
 from ..core.script_message_utils import (
@@ -918,6 +922,68 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         return escaped
 
     @staticmethod
+    def _escape_tyrano_config_value(value: str, quote_char: str) -> str:
+        escaped = value.replace("\\", "\\\\")
+        if quote_char == "'":
+            escaped = escaped.replace("'", "\\'")
+        elif quote_char == '"':
+            escaped = escaped.replace('"', '\\"')
+        return escaped.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+
+    def _apply_session_to_tyrano_config_data(self, session: FileSession) -> bool:
+        if not is_tyrano_config_data(session.data):
+            return False
+        raw_lines = session.data.get("__dve_tyrano_config_lines__")
+        if not isinstance(raw_lines, list):
+            return True
+
+        title_segment: Optional[DialogueSegment] = None
+        for segment in session.segments:
+            path_tokens_raw = getattr(segment, "system_text_path", ())
+            if not isinstance(path_tokens_raw, tuple):
+                continue
+            if path_tokens_raw == ("gameTitle",):
+                title_segment = segment
+                break
+        if title_segment is None:
+            return True
+
+        line_index_raw = session.data.get("__dve_tyrano_config_title_line_index__", -1)
+        if not isinstance(line_index_raw, int):
+            return True
+        if line_index_raw < 0 or line_index_raw >= len(raw_lines):
+            return True
+        line = raw_lines[line_index_raw]
+        if not isinstance(line, str):
+            return True
+
+        span_raw = session.data.get("__dve_tyrano_config_title_span__", ())
+        if (
+            not isinstance(span_raw, (list, tuple))
+            or len(span_raw) != 2
+            or not isinstance(span_raw[0], int)
+            or not isinstance(span_raw[1], int)
+        ):
+            return True
+        value_start = span_raw[0]
+        value_end = span_raw[1]
+        if value_start < 0 or value_end < value_start or value_end > len(line):
+            return True
+
+        quote_raw = session.data.get("__dve_tyrano_config_title_quote__", "")
+        quote_char = quote_raw if isinstance(quote_raw, str) and quote_raw in {'"', "'"} else ""
+        title_lines = self._normalized_tyrano_segment_lines(title_segment)
+        title_value = " ".join(line.strip() for line in title_lines if line.strip())
+        escaped_value = self._escape_tyrano_config_value(title_value, quote_char)
+        raw_lines[line_index_raw] = f"{line[:value_start]}{escaped_value}{line[value_end:]}"
+        session.data["__dve_tyrano_config_lines__"] = raw_lines
+        session.data["__dve_tyrano_config_title_span__"] = (
+            value_start,
+            value_start + len(escaped_value),
+        )
+        return True
+
+    @staticmethod
     def _normalized_tyrano_segment_lines(segment: DialogueSegment) -> list[str]:
         incoming_lines_raw = list(segment.lines) if segment.lines else [""]
         incoming_lines = [
@@ -1277,6 +1343,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         return True
 
     def _apply_session_to_json(self, session: FileSession) -> None:
+        if self._apply_session_to_tyrano_config_data(session):
+            return
         if self._apply_session_to_tyrano_script_data(session):
             return
         is_name_index_session = (
@@ -1814,29 +1882,35 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
     ) -> str:
         if self.version_db is None:
             return ""
-        system_path: Optional[Path] = None
+        candidate_paths: list[Path] = []
         for path in self.file_paths:
             if path.name.strip().lower() == "system.json":
-                system_path = path
-                break
-        if system_path is None:
-            return ""
-        rel_path = self._relative_path(system_path)
-        payload = self.version_db.get_snapshot_payload(
-            rel_path,
-            version,
-            profile_id=translated_profile_id,
-        )
-        if not payload:
-            return ""
-        try:
-            decoded = json.loads(payload)
-        except Exception:
-            return ""
-        if not isinstance(decoded, dict):
-            return ""
-        title_raw = decoded.get("gameTitle")
-        return title_raw if isinstance(title_raw, str) else ""
+                candidate_paths.append(path)
+        if not candidate_paths:
+            for path in self.file_paths:
+                if is_tyrano_config_path(path):
+                    candidate_paths.append(path)
+        for candidate_path in candidate_paths:
+            rel_path = self._relative_path(candidate_path)
+            payload = self.version_db.get_snapshot_payload(
+                rel_path,
+                version,
+                profile_id=translated_profile_id,
+            )
+            if not payload:
+                continue
+            try:
+                decoded = json.loads(payload)
+            except Exception:
+                continue
+            if isinstance(decoded, dict):
+                title_raw = decoded.get("gameTitle")
+                if isinstance(title_raw, str) and title_raw.strip():
+                    return title_raw
+            title_text = tyrano_config_title_from_data(decoded).strip()
+            if title_text:
+                return title_text
+        return ""
 
     def _index_html_candidates(self) -> list[Path]:
         if self.data_dir is None:
@@ -2025,6 +2099,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 elif is_tyrano_script_path(path):
                     decoded_payload = json.loads(payload)
                     output_text = tyrano_script_source_from_data(decoded_payload)
+                elif is_tyrano_config_path(path):
+                    decoded_payload = json.loads(payload)
+                    output_text = tyrano_config_source_from_data(decoded_payload)
                 with path.open("w", encoding="utf-8") as dst:
                     dst.write(output_text)
                 applied += 1

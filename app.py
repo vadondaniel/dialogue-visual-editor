@@ -168,13 +168,17 @@ try:
     from .helpers.core.parser import (
         is_tyrano_script_path,
         load_plugins_js_file,
+        load_tyrano_config_file,
         load_tyrano_script_file,
+        tyrano_config_title_from_data,
     )
 except ImportError:
     from helpers.core.parser import (
         is_tyrano_script_path,
         load_plugins_js_file,
+        load_tyrano_config_file,
         load_tyrano_script_file,
+        tyrano_config_title_from_data,
     )
 
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
@@ -4379,6 +4383,16 @@ class DialogueVisualEditor(
             title_text = title_raw.strip()
             if title_text:
                 return title_text
+        for path in self._tyrano_config_candidates(folder):
+            if not path.is_file():
+                continue
+            try:
+                data = load_tyrano_config_file(path)
+            except Exception:
+                continue
+            title_text = tyrano_config_title_from_data(data).strip()
+            if title_text:
+                return title_text
         return ""
 
     def _window_game_title(self) -> str:
@@ -5472,6 +5486,25 @@ class DialogueVisualEditor(
             data_dir / "js" / "plugins.js",
         ]
 
+    def _tyrano_config_candidates(self, data_dir: Path) -> list[Path]:
+        candidates = [
+            data_dir / "system" / "Config.tjs",
+            data_dir.parent / "data" / "system" / "Config.tjs",
+            data_dir.parent.parent / "data" / "system" / "Config.tjs",
+        ]
+        deduped: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except Exception:
+                resolved = candidate
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            deduped.append(candidate)
+        return deduped
+
     def _collect_tyrano_script_paths(self, data_dir: Path) -> list[Path]:
         scenario_dir = self._resolve_tyrano_scenario_dir(data_dir)
         search_root = scenario_dir if scenario_dir is not None else data_dir
@@ -5483,6 +5516,14 @@ class DialogueVisualEditor(
             if path.name.endswith(".bak"):
                 continue
             resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            supported_files.append(resolved)
+        for candidate in self._tyrano_config_candidates(data_dir):
+            if not candidate.is_file():
+                continue
+            resolved = candidate.resolve()
             if resolved in seen:
                 continue
             seen.add(resolved)

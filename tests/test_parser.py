@@ -8,6 +8,7 @@ from dialogue_visual_editor.helpers.core.models import NO_SPEAKER_KEY
 from dialogue_visual_editor.helpers.core.parser import (
     parse_dialogue_data,
     parse_dialogue_file,
+    tyrano_config_source_from_data,
     tyrano_script_source_from_data,
 )
 
@@ -521,6 +522,28 @@ class ParserTests(unittest.TestCase):
             session = parse_dialogue_file(path)
 
         rebuilt_source = tyrano_script_source_from_data(session.data)
+        self.assertEqual(rebuilt_source, source)
+
+    def test_parse_tyrano_config_file_extracts_system_title(self) -> None:
+        source = (
+            ";debugMenu.visible=false\n"
+            ";System.title=せんていトランス\n"
+            ";game_version=0.0\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "Config.tjs"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        self.assertTrue(bool(getattr(session, "is_name_index_session", False)))
+        self.assertEqual(getattr(session, "name_index_kind", ""), "system")
+        self.assertEqual(len(session.segments), 1)
+        segment = session.segments[0]
+        self.assertEqual(segment.segment_kind, "system_text")
+        self.assertEqual(segment.lines, ["せんていトランス"])
+        self.assertEqual(getattr(segment, "system_text_path", ()), ("gameTitle",))
+
+        rebuilt_source = tyrano_config_source_from_data(session.data)
         self.assertEqual(rebuilt_source, source)
 
 if __name__ == "__main__":

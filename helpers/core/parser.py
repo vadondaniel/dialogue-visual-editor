@@ -70,6 +70,14 @@ _TYRANO_SCRIPT_MARKER_VALUE = "tyrano_script"
 _TYRANO_SCRIPT_NEWLINE_KEY = "__dve_tyrano_script_newline__"
 _TYRANO_SCRIPT_HAS_TRAILING_NEWLINE_KEY = "__dve_tyrano_script_has_trailing_newline__"
 _TYRANO_SCRIPT_CHUNKS_KEY = "__dve_tyrano_script_chunks__"
+_TYRANO_CONFIG_MARKER_KEY = "__dve_tyrano_config_marker__"
+_TYRANO_CONFIG_MARKER_VALUE = "tyrano_config"
+_TYRANO_CONFIG_NEWLINE_KEY = "__dve_tyrano_config_newline__"
+_TYRANO_CONFIG_HAS_TRAILING_NEWLINE_KEY = "__dve_tyrano_config_has_trailing_newline__"
+_TYRANO_CONFIG_LINES_KEY = "__dve_tyrano_config_lines__"
+_TYRANO_CONFIG_TITLE_LINE_INDEX_KEY = "__dve_tyrano_config_title_line_index__"
+_TYRANO_CONFIG_TITLE_SPAN_KEY = "__dve_tyrano_config_title_span__"
+_TYRANO_CONFIG_TITLE_QUOTE_KEY = "__dve_tyrano_config_title_quote__"
 _MAP_FILE_NAME_RE = re.compile(r"^map\d+\.json$", re.IGNORECASE)
 _TYRANO_PAGE_BREAK_TAG_RE = re.compile(r"\[\s*p(?:\s+[^\]]*)?\s*\]", re.IGNORECASE)
 _TYRANO_INLINE_LINE_BREAK_TAG_RE = re.compile(r"\[\s*r\s*\]", re.IGNORECASE)
@@ -112,6 +120,10 @@ def is_plugins_js_path(path: Path) -> bool:
 
 def is_tyrano_script_path(path: Path) -> bool:
     return path.suffix.strip().lower() == ".ks"
+
+
+def is_tyrano_config_path(path: Path) -> bool:
+    return path.name.strip().lower() == "config.tjs"
 
 
 def _find_matching_bracket_end(source: str, start_index: int) -> int | None:
@@ -358,6 +370,74 @@ def load_tyrano_script_file(path: Path) -> dict[str, Any]:
     return _parse_tyrano_script_source(source)
 
 
+def _extract_tyrano_config_assignment_value(
+    line: str,
+    assignment_key: str,
+) -> tuple[int, int, str, str] | None:
+    lowered = line.lower()
+    key = assignment_key.strip().lower()
+    if not key:
+        return None
+    key_index = lowered.find(key)
+    if key_index < 0:
+        return None
+    assign_index = line.find("=", key_index + len(key))
+    if assign_index < 0:
+        return None
+    value_start = assign_index + 1
+    while value_start < len(line) and line[value_start].isspace():
+        value_start += 1
+    value_end = len(line)
+    while value_end > value_start and line[value_end - 1].isspace():
+        value_end -= 1
+    if value_end < value_start:
+        value_end = value_start
+
+    quote_char = ""
+    if (
+        value_end - value_start >= 2
+        and line[value_start] in {'"', "'"}
+        and line[value_end - 1] == line[value_start]
+    ):
+        quote_char = line[value_start]
+        raw_value = line[value_start + 1:value_end - 1]
+        decoded_value = _unescape_tyrano_tag_attribute_value(raw_value)
+        return value_start + 1, value_end - 1, decoded_value, quote_char
+    return value_start, value_end, line[value_start:value_end], quote_char
+
+
+def _parse_tyrano_config_source(source: str) -> dict[str, Any]:
+    newline = "\r\n" if "\r\n" in source else "\n"
+    has_trailing_newline = source.endswith(("\n", "\r"))
+    source_lines = source.splitlines()
+    title_line_index = -1
+    title_span: tuple[int, int] = (0, 0)
+    title_quote = ""
+    for line_index, line in enumerate(source_lines):
+        title_payload = _extract_tyrano_config_assignment_value(line, "System.title")
+        if title_payload is None:
+            continue
+        value_start, value_end, _decoded, quote_char = title_payload
+        title_line_index = line_index
+        title_span = (value_start, value_end)
+        title_quote = quote_char
+        break
+    return {
+        _TYRANO_CONFIG_MARKER_KEY: _TYRANO_CONFIG_MARKER_VALUE,
+        _TYRANO_CONFIG_NEWLINE_KEY: newline,
+        _TYRANO_CONFIG_HAS_TRAILING_NEWLINE_KEY: has_trailing_newline,
+        _TYRANO_CONFIG_LINES_KEY: source_lines,
+        _TYRANO_CONFIG_TITLE_LINE_INDEX_KEY: title_line_index,
+        _TYRANO_CONFIG_TITLE_SPAN_KEY: title_span,
+        _TYRANO_CONFIG_TITLE_QUOTE_KEY: title_quote,
+    }
+
+
+def load_tyrano_config_file(path: Path) -> dict[str, Any]:
+    source = _read_text_file_with_fallback_encodings(path)
+    return _parse_tyrano_config_source(source)
+
+
 def is_tyrano_script_data(data: Any) -> bool:
     if not isinstance(data, dict):
         return False
@@ -365,6 +445,28 @@ def is_tyrano_script_data(data: Any) -> bool:
     if marker != _TYRANO_SCRIPT_MARKER_VALUE:
         return False
     return isinstance(data.get(_TYRANO_SCRIPT_CHUNKS_KEY), list)
+
+
+def is_tyrano_config_data(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    marker = data.get(_TYRANO_CONFIG_MARKER_KEY)
+    if marker != _TYRANO_CONFIG_MARKER_VALUE:
+        return False
+    return isinstance(data.get(_TYRANO_CONFIG_LINES_KEY), list)
+
+
+def _coerce_tyrano_config_lines(data: Any) -> list[str]:
+    if not is_tyrano_config_data(data):
+        return []
+    raw_lines = data.get(_TYRANO_CONFIG_LINES_KEY)
+    if not isinstance(raw_lines, list):
+        return []
+    lines: list[str] = []
+    for line in raw_lines:
+        if isinstance(line, str):
+            lines.append(line)
+    return lines
 
 
 def _coerce_tyrano_script_chunks(data: Any) -> list[dict[str, Any]]:
@@ -418,6 +520,36 @@ def tyrano_script_source_from_data(data: Any) -> str:
     if has_trailing_newline and rebuilt_lines:
         rebuilt += newline
     return rebuilt
+
+
+def tyrano_config_source_from_data(data: Any) -> str:
+    if not is_tyrano_config_data(data):
+        raise ValueError("Payload is not recognized Tyrano Config.tjs structured data.")
+    newline_raw = data.get(_TYRANO_CONFIG_NEWLINE_KEY)
+    newline = newline_raw if isinstance(newline_raw, str) and newline_raw else "\n"
+    has_trailing_newline = bool(data.get(_TYRANO_CONFIG_HAS_TRAILING_NEWLINE_KEY, True))
+    lines = _coerce_tyrano_config_lines(data)
+    rebuilt = newline.join(lines)
+    if has_trailing_newline and lines:
+        rebuilt += newline
+    return rebuilt
+
+
+def tyrano_config_title_from_data(data: Any) -> str:
+    if not is_tyrano_config_data(data):
+        return ""
+    lines = _coerce_tyrano_config_lines(data)
+    line_index_raw = data.get(_TYRANO_CONFIG_TITLE_LINE_INDEX_KEY, -1)
+    if not isinstance(line_index_raw, int):
+        return ""
+    if line_index_raw < 0 or line_index_raw >= len(lines):
+        return ""
+    title_line = lines[line_index_raw]
+    title_payload = _extract_tyrano_config_assignment_value(title_line, "System.title")
+    if title_payload is None:
+        return ""
+    _value_start, _value_end, title_text, _quote_char = title_payload
+    return title_text.strip()
 
 
 def _unescape_tyrano_tag_attribute_value(value: str) -> str:
@@ -1115,6 +1247,35 @@ def _build_system_text_segments(path: Path, data: dict[str, Any]) -> list[Dialog
 
 
 def parse_dialogue_data(path: Path, data: Any) -> FileSession:
+    if is_tyrano_config_data(data):
+        title_text = tyrano_config_title_from_data(data)
+        segments: list[DialogueSegment] = []
+        if title_text:
+            lines = split_lines_preserve_empty(title_text)
+            segment = DialogueSegment(
+                uid=f"{path.name}:Y:1:gameTitle",
+                context=f"{path.name} > System.title",
+                code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+                lines=list(lines),
+                original_lines=list(lines),
+                source_lines=list(lines),
+                segment_kind="system_text",
+            )
+            setattr(segment, "system_text_path", ("gameTitle",))
+            setattr(segment, "tyrano_config_key", "System.title")
+            segments.append(segment)
+        config_session = FileSession(
+            path=path,
+            data=data,
+            bundles=[],
+            segments=segments,
+        )
+        setattr(config_session, "is_name_index_session", True)
+        setattr(config_session, "name_index_kind", "system")
+        setattr(config_session, "name_index_uid_prefix", "Y")
+        setattr(config_session, "name_index_label", "System")
+        return config_session
+
     if is_plugins_js_data(data):
         plugin_segments = _build_plugins_text_segments(path, data)
         plugin_session = FileSession(
@@ -1535,6 +1696,9 @@ def parse_dialogue_file(path: Path) -> FileSession:
         return parse_dialogue_data(path, data)
     if is_tyrano_script_path(path):
         data = load_tyrano_script_file(path)
+        return parse_dialogue_data(path, data)
+    if is_tyrano_config_path(path):
+        data = load_tyrano_config_file(path)
         return parse_dialogue_data(path, data)
     with path.open("r", encoding="utf-8") as src:
         data = json.load(src)
