@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -411,6 +412,18 @@ class MassTranslateDialog(QDialog):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([640, 680])
+
+        progress_row = QHBoxLayout()
+        progress_row.setSpacing(6)
+        self.total_progress_label = QLabel("0/0 (0.0%)")
+        progress_row.addWidget(self.total_progress_label)
+        self.total_progress_bar = QProgressBar()
+        self.total_progress_bar.setRange(0, 1000)
+        self.total_progress_bar.setValue(0)
+        self.total_progress_bar.setTextVisible(False)
+        self.total_progress_bar.setFixedHeight(10)
+        progress_row.addWidget(self.total_progress_bar, 1)
+        root.addLayout(progress_row)
 
         bottom_row = QHBoxLayout()
         bottom_row.addStretch(1)
@@ -1173,6 +1186,7 @@ class MassTranslateDialog(QDialog):
         self.scope_combo.setCurrentIndex(index_to_select)
         self.scope_combo.blockSignals(False)
         self._apply_combo_current_text_color(self.scope_combo)
+        self._refresh_total_progress_bar()
 
     @staticmethod
     def _should_force_scope_visibility(path: Path, session: FileSession) -> bool:
@@ -1463,15 +1477,82 @@ class MassTranslateDialog(QDialog):
         return QColor("#475569")
 
     @staticmethod
+    def _dynamic_progress_color(ratio: float) -> QColor:
+        clamped = max(0.0, min(1.0, ratio))
+        hue = int(120.0 * clamped)
+        return QColor.fromHsv(hue, 195, 212)
+
+    @staticmethod
     def _scope_progress_color(done: int, total: int) -> QColor:
         if total <= 0:
             return QColor("#64748b")
         ratio = done / total
-        if ratio >= 1.0:
-            return QColor("#15803d")
-        if ratio > 0.0:
-            return QColor("#b45309")
-        return QColor("#b91c1c")
+        return MassTranslateDialog._dynamic_progress_color(ratio)
+
+    def _overall_translation_progress_counts(self) -> tuple[int, int]:
+        done = 0
+        total = 0
+        speaker_keys: set[str] = set()
+        source_lines_resolver = getattr(
+            self.editor, "_segment_source_lines_for_translation", None
+        )
+        session_items = list(self.editor.sessions.items())
+        session_items.sort(
+            key=lambda item: natural_sort_key(self.editor._relative_path(item[0]))
+        )
+        for path, session in session_items:
+            for segment in self._segments_for_session_mass_translate(path, session):
+                content_type = self._segment_content_type(path, session, segment)
+                if self._should_collect_global_speaker_key(session, content_type):
+                    speaker_key = self._persistent_speaker_key_for_segment(segment)
+                    if speaker_key != NO_SPEAKER_KEY:
+                        speaker_keys.add(speaker_key)
+                if content_type not in {"dialogue", "misc", "speaker_segment"}:
+                    continue
+                source_lines = self._segment_source_lines_for_mass_translate(
+                    segment,
+                    source_lines_resolver,
+                )
+                if not self._has_translatable_source_lines(source_lines):
+                    continue
+                total += 1
+                if self._segment_has_translation(segment):
+                    done += 1
+        for speaker_key in speaker_keys:
+            total += 1
+            if self.editor._speaker_translation_for_key(speaker_key).strip():
+                done += 1
+        return done, total
+
+    def _refresh_total_progress_bar(self) -> None:
+        done, total = self._overall_translation_progress_counts()
+        ratio = (done / total) if total > 0 else 0.0
+        percent = ratio * 100.0
+        self.total_progress_label.setText(
+            f"{done}/{total} ({percent:.1f}%)"
+        )
+        self.total_progress_bar.setValue(int(round(ratio * 1000.0)))
+
+        color = self._dynamic_progress_color(ratio)
+        start = color.lighter(120).name()
+        end = color.darker(118).name()
+        bar_height = max(1, self.total_progress_bar.height())
+        radius = max(4, bar_height // 2)
+        chunk_radius = max(3, radius - 1)
+        self.total_progress_bar.setStyleSheet(
+            (
+                "QProgressBar {"
+                " border: 1px solid #334155;"
+                f" border-radius: {radius}px;"
+                " background-color: #0f172a;"
+                "}"
+                "QProgressBar::chunk {"
+                f" background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {start}, stop:1 {end});"
+                " margin: 1px;"
+                f" border-radius: {chunk_radius}px;"
+                "}"
+            )
+        )
 
     @staticmethod
     def _combo_current_color(combo: QComboBox) -> Optional[QColor]:

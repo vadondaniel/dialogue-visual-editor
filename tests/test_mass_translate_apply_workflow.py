@@ -4,11 +4,14 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from dialogue_visual_editor.helpers.core.models import DialogueSegment
+from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
 from dialogue_visual_editor.helpers.ui.mass_translate_dialog import MassTranslateDialog
 
 
 class _ApplyWorkflowEditorMeta:
+    def __init__(self) -> None:
+        self.sessions: dict[Path, FileSession] = {}
+
     @staticmethod
     def _normalize_translation_lines(value: Any) -> list[str]:
         if isinstance(value, list):
@@ -27,6 +30,11 @@ class _ApplyWorkflowEditorMeta:
     def _relative_path(path: Path) -> str:
         return path.as_posix()
 
+    @staticmethod
+    def _speaker_translation_for_key(speaker_key: str) -> str:
+        _ = speaker_key
+        return ""
+
 
 class _ApplyWorkflowHarness:
     _default_prompt_template = classmethod(MassTranslateDialog._default_prompt_template.__func__)
@@ -37,8 +45,20 @@ class _ApplyWorkflowHarness:
     _target_translation_field_name = MassTranslateDialog._target_translation_field_name
     _translation_prompt_metadata = MassTranslateDialog._translation_prompt_metadata
     _extract_dialogue_translation_lines = MassTranslateDialog._extract_dialogue_translation_lines
+    _has_translatable_source_lines = staticmethod(MassTranslateDialog._has_translatable_source_lines)
+    _segment_content_type = MassTranslateDialog._segment_content_type
+    _should_collect_global_speaker_key = staticmethod(
+        MassTranslateDialog._should_collect_global_speaker_key
+    )
+    _segment_has_translation = MassTranslateDialog._segment_has_translation
+    _segments_for_session_mass_translate = (
+        MassTranslateDialog._segments_for_session_mass_translate
+    )
     _segment_source_lines_for_mass_translate = (
         MassTranslateDialog._segment_source_lines_for_mass_translate
+    )
+    _persistent_speaker_key_for_segment = (
+        MassTranslateDialog._persistent_speaker_key_for_segment
     )
     _preview_text_for_lines = staticmethod(MassTranslateDialog._preview_text_for_lines)
     _counter_summary_text = staticmethod(MassTranslateDialog._counter_summary_text)
@@ -49,6 +69,9 @@ class _ApplyWorkflowHarness:
     _entry_primary_target_for_id = MassTranslateDialog._entry_primary_target_for_id
     _expected_source_line_count = MassTranslateDialog._expected_source_line_count
     _collect_apply_warning_issues = MassTranslateDialog._collect_apply_warning_issues
+    _overall_translation_progress_counts = (
+        MassTranslateDialog._overall_translation_progress_counts
+    )
     _set_scope_value = MassTranslateDialog._set_scope_value
     _scope_has_pending_entries_for_value = (
         MassTranslateDialog._scope_has_pending_entries_for_value
@@ -215,6 +238,31 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
         issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
 
         self.assertEqual(issues, [])
+
+    def test_overall_translation_progress_counts_ignore_warning_level(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        translated_misc = _segment("Map001.json:N:1", ["src-a"])
+        translated_misc.segment_kind = "note_text"
+        translated_misc.translation_lines = ["tl-a"]
+        untranslated_misc = _segment("Map001.json:N:2", ["src-b"])
+        untranslated_misc.segment_kind = "note_text"
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[translated_misc, untranslated_misc],
+        )
+        editor.sessions[session.path] = session
+        harness = _ApplyWorkflowHarness(editor)
+
+        harness.warning_level_combo = _ComboStub("collapsed_lines_only")
+        done_collapsed, total_collapsed = harness._overall_translation_progress_counts()
+
+        harness.warning_level_combo = _ComboStub("all_line_and_control_mismatches")
+        done_strict, total_strict = harness._overall_translation_progress_counts()
+
+        self.assertEqual((done_collapsed, total_collapsed), (1, 2))
+        self.assertEqual((done_strict, total_strict), (1, 2))
 
     def test_next_chunk_index_after_apply_prefers_copy_next(self) -> None:
         idx = _ApplyWorkflowHarness._next_chunk_index_after_apply(
