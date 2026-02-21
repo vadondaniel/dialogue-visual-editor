@@ -218,6 +218,28 @@ class MassTranslatePromptTests(unittest.TestCase):
 
         self.assertEqual([segment.uid for segment in resolved], ["Actors.json:A:1"])
 
+    def test_segments_for_mass_translate_can_include_actor_alias_rows(self) -> None:
+        editor = _SpeakerKeyEditorMeta()
+        actor = _segment("Actors.json:A:1", "Harold")
+        alias = _segment("Actors.json:A:1:alt_1", "ヒナタ")
+        setattr(alias, "is_actor_name_alias", True)
+        session = FileSession(
+            path=Path("Actors.json"),
+            data=[],
+            bundles=[],
+            segments=[actor, alias],
+        )
+        setattr(session, "name_index_kind", "actor")
+        editor._display_segments = [actor, alias]
+        harness = _PromptDialogHarness(editor)
+
+        resolved = harness._segments_for_session_mass_translate(session.path, session)
+
+        self.assertEqual(
+            [segment.uid for segment in resolved],
+            ["Actors.json:A:1", "Actors.json:A:1:alt_1"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

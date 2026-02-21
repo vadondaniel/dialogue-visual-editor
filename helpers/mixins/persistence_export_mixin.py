@@ -701,6 +701,90 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return True
         return False
 
+    def _string_json_value_by_path(self, root: Any, path_tokens: tuple[Any, ...]) -> Optional[str]:
+        if not path_tokens:
+            return None
+        target: Any = root
+        for token in path_tokens:
+            if isinstance(token, int):
+                if not isinstance(target, list) or token < 0 or token >= len(target):
+                    return None
+                target = target[token]
+                continue
+            if isinstance(token, str):
+                if not isinstance(target, dict) or token not in target:
+                    return None
+                target = target[token]
+                continue
+            return None
+        return target if isinstance(target, str) else None
+
+    def _actor_alias_targets_for_segment(
+        self,
+        segment: DialogueSegment,
+    ) -> list[tuple[Path, tuple[Any, ...]]]:
+        targets_raw = getattr(segment, "actor_alias_target_refs", ())
+        if not isinstance(targets_raw, (list, tuple)):
+            return []
+        targets: list[tuple[Path, tuple[Any, ...]]] = []
+        for item in targets_raw:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                continue
+            path_raw, path_tokens_raw = item
+            if isinstance(path_raw, Path):
+                target_path = path_raw
+            elif isinstance(path_raw, str):
+                target_path = Path(path_raw)
+            else:
+                continue
+            path_tokens = (
+                path_tokens_raw
+                if isinstance(path_tokens_raw, tuple)
+                else tuple(path_tokens_raw)
+                if isinstance(path_tokens_raw, list)
+                else ()
+            )
+            if not path_tokens:
+                continue
+            targets.append((target_path, path_tokens))
+        return targets
+
+    def _sync_actor_alias_targets_for_session(self, session: FileSession) -> list[FileSession]:
+        alias_segments = [
+            segment
+            for segment in session.segments
+            if bool(getattr(segment, "is_actor_name_alias", False))
+        ]
+        if not alias_segments:
+            return []
+        sessions_by_path = getattr(self, "sessions", None)
+        if not isinstance(sessions_by_path, dict):
+            return []
+
+        changed_sessions: dict[Path, FileSession] = {}
+        for alias_segment in alias_segments:
+            alias_value = "\n".join(alias_segment.lines) if alias_segment.lines else ""
+            for target_path, path_tokens in self._actor_alias_targets_for_segment(alias_segment):
+                target_session = sessions_by_path.get(target_path)
+                if not isinstance(target_session, FileSession):
+                    continue
+                if target_session.path == session.path:
+                    continue
+                current_value = self._string_json_value_by_path(target_session.data, path_tokens)
+                if current_value is None or current_value == alias_value:
+                    continue
+                if not self._set_json_value_by_path(target_session.data, path_tokens, alias_value):
+                    continue
+                setattr(target_session, "_has_external_source_edits", True)
+                changed_sessions[target_session.path] = target_session
+
+        refresh_dirty = getattr(self, "_refresh_dirty_state", None)
+        if callable(refresh_dirty):
+            for target_session in changed_sessions.values():
+                refresh_dirty(target_session)
+
+        return list(changed_sessions.values())
+
     def _apply_session_to_json(self, session: FileSession) -> None:
         is_name_index_session = (
             bool(getattr(session, "is_name_index_session", False))
@@ -747,6 +831,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 rf":{re.escape(uid_prefix)}:(\d+)(?::([A-Za-z0-9_]+))?$")
             values_by_entry_id: dict[int, dict[str, str]] = {}
             for segment in session.segments:
+                if bool(getattr(segment, "is_actor_name_alias", False)):
+                    continue
                 match = id_pattern.search(segment.uid)
                 if not match:
                     continue
@@ -875,6 +961,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             segment.source_lines = list(normalized)
             segment.inserted = False
             segment.merged_segments = []
+        setattr(session, "_has_external_source_edits", False)
 
     def _save_session_snapshot_to_db(
         self,
@@ -919,6 +1006,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
         translator_mode = self._is_translator_mode()
         source_dirty_before_save = self._session_has_source_changes(session)
+        linked_sessions: list[FileSession] = []
+        if source_dirty_before_save:
+            linked_sessions = self._sync_actor_alias_targets_for_session(session)
         try:
             if save_translation_state and (not self._save_translation_state([session.path])):
                 return False
@@ -968,13 +1058,38 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if callable(refresh_detail):
                     refresh_detail()
 
+            linked_count = 0
+            linked_failures = 0
+            for linked_session in linked_sessions:
+                if linked_session.path == session.path:
+                    continue
+                if not self._session_has_source_changes(linked_session):
+                    continue
+                if self._save_session(
+                    linked_session,
+                    refresh_current_view=(self.current_path == linked_session.path),
+                    save_translation_state=False,
+                    show_status_message=False,
+                ):
+                    linked_count += 1
+                else:
+                    linked_failures += 1
+            if linked_failures > 0:
+                return False
+
             if show_status_message:
                 if translator_mode and not source_dirty_before_save:
                     self.statusBar().showMessage(
                         f"Saved TL snapshot to DB: {session.path.name}")
                 else:
-                    self.statusBar().showMessage(
-                        f"Saved snapshot to DB: {session.path.name}")
+                    if linked_count > 0:
+                        file_label = "file" if linked_count == 1 else "files"
+                        self.statusBar().showMessage(
+                            f"Saved snapshot to DB: {session.path.name} (+{linked_count} linked {file_label})."
+                        )
+                    else:
+                        self.statusBar().showMessage(
+                            f"Saved snapshot to DB: {session.path.name}")
             return True
         except Exception as exc:
             logger.exception("Failed to save snapshot for '%s'.", session.path)

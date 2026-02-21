@@ -148,6 +148,11 @@ except ImportError:
         install_global_exception_hooks,
     )
 
+try:
+    from .helpers.core.actor_name_change_utils import collect_actor_name_change_entries
+except ImportError:
+    from helpers.core.actor_name_change_utils import collect_actor_name_change_entries
+
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
 FILE_LIST_SECTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 logger = logging.getLogger(__name__)
@@ -5299,6 +5304,168 @@ class DialogueVisualEditor(
             decoded = json.load(src)
         return parse_dialogue_data(virtual_path, decoded)
 
+    def _actor_session_for_aliases(self) -> Optional[FileSession]:
+        for session in self.sessions.values():
+            if self._is_actor_index_session(session):
+                return session
+        return None
+
+    def _collect_actor_change_name_alias_groups(self) -> dict[int, list[dict[str, Any]]]:
+        groups_by_actor: dict[int, list[dict[str, Any]]] = {}
+        groups_by_key: dict[tuple[int, str], dict[str, Any]] = {}
+        seen_targets_by_key: dict[tuple[int, str], set[tuple[Path, tuple[Any, ...]]]] = {}
+
+        for path in self.file_paths:
+            session = self.sessions.get(path)
+            if session is None or self._is_actor_index_session(session):
+                continue
+            for entry in collect_actor_name_change_entries(session.data):
+                alias_name = entry.name.strip()
+                if not alias_name:
+                    continue
+                key = (entry.actor_id, alias_name)
+                group = groups_by_key.get(key)
+                if group is None:
+                    group = {"name": alias_name, "targets": []}
+                    groups_by_key[key] = group
+                    groups_by_actor.setdefault(entry.actor_id, []).append(group)
+                    seen_targets_by_key[key] = set()
+                target = (path, entry.path_tokens)
+                seen_targets = seen_targets_by_key[key]
+                if target in seen_targets:
+                    continue
+                seen_targets.add(target)
+                targets_raw = group.get("targets")
+                if isinstance(targets_raw, list):
+                    targets_raw.append(target)
+        return groups_by_actor
+
+    def _build_actor_change_name_alias_segment(
+        self,
+        actor_session: FileSession,
+        *,
+        actor_id: int,
+        alias_index: int,
+        alias_name: str,
+        targets: list[tuple[Path, tuple[Any, ...]]],
+        existing_segment: Optional[DialogueSegment],
+    ) -> DialogueSegment:
+        uid_prefix = self._name_index_uid_prefix(actor_session)
+        uid = f"{actor_session.path.name}:{uid_prefix}:{actor_id}:alt_{alias_index}"
+        context = f"{actor_session.path.name} > actor[{actor_id}].alternate_name[{alias_index}]"
+
+        if existing_segment is None:
+            code101 = {"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, alias_name]}
+            segment = DialogueSegment(
+                uid=uid,
+                context=context,
+                code101=code101,
+                lines=[alias_name],
+                original_lines=[alias_name],
+                source_lines=[alias_name],
+                segment_kind="actor_name_alias",
+            )
+        else:
+            segment = existing_segment
+            segment.uid = uid
+            segment.context = context
+            segment.segment_kind = "actor_name_alias"
+            original_lines = list(segment.original_lines) if segment.original_lines else [""]
+            current_lines = list(segment.lines) if segment.lines else [""]
+            has_unsaved_source_edits = current_lines != original_lines
+            if not has_unsaved_source_edits:
+                segment.lines = [alias_name]
+                segment.original_lines = [alias_name]
+                segment.source_lines = [alias_name]
+                params = segment.params
+                while len(params) <= 4:
+                    params.append("")
+                params[4] = alias_name
+                segment.code101["parameters"] = params
+
+        setattr(segment, "is_actor_name_alias", True)
+        setattr(segment, "actor_alias_target_refs", list(targets))
+        setattr(segment, "actor_alias_actor_id", actor_id)
+        return segment
+
+    def _rebuild_actor_change_name_segments(
+        self,
+        *,
+        apply_translation_state: bool,
+    ) -> int:
+        actor_session = self._actor_session_for_aliases()
+        if actor_session is None:
+            return 0
+
+        previous_count = len(actor_session.segments)
+        alias_groups_by_actor = self._collect_actor_change_name_alias_groups()
+        existing_alias_by_uid: dict[str, DialogueSegment] = {}
+        base_segments: list[DialogueSegment] = []
+        for segment in actor_session.segments:
+            if bool(getattr(segment, "is_actor_name_alias", False)):
+                existing_alias_by_uid[segment.uid] = segment
+                continue
+            base_segments.append(segment)
+
+        rebuilt_segments: list[DialogueSegment] = []
+        alias_count = 0
+        for segment in base_segments:
+            rebuilt_segments.append(segment)
+            actor_id = self._actor_id_from_uid(segment.uid)
+            if actor_id is None:
+                continue
+            groups = alias_groups_by_actor.get(actor_id, [])
+            for alias_index, group in enumerate(groups, start=1):
+                alias_name_raw = group.get("name", "")
+                alias_name = alias_name_raw if isinstance(alias_name_raw, str) else ""
+                if not alias_name:
+                    continue
+                targets_raw = group.get("targets")
+                if not isinstance(targets_raw, list):
+                    continue
+                targets: list[tuple[Path, tuple[Any, ...]]] = []
+                for target in targets_raw:
+                    if not isinstance(target, tuple) or len(target) != 2:
+                        continue
+                    target_path_raw, path_tokens_raw = target
+                    if not isinstance(target_path_raw, Path):
+                        continue
+                    path_tokens = (
+                        path_tokens_raw
+                        if isinstance(path_tokens_raw, tuple)
+                        else tuple(path_tokens_raw)
+                        if isinstance(path_tokens_raw, list)
+                        else ()
+                    )
+                    if not path_tokens:
+                        continue
+                    targets.append((target_path_raw, path_tokens))
+                if not targets:
+                    continue
+                uid_prefix = self._name_index_uid_prefix(actor_session)
+                alias_uid = f"{actor_session.path.name}:{uid_prefix}:{actor_id}:alt_{alias_index}"
+                alias_segment = self._build_actor_change_name_alias_segment(
+                    actor_session,
+                    actor_id=actor_id,
+                    alias_index=alias_index,
+                    alias_name=alias_name,
+                    targets=targets,
+                    existing_segment=existing_alias_by_uid.get(alias_uid),
+                )
+                rebuilt_segments.append(alias_segment)
+                alias_count += 1
+
+        actor_session.segments = rebuilt_segments
+        setattr(actor_session, "has_actor_name_aliases", alias_count > 0)
+        if apply_translation_state:
+            self._apply_translation_state_to_session(actor_session)
+        self.segment_uid_counter = max(self.segment_uid_counter, len(actor_session.segments))
+
+        invalidate_cached_view = getattr(self, "_invalidate_cached_block_view_for_path", None)
+        if callable(invalidate_cached_view):
+            invalidate_cached_view(actor_session.path)
+        return len(rebuilt_segments) - previous_count
+
     def _build_translation_only_segment_for_import(
         self,
         session: FileSession,
@@ -5742,6 +5909,9 @@ class DialogueVisualEditor(
                 logger.exception("Failed to load supported file '%s'.", path)
                 load_errors.append(path.name)
         self._translation_state_force_positional_match = False
+        total_blocks += self._rebuild_actor_change_name_segments(
+            apply_translation_state=True
+        )
 
         if translated_import_hydrated:
             self._save_translation_state()
@@ -5898,6 +6068,7 @@ class DialogueVisualEditor(
         return True
 
     def _open_file(self, path: Path, force_reload: bool = False, focus_uid: Optional[str] = None) -> None:
+        should_reload_session = force_reload or path not in self.sessions
         previous_path = self.current_path
         if (
             not force_reload
@@ -5919,7 +6090,7 @@ class DialogueVisualEditor(
         ):
             return
         try:
-            if force_reload or path not in self.sessions:
+            if should_reload_session:
                 rel_path = self._relative_path(path)
                 session: Optional[FileSession] = None
                 if self.version_db is not None:
@@ -5941,6 +6112,9 @@ class DialogueVisualEditor(
                 self.sessions[path] = session
                 self.segment_uid_counter = max(
                     self.segment_uid_counter, len(session.segments))
+                self._rebuild_actor_change_name_segments(
+                    apply_translation_state=False
+                )
                 self._clear_structural_history_for_path(path)
                 self._invalidate_cached_block_view_for_path(path)
                 self.reference_summary_cache_by_path.clear()

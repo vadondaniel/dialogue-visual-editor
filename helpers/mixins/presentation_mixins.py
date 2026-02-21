@@ -363,6 +363,10 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
             return jp_by_id, en_by_id
 
         for segment in actor_session.segments:
+            if bool(getattr(segment, "is_actor_name_alias", False)):
+                continue
+            if self._name_index_field_from_uid(segment.uid) != "name":
+                continue
             actor_id = self._actor_id_from_uid(segment.uid)
             if actor_id is None:
                 continue

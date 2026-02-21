@@ -153,35 +153,42 @@ class _SaveSessionHarness(PersistenceExportMixin):
         self.translation_state_calls.append(list(changed_paths or []))
         return True
 
-    def _session_has_source_changes(self, _session: FileSession) -> bool:
+    def _session_has_source_changes(self, session: FileSession) -> bool:
+        _ = session
         return self.session_source_dirty
 
-    def _collect_change_log(self, _session: FileSession) -> list[dict[str, Any]]:
+    def _collect_change_log(self, session: FileSession) -> list[tuple[str, str, str]]:
+        _ = session
         return []
 
-    def _build_source_data_for_session(self, _session: FileSession) -> Any:
+    def _build_source_data_for_session(self, session: FileSession) -> Any:
+        _ = session
         return {"working": True}
 
-    def _export_translated_data_for_session(self, _session: FileSession) -> Any:
+    def _export_translated_data_for_session(self, session: FileSession) -> Any:
+        _ = session
         return {"translated": True}
 
     def _relative_path(self, path: Path) -> str:
         return path.name
 
-    def _mark_session_source_saved(self, _session: FileSession) -> None:
+    def _mark_session_source_saved(self, session: FileSession) -> None:
+        _ = session
         return
 
-    def _mark_session_translation_saved(self, _session: FileSession) -> None:
+    def _mark_session_translation_saved(self, session: FileSession) -> None:
+        _ = session
         return
 
     def _clear_structural_history_for_path(self, _path: Path) -> None:
         return
 
-    def _refresh_dirty_state(self, _session: FileSession) -> None:
+    def _refresh_dirty_state(self, session: FileSession) -> None:
+        _ = session
         return
 
-    def _render_session(self, _session: FileSession, preserve_scroll: bool = False) -> None:
-        _ = preserve_scroll
+    def _render_session(self, session: FileSession, preserve_scroll: bool = False) -> None:
+        _ = (session, preserve_scroll)
         self.render_session_calls += 1
 
     def _refresh_block_visual_states(self) -> None:
@@ -210,18 +217,76 @@ class _ResetCurrentFileHarness(PersistenceExportMixin):
     def _is_translator_mode(self) -> bool:
         return True
 
-    def _session_has_translation_changes(self, _session: FileSession) -> bool:
+    def _session_has_translation_changes(self, session: FileSession) -> bool:
+        _ = session
         return True
 
-    def _refresh_dirty_state(self, _session: FileSession) -> None:
+    def _refresh_dirty_state(self, session: FileSession) -> None:
+        _ = session
         self.refresh_dirty_calls += 1
 
     def _rerender_blocks_near_viewport(self, overscan_px: int = 800) -> None:
         _ = overscan_px
         self.rerender_nearby_calls += 1
 
-    def _render_session(self, _session: FileSession) -> None:
+    def _render_session(self, session: FileSession) -> None:
+        _ = session
         self.render_session_calls += 1
+
+    def statusBar(self) -> _StatusBarHarness:
+        return self._status_bar
+
+
+class _ActorAliasSaveHarness(PersistenceExportMixin):
+    def __init__(self) -> None:
+        self.version_db = _VersionDbStub()
+        self.index_db = None
+        self.current_path: Path | None = None
+        self.active_translation_profile_id = "default"
+        self.sessions: dict[Path, FileSession] = {}
+        self.translation_state_calls: list[list[Path]] = []
+        self._status_bar = _StatusBarHarness()
+
+    def _is_translator_mode(self) -> bool:
+        return True
+
+    def _save_translation_state(self, changed_paths: list[Path] | None = None) -> bool:
+        self.translation_state_calls.append(list(changed_paths or []))
+        return True
+
+    def _session_has_source_changes(self, session: FileSession) -> bool:
+        if bool(getattr(session, "_has_external_source_edits", False)):
+            return True
+        for segment in session.segments:
+            if segment.translation_only:
+                continue
+            if segment.lines != segment.original_lines:
+                return True
+        return False
+
+    def _collect_change_log(self, session: FileSession) -> list[tuple[str, str, str]]:
+        _ = session
+        return []
+
+    def _build_source_data_for_session(self, session: FileSession) -> Any:
+        return {"working": session.path.name}
+
+    def _export_translated_data_for_session(self, session: FileSession) -> Any:
+        return {"translated": session.path.name}
+
+    def _relative_path(self, path: Path) -> str:
+        return path.name
+
+    def _mark_session_translation_saved(self, session: FileSession) -> None:
+        _ = session
+        return
+
+    def _clear_structural_history_for_path(self, _path: Path) -> None:
+        return
+
+    def _refresh_dirty_state(self, session: FileSession) -> None:
+        _ = session
+        return
 
     def statusBar(self) -> _StatusBarHarness:
         return self._status_bar
@@ -358,6 +423,27 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertEqual(source_data[0]["name"], "Potion")
         self.assertEqual(source_data[0]["description"], "Heals HP")
+
+    def test_apply_session_to_json_skips_actor_alias_rows(self) -> None:
+        harness = _Harness()
+        actor_segment = _dialogue_segment("Actors.json:A:1", "Harold")
+        alias_segment = _dialogue_segment("Actors.json:A:1:alt_1", "ヒナタ")
+        alias_segment.segment_kind = "actor_name_alias"
+        setattr(alias_segment, "is_actor_name_alias", True)
+        session = FileSession(
+            path=Path("Actors.json"),
+            data=[{"id": 1, "name": "Old"}],
+            bundles=[],
+            segments=[actor_segment, alias_segment],
+        )
+        setattr(session, "is_name_index_session", True)
+        setattr(session, "name_index_uid_prefix", "A")
+
+        harness._apply_session_to_json(session)
+
+        row = session.data[0]
+        self.assertEqual(row["name"], "Harold")
+        self.assertNotIn("alt_1", row)
 
     def test_export_translated_data_inserts_translation_only_followups(self) -> None:
         harness = _Harness()
@@ -507,6 +593,65 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual(harness.rerender_nearby_calls, 1)
         self.assertEqual(harness.refresh_visual_calls, 1)
         self.assertEqual(harness.refresh_detail_calls, 1)
+
+    def test_save_session_persists_linked_actor_alias_targets(self) -> None:
+        harness = _ActorAliasSaveHarness()
+        actor_path = Path("Actors.json")
+        map_path = Path("Map001.json")
+        actor_segment = _dialogue_segment("Actors.json:A:1", "Harold")
+        alias_segment = _dialogue_segment("Actors.json:A:1:alt_1", "ヒナタ")
+        alias_segment.lines = ["Hinata"]
+        alias_segment.original_lines = ["ヒナタ"]
+        alias_segment.segment_kind = "actor_name_alias"
+        setattr(alias_segment, "is_actor_name_alias", True)
+        setattr(
+            alias_segment,
+            "actor_alias_target_refs",
+            [(map_path, ("events", 0, "pages", 0, "list", 0, "parameters", 1))],
+        )
+        actor_session = FileSession(
+            path=actor_path,
+            data=[{"id": 1, "name": "Harold"}],
+            bundles=[],
+            segments=[actor_segment, alias_segment],
+        )
+        setattr(actor_session, "is_name_index_session", True)
+        setattr(actor_session, "name_index_uid_prefix", "A")
+
+        map_session = FileSession(
+            path=map_path,
+            data={
+                "events": [
+                    {
+                        "pages": [
+                            {
+                                "list": [
+                                    {"code": 320, "indent": 0, "parameters": [1, "ヒナタ"]},
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            bundles=[],
+            segments=[],
+        )
+
+        harness.sessions = {actor_path: actor_session, map_path: map_session}
+        harness.current_path = actor_path
+
+        ok = harness._save_session(actor_session, refresh_current_view=False)
+
+        self.assertTrue(ok)
+        self.assertEqual(
+            map_session.data["events"][0]["pages"][0]["list"][0]["parameters"][1],
+            "Hinata",
+        )
+        self.assertEqual(harness.translation_state_calls, [[actor_path]])
+        self.assertEqual(
+            [rel_path for rel_path, _data in harness.version_db.working_calls],
+            ["Actors.json", "Map001.json"],
+        )
 
     def test_reset_current_file_in_translator_mode_avoids_full_rerender(self) -> None:
         harness = _ResetCurrentFileHarness()

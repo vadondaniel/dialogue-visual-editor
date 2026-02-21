@@ -1044,6 +1044,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             return False
 
     def _session_has_source_changes(self, session: FileSession) -> bool:
+        if bool(getattr(session, "_has_external_source_edits", False)):
+            return True
         for segment in session.segments:
             if segment.translation_only:
                 continue
