@@ -562,7 +562,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         name_consistency_groups_layout = QVBoxLayout(name_consistency_groups_panel)
         name_consistency_groups_layout.setContentsMargins(0, 0, 0, 0)
         name_consistency_groups_layout.setSpacing(6)
-        name_consistency_groups_layout.addWidget(QLabel("Inconsistent Source Terms"))
+        name_consistency_groups_layout.addWidget(QLabel("Glossary Terms"))
         name_consistency_groups_list = QListWidget()
         name_consistency_groups_layout.addWidget(name_consistency_groups_list, 1)
         name_consistency_splitter.addWidget(name_consistency_groups_panel)
@@ -592,7 +592,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         name_consistency_footer.setContentsMargins(0, 0, 0, 0)
         name_consistency_footer.setSpacing(6)
         name_consistency_status_label = QLabel(
-            "Checks repeated source terms for inconsistent TL naming."
+            "Checks misc glossary terms against dialogue translations."
         )
         name_consistency_footer.addWidget(name_consistency_status_label, 1)
         name_consistency_goto_misc_btn = QPushButton("Go To Misc")
@@ -606,7 +606,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         name_consistency_splitter.setStretchFactor(0, 4)
         name_consistency_splitter.setStretchFactor(1, 6)
 
-        tabs.addTab(name_consistency_tab, "Name Consistency")
+        tabs.addTab(name_consistency_tab, "Glossary Consistency")
 
         search_progress_overlay = self._create_audit_progress_overlay(
             results_list)
