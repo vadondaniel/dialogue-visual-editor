@@ -154,9 +154,15 @@ except ImportError:
     from helpers.core.actor_name_change_utils import collect_actor_name_change_entries
 
 try:
-    from .helpers.core.project_path_utils import resolve_project_data_folder
+    from .helpers.core.project_path_utils import (
+        project_fallback_title_from_data_folder,
+        resolve_project_data_folder,
+    )
 except ImportError:
-    from helpers.core.project_path_utils import resolve_project_data_folder
+    from helpers.core.project_path_utils import (
+        project_fallback_title_from_data_folder,
+        resolve_project_data_folder,
+    )
 
 try:
     from .helpers.core.parser import (
@@ -4398,6 +4404,8 @@ class DialogueVisualEditor(
             self.setWindowTitle(APP_TITLE)
             return
         project_title = self._window_game_title()
+        if not project_title:
+            project_title = project_fallback_title_from_data_folder(self.data_dir)
         if not project_title:
             project_title = self.data_dir.name
         dirty_suffix = " *" if any(session.dirty for session in self.sessions.values()) else ""

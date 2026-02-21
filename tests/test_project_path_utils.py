@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 
 from dialogue_visual_editor.helpers.core.project_path_utils import (
+    project_fallback_title_from_data_folder,
+    project_root_folder_for_data_folder,
     resolve_project_data_folder,
 )
 
@@ -69,6 +71,34 @@ class ProjectPathUtilsTests(unittest.TestCase):
             selected.mkdir(parents=True, exist_ok=True)
             resolved = resolve_project_data_folder(selected)
             self.assertEqual(resolved, selected.resolve())
+
+    def test_project_root_folder_for_rpg_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "MyGame" / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            root = project_root_folder_for_data_folder(data_dir)
+            self.assertEqual(root, (Path(tmpdir) / "MyGame").resolve())
+
+    def test_project_root_folder_for_www_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "MyGame" / "www" / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            root = project_root_folder_for_data_folder(data_dir)
+            self.assertEqual(root, (Path(tmpdir) / "MyGame").resolve())
+
+    def test_project_root_folder_for_tyrano_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "GameX" / "resources" / "app" / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            root = project_root_folder_for_data_folder(data_dir)
+            self.assertEqual(root, (Path(tmpdir) / "GameX").resolve())
+
+    def test_project_fallback_title_uses_root_name_instead_of_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "MyRoot" / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            title = project_fallback_title_from_data_folder(data_dir)
+            self.assertEqual(title, "MyRoot")
 
 
 if __name__ == "__main__":

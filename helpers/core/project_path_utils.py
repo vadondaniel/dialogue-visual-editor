@@ -109,3 +109,41 @@ def resolve_project_data_folder(selected_folder: Path) -> Path:
         return selected_folder.resolve()
     except Exception:
         return selected_folder
+
+
+def project_root_folder_for_data_folder(data_folder: Path) -> Path:
+    try:
+        resolved = data_folder.resolve()
+    except Exception:
+        resolved = data_folder
+
+    lowered_name = resolved.name.strip().lower()
+    if lowered_name == "scenario":
+        return project_root_folder_for_data_folder(resolved.parent)
+    if lowered_name != "data":
+        return resolved
+
+    parent = resolved.parent
+    if parent == resolved:
+        return resolved
+
+    parent_name = parent.name.strip().lower()
+    if parent_name == "www":
+        grandparent = parent.parent
+        return grandparent if grandparent != parent else parent
+    if parent_name == "app" and parent.parent.name.strip().lower() == "resources":
+        game_root = parent.parent.parent
+        return game_root if game_root != parent.parent else parent.parent
+    return parent
+
+
+def project_fallback_title_from_data_folder(data_folder: Path) -> str:
+    root = project_root_folder_for_data_folder(data_folder)
+    title = root.name.strip()
+    if title and title.lower() != "data":
+        return title
+
+    parent_title = root.parent.name.strip()
+    if parent_title:
+        return parent_title
+    return title or data_folder.name.strip()
