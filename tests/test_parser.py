@@ -7,6 +7,7 @@ from pathlib import Path
 from dialogue_visual_editor.helpers.core.parser import (
     parse_dialogue_data,
     parse_dialogue_file,
+    tyrano_script_source_from_data,
 )
 
 
@@ -352,6 +353,50 @@ class ParserTests(unittest.TestCase):
             getattr(note_segments[0], "json_text_path", ()),
             (1, "note"),
         )
+
+    def test_parse_tyrano_script_file_extracts_dialogue_and_tag_text(self) -> None:
+        source = (
+            "[tb_start_text mode=1 ]\n"
+            "#NPC\n"
+            "こんにちは[p]\n"
+            "[_tb_end_text]\n"
+            "[glink text=\"選択肢\" target=\"*A\"]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene1.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        tag_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+        ]
+        self.assertEqual(len(dialogue_segments), 1)
+        self.assertEqual(dialogue_segments[0].lines, ["#NPC", "こんにちは[p]"])
+        self.assertEqual(len(tag_segments), 1)
+        self.assertEqual(tag_segments[0].lines, ["選択肢"])
+
+    def test_tyrano_script_source_from_data_round_trip(self) -> None:
+        source = (
+            ";comment\n"
+            "[tb_start_text mode=1 ]\n"
+            "「一行目」[p]\n"
+            "「二行目」[p]\n"
+            "[_tb_end_text]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene2.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        rebuilt_source = tyrano_script_source_from_data(session.data)
+        self.assertEqual(rebuilt_source, source)
 
 if __name__ == "__main__":
     unittest.main()

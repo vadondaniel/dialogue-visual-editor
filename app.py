@@ -153,6 +153,19 @@ try:
 except ImportError:
     from helpers.core.actor_name_change_utils import collect_actor_name_change_entries
 
+try:
+    from .helpers.core.parser import (
+        is_tyrano_script_path,
+        load_plugins_js_file,
+        load_tyrano_script_file,
+    )
+except ImportError:
+    from helpers.core.parser import (
+        is_tyrano_script_path,
+        load_plugins_js_file,
+        load_tyrano_script_file,
+    )
+
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
 FILE_LIST_SECTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 FILE_LIST_SCOPE_ROLE = int(Qt.ItemDataRole.UserRole) + 2
@@ -4407,11 +4420,66 @@ class DialogueVisualEditor(
                 candidate_js_dirs.append(js_dir)
         return candidate_js_dirs
 
+    def _candidate_tyrano_scenario_dirs(self, folder: Path) -> list[Path]:
+        candidates: list[Path] = []
+        seen: set[Path] = set()
+
+        def register(candidate: Path) -> None:
+            try:
+                resolved = candidate.resolve()
+            except Exception:
+                resolved = candidate
+            if resolved in seen:
+                return
+            seen.add(resolved)
+            candidates.append(candidate)
+
+        for base in (folder, folder.parent, folder.parent.parent):
+            if base.name.strip().lower() == "scenario":
+                register(base)
+            register(base / "scenario")
+            register(base / "data" / "scenario")
+            register(base / "resources" / "app" / "data" / "scenario")
+            register(base / "app" / "data" / "scenario")
+        return candidates
+
+    def _resolve_tyrano_scenario_dir(self, folder: Path) -> Optional[Path]:
+        for candidate in self._candidate_tyrano_scenario_dirs(folder):
+            if not candidate.is_dir():
+                continue
+            has_script = False
+            try:
+                next(candidate.glob("*.ks"))
+                has_script = True
+            except StopIteration:
+                has_script = False
+            except Exception:
+                has_script = False
+            if not has_script:
+                try:
+                    next(candidate.rglob("*.ks"))
+                    has_script = True
+                except StopIteration:
+                    has_script = False
+                except Exception:
+                    has_script = False
+            if has_script:
+                return candidate
+        return None
+
+    def _has_tyrano_runtime(self, folder: Path) -> bool:
+        runtime_candidates = [
+            folder / "tyrano" / "tyrano.js",
+            folder / "resources" / "app" / "tyrano" / "tyrano.js",
+            folder / "app" / "tyrano" / "tyrano.js",
+            folder / "data" / "system" / "Config.tjs",
+            folder / "resources" / "app" / "data" / "system" / "Config.tjs",
+            folder / "app" / "data" / "system" / "Config.tjs",
+        ]
+        return any(path.is_file() for path in runtime_candidates)
+
     def _detect_rpg_maker_engine(self, folder: Path) -> str:
         candidate_js_dirs = self._candidate_js_dirs(folder)
-        if not candidate_js_dirs:
-            return "unknown"
-
         has_mz_runtime = any(
             (js_dir / name).is_file()
             for js_dir in candidate_js_dirs
@@ -4422,6 +4490,12 @@ class DialogueVisualEditor(
             for js_dir in candidate_js_dirs
             for name in ("rpg_objects.js", "rpg_core.js")
         )
+        tyrano_scenario_dir = self._resolve_tyrano_scenario_dir(folder)
+        has_tyrano_runtime = self._has_tyrano_runtime(folder)
+        if tyrano_scenario_dir is not None and (
+            has_tyrano_runtime or ((not has_mv_runtime) and (not has_mz_runtime))
+        ):
+            return "tyrano"
         if has_mz_runtime and not has_mv_runtime:
             return "mz"
         if has_mv_runtime and not has_mz_runtime:
@@ -4586,6 +4660,8 @@ class DialogueVisualEditor(
         return None, ""
 
     def _infer_project_message_font_size(self, folder: Path) -> tuple[int, str]:
+        if self.detected_rpg_engine == "tyrano":
+            return _MV_DEFAULT_MESSAGE_FONT_SIZE, "TyranoScript default"
         system_font_size, system_source = self._font_size_from_system_json(folder)
         runtime_font_size, runtime_source = self._font_size_from_runtime_scripts(
             folder,
@@ -4611,6 +4687,8 @@ class DialogueVisualEditor(
             return "MV"
         if engine == "mz":
             return "MZ"
+        if engine == "tyrano":
+            return "TyranoScript"
         return "Unknown"
 
     def _collect_project_ui_settings(self) -> dict[str, Any]:
@@ -5158,6 +5236,7 @@ class DialogueVisualEditor(
             "plugin_command_text",
             "note_text",
             "actor_name_alias",
+            "tyrano_tag_text",
         }
 
     def _session_supports_dialogue_scope(self, session: FileSession) -> bool:
@@ -5380,7 +5459,32 @@ class DialogueVisualEditor(
             data_dir / "js" / "plugins.js",
         ]
 
+    def _collect_tyrano_script_paths(self, data_dir: Path) -> list[Path]:
+        scenario_dir = self._resolve_tyrano_scenario_dir(data_dir)
+        search_root = scenario_dir if scenario_dir is not None else data_dir
+        supported_files: list[Path] = []
+        seen: set[Path] = set()
+        for path in search_root.rglob("*.ks"):
+            if not path.is_file():
+                continue
+            if path.name.endswith(".bak"):
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            supported_files.append(resolved)
+        supported_files.sort(
+            key=lambda path: natural_sort_key(self._relative_path(path))
+        )
+        return supported_files
+
     def _collect_supported_file_paths(self, data_dir: Path) -> list[Path]:
+        if self.detected_rpg_engine == "tyrano":
+            tyrano_files = self._collect_tyrano_script_paths(data_dir)
+            if tyrano_files:
+                return tyrano_files
+
         excluded_names = {
             TRANSLATION_STATE_FILENAME,
         }
@@ -5430,7 +5534,7 @@ class DialogueVisualEditor(
         return working_session
 
     def _json_backup_counterpart_for_path(self, path: Path) -> Optional[Path]:
-        if path.suffix.lower() != ".json":
+        if path.suffix.lower() not in {".json", ".ks", ".js"}:
             return None
         backup_path = path.with_suffix(path.suffix + ".bak")
         if backup_path.is_file():
@@ -5442,6 +5546,12 @@ class DialogueVisualEditor(
         source_path: Path,
         virtual_path: Path,
     ) -> FileSession:
+        if is_tyrano_script_path(virtual_path):
+            decoded = load_tyrano_script_file(source_path)
+            return parse_dialogue_data(virtual_path, decoded)
+        if virtual_path.name.strip().lower() == "plugins.js":
+            decoded = load_plugins_js_file(source_path)
+            return parse_dialogue_data(virtual_path, decoded)
         with source_path.open("r", encoding="utf-8") as src:
             decoded = json.load(src)
         return parse_dialogue_data(virtual_path, decoded)
@@ -6093,6 +6203,9 @@ class DialogueVisualEditor(
             elif self.detected_rpg_engine == "mz":
                 infer_default = False
                 infer_reason = "MZ project detected"
+            elif self.detected_rpg_engine == "tyrano":
+                infer_default = False
+                infer_reason = "TyranoScript project detected"
             else:
                 infer_default = not has_explicit_speakers
                 if infer_default:

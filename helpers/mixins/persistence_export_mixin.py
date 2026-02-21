@@ -19,7 +19,13 @@ from ..core.models import (
     DialogueSegment,
     FileSession,
 )
-from ..core.parser import is_plugins_js_path, plugins_js_source_from_data
+from ..core.parser import (
+    is_plugins_js_path,
+    is_tyrano_script_data,
+    is_tyrano_script_path,
+    plugins_js_source_from_data,
+    tyrano_script_source_from_data,
+)
 from ..core.script_message_utils import (
     build_game_message_call,
     build_game_message_templated_call,
@@ -890,7 +896,188 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
         return list(changed_sessions.values())
 
+    @staticmethod
+    def _tyrano_body_item_kind_for_line(line: str) -> str:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return "speaker"
+        if stripped and (not stripped.startswith(("[", ";", "*", "@", "//"))):
+            return "text"
+        return "raw"
+
+    @staticmethod
+    def _escape_tyrano_tag_attribute_value(value: str, quote_char: str) -> str:
+        escaped = value.replace("\\", "\\\\")
+        if quote_char == "'":
+            escaped = escaped.replace("'", "\\'")
+        else:
+            escaped = escaped.replace('"', '\\"')
+        escaped = escaped.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
+        return escaped
+
+    def _apply_session_to_tyrano_script_data(self, session: FileSession) -> bool:
+        if not is_tyrano_script_data(session.data):
+            return False
+        raw_chunks = session.data.get("__dve_tyrano_script_chunks__")
+        if not isinstance(raw_chunks, list):
+            return True
+
+        for segment in session.segments:
+            if segment.segment_kind != "tyrano_dialogue":
+                continue
+            chunk_index_raw = getattr(segment, "tyrano_chunk_index", None)
+            if not isinstance(chunk_index_raw, int):
+                continue
+            if chunk_index_raw < 0 or chunk_index_raw >= len(raw_chunks):
+                continue
+            chunk_raw = raw_chunks[chunk_index_raw]
+            if not isinstance(chunk_raw, dict):
+                continue
+            chunk_kind_raw = chunk_raw.get("kind")
+            chunk_kind = (
+                chunk_kind_raw.strip().lower()
+                if isinstance(chunk_kind_raw, str)
+                else ""
+            )
+            if chunk_kind != "dialogue_block":
+                continue
+            body_items_raw = chunk_raw.get("body_items")
+            if not isinstance(body_items_raw, list):
+                continue
+            body_items: list[dict[str, str]] = []
+            for body_item in body_items_raw:
+                if not isinstance(body_item, dict):
+                    continue
+                line_raw = body_item.get("line")
+                line = line_raw if isinstance(line_raw, str) else ""
+                kind_raw = body_item.get("kind")
+                kind = (
+                    kind_raw.strip().lower()
+                    if isinstance(kind_raw, str)
+                    else self._tyrano_body_item_kind_for_line(line)
+                )
+                body_items.append({"kind": kind, "line": line})
+            editable_indexes_raw = getattr(
+                segment, "tyrano_editable_item_indexes", ()
+            )
+            editable_indexes = (
+                [int(index) for index in editable_indexes_raw if isinstance(index, int)]
+                if isinstance(editable_indexes_raw, (list, tuple))
+                else []
+            )
+            editable_indexes = [
+                index
+                for index in editable_indexes
+                if 0 <= index < len(body_items)
+            ]
+            if not editable_indexes:
+                editable_indexes = [
+                    index
+                    for index, body_item in enumerate(body_items)
+                    if body_item.get("kind") in {"speaker", "text"}
+                ]
+
+            incoming_lines_raw = list(segment.lines) if segment.lines else [""]
+            incoming_lines = [
+                line if isinstance(line, str) else ("" if line is None else str(line))
+                for line in incoming_lines_raw
+            ] or [""]
+            replacement_items = [
+                {
+                    "kind": self._tyrano_body_item_kind_for_line(line),
+                    "line": line,
+                }
+                for line in incoming_lines
+            ]
+            if editable_indexes:
+                first_index = min(editable_indexes)
+                last_index = max(editable_indexes)
+                sorted_indexes = sorted(editable_indexes)
+                is_contiguous = sorted_indexes == list(range(first_index, last_index + 1))
+                if is_contiguous:
+                    body_items[first_index:last_index + 1] = replacement_items
+                    editable_indexes = list(
+                        range(first_index, first_index + len(replacement_items))
+                    )
+                else:
+                    for idx, replacement_item in zip(sorted_indexes, replacement_items):
+                        if 0 <= idx < len(body_items):
+                            body_items[idx] = replacement_item
+                    extra_items = replacement_items[len(sorted_indexes):]
+                    if extra_items:
+                        insert_at = sorted_indexes[-1] + 1
+                        for offset, extra_item in enumerate(extra_items):
+                            body_items.insert(insert_at + offset, extra_item)
+                        editable_indexes.extend(
+                            range(insert_at, insert_at + len(extra_items))
+                        )
+                    elif len(replacement_items) < len(sorted_indexes):
+                        for idx in sorted_indexes[len(replacement_items):]:
+                            if 0 <= idx < len(body_items):
+                                body_items[idx]["line"] = ""
+                                body_items[idx]["kind"] = "text"
+            else:
+                insert_at = len(body_items)
+                body_items.extend(replacement_items)
+                editable_indexes = list(range(insert_at, insert_at + len(replacement_items)))
+            chunk_raw["body_items"] = body_items
+            setattr(segment, "tyrano_editable_item_indexes", tuple(editable_indexes))
+
+        for segment in session.segments:
+            if segment.segment_kind != "tyrano_tag_text":
+                continue
+            chunk_index_raw = getattr(segment, "tyrano_chunk_index", None)
+            if not isinstance(chunk_index_raw, int):
+                continue
+            if chunk_index_raw < 0 or chunk_index_raw >= len(raw_chunks):
+                continue
+            chunk_raw = raw_chunks[chunk_index_raw]
+            if not isinstance(chunk_raw, dict):
+                continue
+            chunk_kind_raw = chunk_raw.get("kind")
+            chunk_kind = (
+                chunk_kind_raw.strip().lower()
+                if isinstance(chunk_kind_raw, str)
+                else ""
+            )
+            if chunk_kind != "raw_line":
+                continue
+            line_raw = chunk_raw.get("line")
+            line = line_raw if isinstance(line_raw, str) else ""
+            span_raw = getattr(segment, "tyrano_tag_text_span", ())
+            if (
+                not isinstance(span_raw, (tuple, list))
+                or len(span_raw) != 2
+                or not isinstance(span_raw[0], int)
+                or not isinstance(span_raw[1], int)
+            ):
+                continue
+            value_start = span_raw[0]
+            value_end = span_raw[1]
+            if value_start < 0 or value_end < value_start or value_end > len(line):
+                continue
+            quote_raw = getattr(segment, "tyrano_tag_text_quote", '"')
+            quote_char = (
+                quote_raw if isinstance(quote_raw, str) and quote_raw in {'"', "'"} else '"'
+            )
+            joined_value = "[r]".join(segment.lines) if segment.lines else ""
+            escaped_value = self._escape_tyrano_tag_attribute_value(
+                joined_value,
+                quote_char,
+            )
+            chunk_raw["line"] = f"{line[:value_start]}{escaped_value}{line[value_end:]}"
+            setattr(
+                segment,
+                "tyrano_tag_text_span",
+                (value_start, value_start + len(escaped_value)),
+            )
+
+        session.data["__dve_tyrano_script_chunks__"] = raw_chunks
+        return True
+
     def _apply_session_to_json(self, session: FileSession) -> None:
+        if self._apply_session_to_tyrano_script_data(session):
+            return
         is_name_index_session = (
             bool(getattr(session, "is_name_index_session", False))
             or bool(getattr(session, "is_actor_index_session", False))
@@ -1634,6 +1821,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if is_plugins_js_path(path):
                     decoded_payload = json.loads(payload)
                     output_text = plugins_js_source_from_data(decoded_payload)
+                elif is_tyrano_script_path(path):
+                    decoded_payload = json.loads(payload)
+                    output_text = tyrano_script_source_from_data(decoded_payload)
                 with path.open("w", encoding="utf-8") as dst:
                     dst.write(output_text)
                 applied += 1

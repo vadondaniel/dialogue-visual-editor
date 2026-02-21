@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,10 @@ from dialogue_visual_editor.helpers.core.models import (
     CommandToken,
     DialogueSegment,
     FileSession,
+)
+from dialogue_visual_editor.helpers.core.parser import (
+    parse_dialogue_file,
+    tyrano_script_source_from_data,
 )
 from dialogue_visual_editor.helpers.mixins.persistence_export_mixin import (
     PersistenceExportMixin,
@@ -491,6 +496,41 @@ class PersistenceExportMixinTests(unittest.TestCase):
             session.data["events"][1]["note"],
             "<LB:\\i[150]アズミさん>",
         )
+
+    def test_apply_session_to_json_updates_tyrano_dialogue_and_tag_text(self) -> None:
+        harness = _Harness()
+        source = (
+            "[tb_start_text mode=1 ]\n"
+            "#NPC\n"
+            "こんにちは[p]\n"
+            "[_tb_end_text]\n"
+            "[glink text=\"選択肢A\" target=\"*A\"]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        )
+        tag_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+        )
+        dialogue_segment.lines = ["#Narrator", "Hello[p]", "World[p]"]
+        tag_segment.lines = ["Choice A"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("#Narrator", rebuilt)
+        self.assertIn("Hello[p]", rebuilt)
+        self.assertIn("World[p]", rebuilt)
+        self.assertIn('text="Choice A"', rebuilt)
 
     def test_apply_session_to_json_rebuilds_command_list(self) -> None:
         harness = _Harness()

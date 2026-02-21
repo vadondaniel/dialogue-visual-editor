@@ -65,6 +65,11 @@ _PLUGINS_JS_SUFFIX_KEY = "__dve_plugins_js_suffix__"
 _PLUGINS_JS_ARRAY_KEY = "__dve_plugins_js_array__"
 _PLUGINS_JS_DEFAULT_PREFIX = "var $plugins =\n"
 _PLUGINS_JS_DEFAULT_SUFFIX = ";\n"
+_TYRANO_SCRIPT_MARKER_KEY = "__dve_tyrano_script_marker__"
+_TYRANO_SCRIPT_MARKER_VALUE = "tyrano_script"
+_TYRANO_SCRIPT_NEWLINE_KEY = "__dve_tyrano_script_newline__"
+_TYRANO_SCRIPT_HAS_TRAILING_NEWLINE_KEY = "__dve_tyrano_script_has_trailing_newline__"
+_TYRANO_SCRIPT_CHUNKS_KEY = "__dve_tyrano_script_chunks__"
 _MAP_FILE_NAME_RE = re.compile(r"^map\d+\.json$", re.IGNORECASE)
 _NOTE_JAPANESE_CHAR_RE = re.compile(
     r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
@@ -97,6 +102,10 @@ _PLUGIN_ARG_ALIGNMENT_WORDS: set[str] = {
 
 def is_plugins_js_path(path: Path) -> bool:
     return path.name.strip().lower() == "plugins.js"
+
+
+def is_tyrano_script_path(path: Path) -> bool:
+    return path.suffix.strip().lower() == ".ks"
 
 
 def _find_matching_bracket_end(source: str, start_index: int) -> int | None:
@@ -184,6 +193,323 @@ def plugins_js_source_from_data(data: Any) -> str:
     plugin_array = array_raw if isinstance(array_raw, list) else []
     array_payload = json.dumps(plugin_array, ensure_ascii=False, indent=2)
     return f"{prefix}{array_payload}{suffix}"
+
+
+def _read_text_file_with_fallback_encodings(path: Path) -> str:
+    last_error: Exception | None = None
+    for encoding in ("utf-8-sig", "utf-8", "cp932"):
+        try:
+            return path.read_text(encoding=encoding)
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    raise ValueError(f"Failed to decode text file: {path}")
+
+
+def _is_tyrano_dialogue_block_start(line: str) -> bool:
+    lowered = line.strip().lower()
+    return lowered.startswith("[tb_start_text")
+
+
+def _is_tyrano_dialogue_block_end(line: str) -> bool:
+    lowered = line.strip().lower()
+    return lowered.startswith("[_tb_end_text")
+
+
+def _is_tyrano_dialogue_text_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(("#", ";", "[", "*", "@", "//")):
+        return False
+    return True
+
+
+def _tyrano_body_item_kind_for_line(line: str) -> str:
+    stripped = line.strip()
+    if stripped.startswith("#"):
+        return "speaker"
+    if _is_tyrano_dialogue_text_line(stripped):
+        return "text"
+    return "raw"
+
+
+def _parse_tyrano_script_source(source: str) -> dict[str, Any]:
+    newline = "\r\n" if "\r\n" in source else "\n"
+    has_trailing_newline = source.endswith(("\n", "\r"))
+    source_lines = source.splitlines()
+    chunks: list[dict[str, Any]] = []
+
+    index = 0
+    while index < len(source_lines):
+        line = source_lines[index]
+        if not _is_tyrano_dialogue_block_start(line):
+            chunks.append({"kind": "raw_line", "line": line})
+            index += 1
+            continue
+
+        end_index: int | None = None
+        search_index = index + 1
+        while search_index < len(source_lines):
+            if _is_tyrano_dialogue_block_end(source_lines[search_index]):
+                end_index = search_index
+                break
+            search_index += 1
+
+        if end_index is None:
+            chunks.append({"kind": "raw_line", "line": line})
+            index += 1
+            continue
+
+        body_items: list[dict[str, str]] = []
+        for body_line in source_lines[index + 1: end_index]:
+            body_items.append(
+                {
+                    "kind": _tyrano_body_item_kind_for_line(body_line),
+                    "line": body_line,
+                }
+            )
+        chunks.append(
+            {
+                "kind": "dialogue_block",
+                "start_line": line,
+                "body_items": body_items,
+                "end_line": source_lines[end_index],
+            }
+        )
+        index = end_index + 1
+
+    return {
+        _TYRANO_SCRIPT_MARKER_KEY: _TYRANO_SCRIPT_MARKER_VALUE,
+        _TYRANO_SCRIPT_NEWLINE_KEY: newline,
+        _TYRANO_SCRIPT_HAS_TRAILING_NEWLINE_KEY: has_trailing_newline,
+        _TYRANO_SCRIPT_CHUNKS_KEY: chunks,
+    }
+
+
+def load_tyrano_script_file(path: Path) -> dict[str, Any]:
+    source = _read_text_file_with_fallback_encodings(path)
+    return _parse_tyrano_script_source(source)
+
+
+def is_tyrano_script_data(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    marker = data.get(_TYRANO_SCRIPT_MARKER_KEY)
+    if marker != _TYRANO_SCRIPT_MARKER_VALUE:
+        return False
+    return isinstance(data.get(_TYRANO_SCRIPT_CHUNKS_KEY), list)
+
+
+def _coerce_tyrano_script_chunks(data: Any) -> list[dict[str, Any]]:
+    if not is_tyrano_script_data(data):
+        return []
+    raw_chunks = data.get(_TYRANO_SCRIPT_CHUNKS_KEY)
+    if not isinstance(raw_chunks, list):
+        return []
+    chunks: list[dict[str, Any]] = []
+    for chunk in raw_chunks:
+        if isinstance(chunk, dict):
+            chunks.append(chunk)
+    return chunks
+
+
+def tyrano_script_source_from_data(data: Any) -> str:
+    if not is_tyrano_script_data(data):
+        raise ValueError("Payload is not recognized TyranoScript structured data.")
+
+    newline_raw = data.get(_TYRANO_SCRIPT_NEWLINE_KEY)
+    newline = newline_raw if isinstance(newline_raw, str) and newline_raw else "\n"
+    has_trailing_newline = bool(data.get(_TYRANO_SCRIPT_HAS_TRAILING_NEWLINE_KEY, True))
+    chunks = _coerce_tyrano_script_chunks(data)
+
+    rebuilt_lines: list[str] = []
+    for chunk in chunks:
+        kind_raw = chunk.get("kind")
+        kind = kind_raw.strip().lower() if isinstance(kind_raw, str) else ""
+        if kind == "dialogue_block":
+            start_line_raw = chunk.get("start_line")
+            end_line_raw = chunk.get("end_line")
+            start_line = start_line_raw if isinstance(start_line_raw, str) else ""
+            end_line = end_line_raw if isinstance(end_line_raw, str) else ""
+            rebuilt_lines.append(start_line)
+            body_items_raw = chunk.get("body_items")
+            if isinstance(body_items_raw, list):
+                for body_item in body_items_raw:
+                    if not isinstance(body_item, dict):
+                        continue
+                    body_line_raw = body_item.get("line")
+                    body_line = body_line_raw if isinstance(body_line_raw, str) else ""
+                    rebuilt_lines.append(body_line)
+            rebuilt_lines.append(end_line)
+            continue
+
+        line_raw = chunk.get("line")
+        line = line_raw if isinstance(line_raw, str) else ""
+        rebuilt_lines.append(line)
+
+    rebuilt = newline.join(rebuilt_lines)
+    if has_trailing_newline and rebuilt_lines:
+        rebuilt += newline
+    return rebuilt
+
+
+def _unescape_tyrano_tag_attribute_value(value: str) -> str:
+    if not value:
+        return ""
+    result: list[str] = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char != "\\" or index + 1 >= len(value):
+            result.append(char)
+            index += 1
+            continue
+        next_char = value[index + 1]
+        if next_char in {'\\', '"', "'"}:
+            result.append(next_char)
+            index += 2
+            continue
+        result.append(char)
+        result.append(next_char)
+        index += 2
+    return "".join(result)
+
+
+def _extract_tyrano_tag_attribute_value(
+    line: str,
+    attribute_name: str,
+) -> tuple[int, int, str, str] | None:
+    lowered = line.lower()
+    attr_key = attribute_name.strip().lower()
+    if not attr_key:
+        return None
+    search_from = 0
+    while True:
+        attr_index = lowered.find(attr_key, search_from)
+        if attr_index < 0:
+            return None
+        key_start = attr_index
+        key_end = attr_index + len(attr_key)
+        before_char = line[key_start - 1] if key_start > 0 else ""
+        after_char = line[key_end] if key_end < len(line) else ""
+        if (
+            (before_char and (before_char.isalnum() or before_char in {"_", "-"}))
+            or (after_char and (after_char.isalnum() or after_char in {"_", "-"}))
+        ):
+            search_from = key_end
+            continue
+        index = key_end
+        while index < len(line) and line[index].isspace():
+            index += 1
+        if index >= len(line) or line[index] != "=":
+            search_from = key_end
+            continue
+        index += 1
+        while index < len(line) and line[index].isspace():
+            index += 1
+        if index >= len(line):
+            return None
+        quote_char = line[index]
+        if quote_char not in {'"', "'"}:
+            search_from = key_end
+            continue
+        value_start = index + 1
+        value_index = value_start
+        while value_index < len(line):
+            candidate = line[value_index]
+            if candidate == "\\":
+                value_index += 2
+                continue
+            if candidate == quote_char:
+                raw_value = line[value_start:value_index]
+                decoded = _unescape_tyrano_tag_attribute_value(raw_value)
+                return value_start, value_index, decoded, quote_char
+            value_index += 1
+        return None
+
+
+def _build_tyrano_dialogue_segments(path: Path, data: dict[str, Any]) -> list[DialogueSegment]:
+    chunks = _coerce_tyrano_script_chunks(data)
+    segments: list[DialogueSegment] = []
+    block_index = 1
+    for chunk_index, chunk in enumerate(chunks):
+        kind_raw = chunk.get("kind")
+        kind = kind_raw.strip().lower() if isinstance(kind_raw, str) else ""
+        if kind != "dialogue_block":
+            continue
+        body_items_raw = chunk.get("body_items")
+        if not isinstance(body_items_raw, list):
+            continue
+        editable_item_indexes: list[int] = []
+        lines: list[str] = []
+        for body_index, body_item in enumerate(body_items_raw):
+            if not isinstance(body_item, dict):
+                continue
+            item_kind_raw = body_item.get("kind")
+            item_kind = item_kind_raw.strip().lower() if isinstance(item_kind_raw, str) else ""
+            if item_kind not in {"speaker", "text"}:
+                continue
+            item_line_raw = body_item.get("line")
+            item_line = item_line_raw if isinstance(item_line_raw, str) else ""
+            editable_item_indexes.append(body_index)
+            lines.append(item_line)
+        if not lines:
+            continue
+        uid = f"{path.name}:K:{block_index}"
+        block_index += 1
+        segment = DialogueSegment(
+            uid=uid,
+            context=f"{path.name} > text_block[{block_index - 1}]",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=list(lines),
+            original_lines=list(lines),
+            source_lines=list(lines),
+            segment_kind="tyrano_dialogue",
+        )
+        setattr(segment, "tyrano_chunk_index", chunk_index)
+        setattr(segment, "tyrano_editable_item_indexes", tuple(editable_item_indexes))
+        segments.append(segment)
+    return segments
+
+
+def _build_tyrano_tag_text_segments(path: Path, data: dict[str, Any]) -> list[DialogueSegment]:
+    chunks = _coerce_tyrano_script_chunks(data)
+    segments: list[DialogueSegment] = []
+    tag_index = 1
+    for chunk_index, chunk in enumerate(chunks):
+        kind_raw = chunk.get("kind")
+        kind = kind_raw.strip().lower() if isinstance(kind_raw, str) else ""
+        if kind != "raw_line":
+            continue
+        line_raw = chunk.get("line")
+        line = line_raw if isinstance(line_raw, str) else ""
+        stripped = line.strip()
+        if not stripped.startswith("["):
+            continue
+        attr_payload = _extract_tyrano_tag_attribute_value(line, "text")
+        if attr_payload is None:
+            continue
+        value_start, value_end, decoded_value, quote_char = attr_payload
+        lines = split_lines_preserve_empty(decoded_value)
+        uid = f"{path.name}:KT:{tag_index}"
+        segment = DialogueSegment(
+            uid=uid,
+            context=f"{path.name} > tag_text[{tag_index}]",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=list(lines),
+            original_lines=list(lines),
+            source_lines=list(lines),
+            segment_kind="tyrano_tag_text",
+        )
+        setattr(segment, "tyrano_chunk_index", chunk_index)
+        setattr(segment, "tyrano_tag_text_span", (value_start, value_end))
+        setattr(segment, "tyrano_tag_text_quote", quote_char)
+        segments.append(segment)
+        tag_index += 1
+    return segments
 
 
 def _build_plugins_text_segments(path: Path, data: dict[str, Any]) -> list[DialogueSegment]:
@@ -621,6 +947,24 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
         setattr(plugin_session, "name_index_label", "Plugin")
         return plugin_session
 
+    if is_tyrano_script_data(data):
+        dialogue_segments = _build_tyrano_dialogue_segments(path, data)
+        tag_text_segments = _build_tyrano_tag_text_segments(path, data)
+        tyrano_segments = dialogue_segments + tag_text_segments
+        tyrano_segments.sort(
+            key=lambda segment: (
+                int(getattr(segment, "tyrano_chunk_index", 0)),
+                0 if segment.segment_kind == "tyrano_dialogue" else 1,
+            )
+        )
+        tyrano_session = FileSession(
+            path=path,
+            data=data,
+            bundles=[],
+            segments=tyrano_segments,
+        )
+        return tyrano_session
+
     bundles: list[CommandBundle] = []
     segments: list[DialogueSegment] = []
     list_counter = 0
@@ -999,6 +1343,9 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
 def parse_dialogue_file(path: Path) -> FileSession:
     if is_plugins_js_path(path):
         data = load_plugins_js_file(path)
+        return parse_dialogue_data(path, data)
+    if is_tyrano_script_path(path):
+        data = load_tyrano_script_file(path)
         return parse_dialogue_data(path, data)
     with path.open("r", encoding="utf-8") as src:
         data = json.load(src)

@@ -998,6 +998,7 @@ class MassTranslateDialog(QDialog):
             "plugin_command_text",
             "note_text",
             "actor_name_alias",
+            "tyrano_tag_text",
         }:
             return "misc"
         return "dialogue"
