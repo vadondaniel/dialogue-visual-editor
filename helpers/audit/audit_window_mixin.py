@@ -942,6 +942,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_sort_combo.currentIndexChanged.connect(
             lambda _index: self._refresh_audit_consistency_panel()
         )
+        consistency_target_edit.textChanged.connect(
+            self._refresh_audit_consistency_target_overflow_status
+        )
         consistency_neighbors_check.toggled.connect(
             lambda checked: (
                 consistency_neighbors_panel.setVisible(bool(checked)),

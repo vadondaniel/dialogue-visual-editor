@@ -7,11 +7,17 @@ import re
 from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor
-from PySide6.QtWidgets import QListWidgetItem
+from PySide6.QtGui import QBrush, QColor, QTextCharFormat, QTextCursor
+from PySide6.QtWidgets import QListWidgetItem, QTextEdit
 
 from ..core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
-from ..core.text_utils import preview_text
+from ..core.text_utils import (
+    first_overflow_char_index,
+    preview_text,
+    split_lines_by_row_budget,
+    total_display_rows,
+    visible_length,
+)
 from ..mixins.presentation_mixins import is_dark_palette
 
 
@@ -448,6 +454,134 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             translation_preview = "(empty)"
         return f"{padded_locator} | {translation_preview}"
 
+    def _consistency_target_overflow_metrics_for_segment(
+        self,
+        segment: DialogueSegment,
+        target_lines: list[str],
+    ) -> dict[str, float | int | bool]:
+        thin_width_spin = getattr(self, "thin_width_spin", None)
+        wide_width_spin = getattr(self, "wide_width_spin", None)
+        max_lines_spin = getattr(self, "max_lines_spin", None)
+        thin_width = int(thin_width_spin.value()) if thin_width_spin is not None else 42
+        wide_width = int(wide_width_spin.value()) if wide_width_spin is not None else 48
+        width_limit = thin_width if segment.has_face else wide_width
+        row_limit = float(max(1, int(max_lines_spin.value()))) if max_lines_spin is not None else 4.0
+
+        max_visible = 0
+        for line in target_lines:
+            max_visible = max(max_visible, visible_length(line))
+        char_over = max(0, max_visible - width_limit)
+        row_total = total_display_rows(target_lines)
+        row_over = max(0.0, row_total - row_limit)
+        return {
+            "width_limit": width_limit,
+            "max_visible": max_visible,
+            "char_over": char_over,
+            "row_limit": row_limit,
+            "row_total": row_total,
+            "row_over": row_over,
+            "has_char_over": char_over > 0,
+            "has_row_over": row_over > 0.0,
+            "has_overflow": (char_over > 0) or (row_over > 0.0),
+        }
+
+    def _refresh_audit_consistency_target_overflow_status(self) -> None:
+        if self.audit_consistency_target_edit is None:
+            return
+
+        target_edit = self.audit_consistency_target_edit
+        target_edit.setExtraSelections([])
+        if self.audit_consistency_groups_list is None:
+            return
+        group_payload = self._audit_consistency_group_payload(
+            self.audit_consistency_groups_list.currentItem()
+        )
+        if group_payload is None:
+            return
+        entries = group_payload.get("entries")
+        if not isinstance(entries, list) or not entries:
+            return
+
+        segment: Optional[DialogueSegment] = None
+        selected_payload = (
+            self._audit_consistency_entry_payload(self.audit_consistency_entries_list.currentItem())
+            if self.audit_consistency_entries_list is not None
+            else None
+        )
+        if isinstance(selected_payload, dict):
+            resolved_selected = self._find_consistency_entry_segment(selected_payload)
+            if resolved_selected is not None:
+                _session, _index, segment = resolved_selected
+        if segment is None:
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                resolved = self._find_consistency_entry_segment(entry)
+                if resolved is None:
+                    continue
+                _session, _index, segment = resolved
+                break
+        if segment is None:
+            return
+
+        target_lines = self._normalize_translation_lines(target_edit.toPlainText())
+        metrics = self._consistency_target_overflow_metrics_for_segment(
+            segment,
+            target_lines,
+        )
+        width_limit = int(metrics["width_limit"])
+        row_limit = float(metrics["row_limit"])
+
+        dark = is_dark_palette()
+        overflow_bg = QColor("#7f1d1d" if dark else "#fee2e2")
+        overflow_fg = QColor("#fecaca" if dark else "#991b1b")
+        char_fmt = QTextCharFormat()
+        char_fmt.setBackground(overflow_bg)
+        char_fmt.setForeground(overflow_fg)
+        line_fmt = QTextCharFormat()
+        line_fmt.setBackground(overflow_bg)
+        line_fmt.setForeground(overflow_fg)
+
+        selections: list[QTextEdit.ExtraSelection] = []
+        document = target_edit.document()
+        for line_index, line_text in enumerate(target_lines):
+            overflow_idx = first_overflow_char_index(line_text, width_limit)
+            if overflow_idx is None or overflow_idx >= len(line_text):
+                continue
+            block = document.findBlockByNumber(line_index)
+            if not block.isValid():
+                continue
+            cursor = QTextCursor(document)
+            start_pos = block.position() + overflow_idx
+            cursor.setPosition(start_pos)
+            cursor.setPosition(
+                block.position() + len(line_text),
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            extra = QTextEdit.ExtraSelection()
+            extra.cursor = cursor
+            extra.format = char_fmt
+            selections.append(extra)
+
+        kept_lines, overflow_lines = split_lines_by_row_budget(target_lines, row_limit)
+        overflow_start = len(kept_lines) if overflow_lines else len(target_lines)
+        for line_index in range(overflow_start, len(target_lines)):
+            block = document.findBlockByNumber(line_index)
+            if not block.isValid():
+                continue
+            cursor = QTextCursor(document)
+            cursor.setPosition(block.position())
+            cursor.setPosition(
+                block.position() + len(target_lines[line_index]),
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            extra = QTextEdit.ExtraSelection()
+            extra.cursor = cursor
+            extra.format = line_fmt
+            selections.append(extra)
+
+        target_edit.setExtraSelections(selections)
+
     def _collect_audit_consistency_groups(
         self,
         only_inconsistent: bool,
@@ -564,6 +698,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         if group_payload is None:
             self.audit_consistency_source_edit.setPlainText("")
             self.audit_consistency_target_edit.setPlainText("")
+            self._refresh_audit_consistency_target_overflow_status()
             return
         source_text = group_payload.get("source_text")
         if isinstance(source_text, str):
@@ -575,6 +710,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         if not isinstance(entries, list):
             self.audit_consistency_source_edit.setPlainText("")
             self.audit_consistency_target_edit.setPlainText("")
+            self._refresh_audit_consistency_target_overflow_status()
             return
         variants = {
             str(entry.get("translation", ""))
@@ -664,9 +800,11 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     self.audit_consistency_target_edit.setPlainText(first_translation)
                 else:
                     self.audit_consistency_target_edit.setPlainText("")
+                self._refresh_audit_consistency_target_overflow_status()
                 self._refresh_audit_consistency_neighbors_preview()
                 return
         self.audit_consistency_target_edit.setPlainText("")
+        self._refresh_audit_consistency_target_overflow_status()
         self._refresh_audit_consistency_neighbors_preview()
 
     def _on_audit_consistency_entry_selected(self) -> None:
@@ -683,6 +821,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         translation = payload.get("translation")
         if isinstance(translation, str):
             self.audit_consistency_target_edit.setPlainText(translation)
+        self._refresh_audit_consistency_target_overflow_status()
         self._refresh_audit_consistency_neighbors_preview()
 
     def _refresh_audit_consistency_panel(self, preferred_source: Optional[str] = None) -> None:
@@ -729,6 +868,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             f"Duplicate groups: {len(groups)} | Duplicate entries: {total_entries}"
         )
         self._refresh_audit_consistency_entries()
+        self._refresh_audit_consistency_target_overflow_status()
         self._refresh_audit_consistency_neighbors_preview()
 
     def _use_most_common_audit_consistency_translation(self) -> None:
@@ -744,6 +884,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         if not isinstance(target, str):
             target = ""
         self.audit_consistency_target_edit.setPlainText(target)
+        self._refresh_audit_consistency_target_overflow_status()
         self.statusBar().showMessage("Loaded most-common translation as target.")
 
     def _go_to_selected_audit_consistency_entry(self) -> None:
