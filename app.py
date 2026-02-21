@@ -6196,7 +6196,6 @@ class DialogueVisualEditor(
                     self.file_list.blockSignals(False)
             return
         path, scope = file_ref
-        self.file_view_scope_by_path[path] = scope
         selected_item = self.file_items_scoped.get((path, scope))
         if selected_item is not None:
             self.file_items[path] = selected_item
