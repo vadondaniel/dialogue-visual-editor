@@ -1486,8 +1486,13 @@ class MassTranslateDialog(QDialog):
     def _scope_progress_color(done: int, total: int) -> QColor:
         if total <= 0:
             return QColor("#64748b")
-        ratio = done / total
-        return MassTranslateDialog._dynamic_progress_color(ratio)
+        if done >= total:
+            return QColor("#16a34a")
+        ratio = max(0.0, min(1.0, done / total))
+        # Keep incomplete scopes in a warm range so "almost done" stays visually
+        # distinct from fully-complete green scopes.
+        hue = int(10.0 + (70.0 * ratio))
+        return QColor.fromHsv(hue, 220, 214)
 
     def _overall_translation_progress_counts(self) -> tuple[int, int]:
         done = 0
