@@ -384,6 +384,34 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(len(tag_segments), 1)
         self.assertEqual(tag_segments[0].lines, ["選択肢"])
 
+    def test_parse_tyrano_script_file_splits_dialogue_by_page_break(self) -> None:
+        source = (
+            "[tb_start_text mode=3 ]\n"
+            "#NPC\n"
+            "「前半」[r]\n"
+            "「後半」[p][r]\n"
+            "「次のページ」[p][r]\n"
+            "[_tb_end_text]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_split.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(len(dialogue_segments), 2)
+        self.assertEqual(dialogue_segments[0].speaker_name, "NPC")
+        self.assertEqual(
+            dialogue_segments[0].lines,
+            ["「前半」[r]", "「後半」[p][r]"],
+        )
+        self.assertEqual(dialogue_segments[1].speaker_name, "NPC")
+        self.assertEqual(dialogue_segments[1].lines, ["「次のページ」[p][r]"])
+
     def test_parse_tyrano_script_blank_speaker_marker_is_no_speaker(self) -> None:
         source = (
             "[tb_start_text mode=1 ]\n"

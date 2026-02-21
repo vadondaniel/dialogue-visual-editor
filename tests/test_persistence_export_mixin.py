@@ -537,6 +537,38 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertIn("World[p]", rebuilt)
         self.assertIn('text="Choice A"', rebuilt)
 
+    def test_apply_session_to_json_updates_tyrano_multi_page_chunk(self) -> None:
+        harness = _Harness()
+        source = (
+            "[tb_start_text mode=3 ]\n"
+            "#NPC\n"
+            "「前半」[r]\n"
+            "「後半」[p][r]\n"
+            "「次のページ」[p][r]\n"
+            "[_tb_end_text]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_split.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(len(dialogue_segments), 2)
+        dialogue_segments[0].lines = ["First page[p][r]"]
+        dialogue_segments[1].lines = ["Second page[p][r]"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("First page[p][r]", rebuilt)
+        self.assertIn("Second page[p][r]", rebuilt)
+        self.assertNotIn("「前半」[r]", rebuilt)
+        self.assertNotIn("「次のページ」[p][r]", rebuilt)
+
     def test_apply_session_to_json_rebuilds_command_list(self) -> None:
         harness = _Harness()
         commands_ref: list[Any] = []
