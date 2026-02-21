@@ -128,6 +128,7 @@ class AuditNameConsistencyMixinTests(unittest.TestCase):
         group = groups[0]
         self.assertEqual(str(group["source_term"]), "レザーベスト")
         self.assertEqual(str(group["expected_tl"]), "Leather Vest")
+        self.assertEqual(str(group["misc_uid"]), "Armors.json:R:2:name")
         self.assertEqual(int(group["checked_count"]), 2)
         self.assertEqual(int(group["entry_count"]), 1)
 

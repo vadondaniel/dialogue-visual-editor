@@ -359,6 +359,7 @@ class DialogueVisualEditor(
         self.audit_name_consistency_replace_btn: Optional[QPushButton] = None
         self.audit_name_consistency_status_label: Optional[QLabel] = None
         self.audit_name_consistency_goto_btn: Optional[QPushButton] = None
+        self.audit_name_consistency_goto_misc_btn: Optional[QPushButton] = None
         self.mass_translate_dialog: Optional[MassTranslateDialog] = None
         self.audit_cache_generation = 0
         self.audit_result_batch_size = 16

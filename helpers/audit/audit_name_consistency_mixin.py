@@ -290,6 +290,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                     "expected_tl": expected_tl,
                     "misc_context": misc_context,
                     "misc_path": misc_path,
+                    "misc_uid": str(glossary_entry.get("misc_uid", "")),
                     "misc_entry": misc_entry,
                     "checked_count": checked_count,
                     "entry_count": len(mismatch_entries),
@@ -459,6 +460,25 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 expected_tl = expected_raw.strip()
         can_apply = bool(payload is not None and find_text and expected_tl)
         self.audit_name_consistency_replace_btn.setEnabled(can_apply)
+
+    def _refresh_audit_name_consistency_misc_go_state(self) -> None:
+        if (
+            self.audit_name_consistency_goto_misc_btn is None
+            or self.audit_name_consistency_groups_list is None
+        ):
+            return
+        payload = self._audit_name_consistency_group_payload(
+            self.audit_name_consistency_groups_list.currentItem()
+        )
+        path_raw = payload.get("misc_path") if payload is not None else ""
+        uid_raw = payload.get("misc_uid") if payload is not None else ""
+        can_go = (
+            isinstance(path_raw, str)
+            and bool(path_raw)
+            and isinstance(uid_raw, str)
+            and bool(uid_raw)
+        )
+        self.audit_name_consistency_goto_misc_btn.setEnabled(can_go)
 
     def _apply_audit_name_consistency_replace_in_hits(self) -> None:
         if (
@@ -642,6 +662,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             )
         self._refresh_audit_name_consistency_entries()
         self._refresh_audit_name_consistency_replace_state()
+        self._refresh_audit_name_consistency_misc_go_state()
 
     def _go_to_selected_audit_name_consistency_entry(self) -> None:
         if self.audit_name_consistency_entries_list is None:
@@ -653,6 +674,22 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             return
         path_raw = payload.get("path")
         uid_raw = payload.get("uid")
+        if not isinstance(path_raw, str) or not path_raw:
+            return
+        if not isinstance(uid_raw, str) or not uid_raw:
+            return
+        self._jump_to_audit_location(path_raw, uid_raw)
+
+    def _go_to_selected_audit_name_consistency_misc(self) -> None:
+        if self.audit_name_consistency_groups_list is None:
+            return
+        payload = self._audit_name_consistency_group_payload(
+            self.audit_name_consistency_groups_list.currentItem()
+        )
+        if payload is None:
+            return
+        path_raw = payload.get("misc_path")
+        uid_raw = payload.get("misc_uid")
         if not isinstance(path_raw, str) or not path_raw:
             return
         if not isinstance(uid_raw, str) or not uid_raw:

@@ -595,7 +595,10 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             "Checks repeated source terms for inconsistent TL naming."
         )
         name_consistency_footer.addWidget(name_consistency_status_label, 1)
-        name_consistency_goto_btn = QPushButton("Go To")
+        name_consistency_goto_misc_btn = QPushButton("Go To Misc")
+        name_consistency_goto_misc_btn.setEnabled(False)
+        name_consistency_footer.addWidget(name_consistency_goto_misc_btn)
+        name_consistency_goto_btn = QPushButton("Go To Dialogue")
         name_consistency_goto_btn.setEnabled(False)
         name_consistency_footer.addWidget(name_consistency_goto_btn)
         name_consistency_entries_layout.addLayout(name_consistency_footer)
@@ -685,6 +688,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_name_consistency_replace_btn = name_consistency_replace_btn
         self.audit_name_consistency_status_label = name_consistency_status_label
         self.audit_name_consistency_goto_btn = name_consistency_goto_btn
+        self.audit_name_consistency_goto_misc_btn = name_consistency_goto_misc_btn
 
         for rule_id, label, find_text, replace_text in SANITIZE_CHAR_RULES:
             item = QListWidgetItem()
@@ -909,7 +913,14 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             lambda _current, _previous: (
                 self._refresh_audit_name_consistency_entries(),
                 self._refresh_audit_name_consistency_replace_state(),
+                self._refresh_audit_name_consistency_misc_go_state(),
             )
+        )
+        name_consistency_groups_list.itemDoubleClicked.connect(
+            lambda _item: self._go_to_selected_audit_name_consistency_misc()
+        )
+        name_consistency_groups_list.itemActivated.connect(
+            lambda _item: self._go_to_selected_audit_name_consistency_misc()
         )
         name_consistency_entries_list.currentItemChanged.connect(
             lambda current, _previous: name_consistency_goto_btn.setEnabled(
@@ -933,6 +944,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         name_consistency_goto_btn.clicked.connect(
             self._go_to_selected_audit_name_consistency_entry
+        )
+        name_consistency_goto_misc_btn.clicked.connect(
+            self._go_to_selected_audit_name_consistency_misc
         )
         tabs.currentChanged.connect(self._on_audit_tab_changed)
 
