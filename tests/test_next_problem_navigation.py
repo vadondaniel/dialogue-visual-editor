@@ -109,6 +109,50 @@ class NextProblemNavigationTests(unittest.TestCase):
 
         self.assertEqual(harness.open_calls, [(path, "seg-dialogue", "dialogue")])
 
+    def test_jump_to_next_problem_starts_after_selected_block_in_current_file(self) -> None:
+        harness = _NextProblemHarness()
+        path = Path("Map001.json")
+        segment_a = _make_segment("seg-a", kind="dialogue")
+        segment_b = _make_segment("seg-b", kind="dialogue")
+        segment_c = _make_segment("seg-c", kind="dialogue")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[segment_a, segment_b, segment_c],
+        )
+        harness.sessions[path] = session
+        harness.file_paths = [path]
+        harness.current_path = path
+        harness.selected_segment_uid = "seg-a"
+        harness.problem_uids = {"seg-b", "seg-c"}
+
+        _call_editor_method("_jump_to_next_problem", harness)
+
+        self.assertEqual(harness.open_calls, [(path, "seg-b", "dialogue")])
+
+    def test_jump_to_next_problem_wraps_when_selected_at_last_problem(self) -> None:
+        harness = _NextProblemHarness()
+        path = Path("Map001.json")
+        segment_a = _make_segment("seg-a", kind="dialogue")
+        segment_b = _make_segment("seg-b", kind="dialogue")
+        segment_c = _make_segment("seg-c", kind="dialogue")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[segment_a, segment_b, segment_c],
+        )
+        harness.sessions[path] = session
+        harness.file_paths = [path]
+        harness.current_path = path
+        harness.selected_segment_uid = "seg-c"
+        harness.problem_uids = {"seg-b", "seg-c"}
+
+        _call_editor_method("_jump_to_next_problem", harness)
+
+        self.assertEqual(harness.open_calls, [(path, "seg-b", "dialogue")])
+
 
 if __name__ == "__main__":
     unittest.main()

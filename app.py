@@ -6390,19 +6390,21 @@ class DialogueVisualEditor(
 
         translator_mode = self._is_translator_mode()
         ordered_files = [path for path in self.file_paths if path in self.sessions]
-        problem_targets: list[tuple[Path, str, str]] = []
-        for path in ordered_files:
+        problem_targets: list[tuple[int, int, Path, str, str]] = []
+        for file_index, path in enumerate(ordered_files):
             session = self.sessions.get(path)
             if session is None:
                 continue
-            for segment in session.segments:
+            for segment_index, segment in enumerate(session.segments):
                 if self._segment_has_layout_problem(session, segment, translator_mode):
                     target_scope = (
                         "misc"
                         if self._is_misc_segment_kind_for_scope(segment)
                         else "dialogue"
                     )
-                    problem_targets.append((path, segment.uid, target_scope))
+                    problem_targets.append(
+                        (file_index, segment_index, path, segment.uid, target_scope)
+                    )
 
         if not problem_targets:
             mode_label = "translator" if translator_mode else "plain"
@@ -6411,21 +6413,39 @@ class DialogueVisualEditor(
             )
             return
 
-        start_index = -1
-        if self.current_path is not None:
+        cursor_file_index = -1
+        cursor_segment_index = -1
+        if self.current_path is not None and self.current_path in ordered_files:
+            cursor_file_index = ordered_files.index(self.current_path)
+            current_session = self.sessions.get(self.current_path)
             current_uid = self.selected_segment_uid or ""
-            for idx, target in enumerate(problem_targets):
-                if target[0] == self.current_path and target[1] == current_uid:
-                    start_index = idx
-                    break
-            if start_index < 0:
-                for idx, target in enumerate(problem_targets):
-                    if target[0] == self.current_path:
-                        start_index = idx - 1
+            if current_session is not None and current_uid:
+                for idx, segment in enumerate(current_session.segments):
+                    if segment.uid == current_uid:
+                        cursor_segment_index = idx
                         break
 
-        target_index = (start_index + 1) % len(problem_targets)
-        target_path, target_uid, target_scope = problem_targets[target_index]
+        target_index = 0
+        if cursor_file_index >= 0:
+            found_after_cursor = False
+            for idx, target in enumerate(problem_targets):
+                target_file_index, target_segment_index, _path, _uid, _scope = target
+                if (
+                    target_file_index > cursor_file_index
+                    or (
+                        target_file_index == cursor_file_index
+                        and target_segment_index > cursor_segment_index
+                    )
+                ):
+                    target_index = idx
+                    found_after_cursor = True
+                    break
+            if not found_after_cursor:
+                target_index = 0
+
+        _target_file_index, _target_segment_index, target_path, target_uid, target_scope = (
+            problem_targets[target_index]
+        )
         self._open_file(target_path, focus_uid=target_uid, view_scope=target_scope)
         self.statusBar().showMessage(
             f"Jumped to next problem ({target_index + 1}/{len(problem_targets)})."
