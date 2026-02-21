@@ -376,6 +376,44 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual(session.data["list"][1]["parameters"][0], "Line 1")
         self.assertEqual(session.data["list"][2]["parameters"][0], "Line 2")
 
+    def test_build_entries_for_script_message_segment_preserves_face_bg_and_pos_calls(self) -> None:
+        harness = _Harness()
+        segment = DialogueSegment(
+            uid="Map010.json:L0:0",
+            context="ctx",
+            code101={"code": 101, "indent": 5, "parameters": ["face", 0, 0, 2, r"\C[2]\N[1]\C[0]"]},
+            lines=["JP 1", "JP 2"],
+            original_lines=["JP 1", "JP 2"],
+            source_lines=["JP 1", "JP 2"],
+            code401_template={"code": 655, "indent": 5, "parameters": ["$gameMessage.add(\"\");"]},
+            segment_kind="script_message",
+            line_entry_code=655,
+            script_entries_template=[
+                {"code": 655, "indent": 5, "parameters": ["$gameMessage.setFaceImage(face,$gameVariables.value(37));"]},
+                {"code": 655, "indent": 5, "parameters": ["$gameMessage.setBackground(0);"]},
+                {"code": 655, "indent": 5, "parameters": ["$gameMessage.setPositionType(2);"]},
+                {"code": 655, "indent": 5, "parameters": ['$gameMessage.setSpeakerName("\\\\C[2]\\\\N[1]\\\\C[0]");']},
+                {"code": 655, "indent": 5, "parameters": ['$gameMessage.add("JP 1");']},
+                {"code": 655, "indent": 5, "parameters": ['$gameMessage.add("JP 2");']},
+                {"code": 655, "indent": 5, "parameters": ["this.setWaitMode('message');"]},
+            ],
+            script_entry_roles=["face", "background", "position", "speaker", "add", "add", "other"],
+            script_entry_quotes=['"', '"', '"', '"', '"', '"', '"'],
+        )
+
+        rebuilt = harness._build_entries_for_script_message_segment(
+            segment,
+            ["TL 1", "TL 2"],
+        )
+
+        rebuilt_lines = [entry["parameters"][0] for entry in rebuilt]
+        self.assertEqual(rebuilt_lines[0], "$gameMessage.setFaceImage(face,$gameVariables.value(37));")
+        self.assertEqual(rebuilt_lines[1], "$gameMessage.setBackground(0);")
+        self.assertEqual(rebuilt_lines[2], "$gameMessage.setPositionType(2);")
+        self.assertEqual(rebuilt_lines[4], '$gameMessage.add("TL 1");')
+        self.assertEqual(rebuilt_lines[5], '$gameMessage.add("TL 2");')
+        self.assertEqual(rebuilt_lines[6], "this.setWaitMode('message');")
+
     def test_build_source_data_for_session_rebuilds_without_mutating_original(self) -> None:
         harness = _Harness()
         commands_ref: list[Any] = [

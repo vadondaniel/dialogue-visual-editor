@@ -9,7 +9,9 @@ from typing import Any
 from .models import CommandBundle, CommandToken, DialogueSegment, FileSession
 from .script_message_utils import (
     parse_game_message_call,
+    parse_game_message_set_background_call,
     parse_game_message_set_face_image_call,
+    parse_game_message_set_position_type_call,
 )
 from .text_utils import first_parameter_text, is_command_entry, split_lines_preserve_empty
 
@@ -506,6 +508,8 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                             speaker_text = ""
                             face_name = ""
                             face_index = 0
+                            background = 0
+                            position = 2
                             line_template: dict[str, Any] = {}
                             for script_entry in script_entries:
                                 text = first_parameter_text(script_entry)
@@ -523,6 +527,28 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                             face_index = int(parsed_face_index_raw)
                                         except Exception:
                                             face_index = 0
+                                        continue
+                                    background_parsed = parse_game_message_set_background_call(
+                                        text
+                                    )
+                                    if background_parsed is not None:
+                                        script_roles.append("background")
+                                        script_quotes.append('"')
+                                        try:
+                                            background = int(background_parsed)
+                                        except Exception:
+                                            background = 0
+                                        continue
+                                    position_parsed = parse_game_message_set_position_type_call(
+                                        text
+                                    )
+                                    if position_parsed is not None:
+                                        script_roles.append("position")
+                                        script_quotes.append('"')
+                                        try:
+                                            position = int(position_parsed)
+                                        except Exception:
+                                            position = 2
                                         continue
                                     script_roles.append("other")
                                     script_quotes.append('"')
@@ -558,7 +584,7 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                 synthetic_code101 = {
                                     "code": 101,
                                     "indent": indent,
-                                    "parameters": [face_name, face_index, 0, 2, speaker_text],
+                                    "parameters": [face_name, face_index, background, position, speaker_text],
                                 }
                                 uid = f"{path.name}:{list_id}:{segment_counter}"
                                 segment_counter += 1

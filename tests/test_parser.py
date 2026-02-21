@@ -91,6 +91,42 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(segment.face_name, "face")
         self.assertTrue(segment.has_face)
 
+    def test_parse_script_message_block_reads_background_and_position(self) -> None:
+        data = [
+            {
+                "code": 355,
+                "indent": 5,
+                "parameters": ['$gameMessage.setFaceImage(face,$gameVariables.value(37));'],
+            },
+            {
+                "code": 655,
+                "indent": 5,
+                "parameters": ["$gameMessage.setBackground(1);"],
+            },
+            {
+                "code": 655,
+                "indent": 5,
+                "parameters": ["$gameMessage.setPositionType(0);"],
+            },
+            {
+                "code": 655,
+                "indent": 5,
+                "parameters": ['$gameMessage.setSpeakerName("\\\\C[2]\\\\N[1]\\\\C[0]");'],
+            },
+            {
+                "code": 655,
+                "indent": 5,
+                "parameters": ['$gameMessage.add("One");'],
+            },
+        ]
+        session = parse_dialogue_data(Path("Map005.json"), data)
+        self.assertEqual(len(session.segments), 1)
+        segment = session.segments[0]
+        self.assertEqual(segment.segment_kind, "script_message")
+        self.assertEqual(segment.face_name, "face")
+        self.assertEqual(segment.background, 1)
+        self.assertEqual(segment.position, 0)
+
     def test_map_display_name_segment_is_inserted(self) -> None:
         data = {"displayName": "Town Square"}
         session = parse_dialogue_data(Path("Map010.json"), data)

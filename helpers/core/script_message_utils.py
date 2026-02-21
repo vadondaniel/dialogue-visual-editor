@@ -6,6 +6,10 @@ _GAME_MESSAGE_PREFIX_RE = re.compile(
     r"^\s*\$gameMessage\.(add|setSpeakerName)\s*\(")
 _GAME_MESSAGE_FACE_PREFIX_RE = re.compile(
     r"^\s*\$gameMessage\.setFaceImage\s*\(")
+_GAME_MESSAGE_BACKGROUND_PREFIX_RE = re.compile(
+    r"^\s*\$gameMessage\.setBackground\s*\(")
+_GAME_MESSAGE_POSITION_PREFIX_RE = re.compile(
+    r"^\s*\$gameMessage\.setPositionType\s*\(")
 _HEX_DIGITS = set("0123456789abcdefABCDEF")
 
 
@@ -158,7 +162,74 @@ def parse_game_message_call(line: str) -> tuple[str, str, str] | None:
 
 
 def parse_game_message_set_face_image_call(line: str) -> tuple[str, str] | None:
-    match = _GAME_MESSAGE_FACE_PREFIX_RE.match(line)
+    args_raw = _parse_game_message_arguments(line, _GAME_MESSAGE_FACE_PREFIX_RE)
+    if not args_raw:
+        return None
+
+    split_index = -1
+    nested_depth = 0
+    current_quote = ""
+    escaped = False
+    for arg_idx, ch in enumerate(args_raw):
+        if escaped:
+            escaped = False
+            continue
+        if current_quote:
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == current_quote:
+                current_quote = ""
+            continue
+        if ch in {'"', "'"}:
+            current_quote = ch
+            continue
+        if ch == "(":
+            nested_depth += 1
+            continue
+        if ch == ")":
+            nested_depth = max(0, nested_depth - 1)
+            continue
+        if ch == "," and nested_depth == 0:
+            split_index = arg_idx
+            break
+    if split_index < 0:
+        return None
+
+    face_raw = args_raw[:split_index].strip()
+    index_raw = args_raw[split_index + 1:].strip()
+    if not face_raw:
+        return None
+    if not index_raw:
+        return None
+
+    if len(face_raw) >= 2 and face_raw[0] in {'"', "'"} and face_raw[-1] == face_raw[0]:
+        face_name = _decode_js_string_literal(face_raw[1:-1])
+    else:
+        face_name = face_raw
+    return face_name, index_raw
+
+
+def parse_game_message_set_background_call(line: str) -> str | None:
+    args_raw = _parse_game_message_arguments(line, _GAME_MESSAGE_BACKGROUND_PREFIX_RE)
+    if not args_raw:
+        return None
+    if _has_top_level_comma(args_raw):
+        return None
+    return args_raw
+
+
+def parse_game_message_set_position_type_call(line: str) -> str | None:
+    args_raw = _parse_game_message_arguments(line, _GAME_MESSAGE_POSITION_PREFIX_RE)
+    if not args_raw:
+        return None
+    if _has_top_level_comma(args_raw):
+        return None
+    return args_raw
+
+
+def _parse_game_message_arguments(line: str, prefix_re: re.Pattern[str]) -> str | None:
+    match = prefix_re.match(line)
     if match is None:
         return None
     idx = match.end()
@@ -210,52 +281,36 @@ def parse_game_message_set_face_image_call(line: str) -> tuple[str, str] | None:
     if idx != line_len:
         return None
 
-    args_raw = "".join(args_chars).strip()
-    if not args_raw:
-        return None
+    return "".join(args_chars).strip()
 
-    split_index = -1
-    nested_depth = 0
-    current_quote = ""
-    escaped = False
-    for arg_idx, ch in enumerate(args_raw):
-        if escaped:
-            escaped = False
+
+def _has_top_level_comma(args_raw: str) -> bool:
+    depth = 0
+    quote_char = ""
+    escape_next = False
+    for ch in args_raw:
+        if escape_next:
+            escape_next = False
             continue
-        if current_quote:
+        if quote_char:
             if ch == "\\":
-                escaped = True
+                escape_next = True
                 continue
-            if ch == current_quote:
-                current_quote = ""
+            if ch == quote_char:
+                quote_char = ""
             continue
         if ch in {'"', "'"}:
-            current_quote = ch
+            quote_char = ch
             continue
         if ch == "(":
-            nested_depth += 1
+            depth += 1
             continue
         if ch == ")":
-            nested_depth = max(0, nested_depth - 1)
+            depth = max(0, depth - 1)
             continue
-        if ch == "," and nested_depth == 0:
-            split_index = arg_idx
-            break
-    if split_index < 0:
-        return None
-
-    face_raw = args_raw[:split_index].strip()
-    index_raw = args_raw[split_index + 1:].strip()
-    if not face_raw:
-        return None
-    if not index_raw:
-        return None
-
-    if len(face_raw) >= 2 and face_raw[0] in {'"', "'"} and face_raw[-1] == face_raw[0]:
-        face_name = _decode_js_string_literal(face_raw[1:-1])
-    else:
-        face_name = face_raw
-    return face_name, index_raw
+        if ch == "," and depth == 0:
+            return True
+    return False
 
 
 def build_game_message_call(kind: str, text: str, quote_char: str = '"') -> str:

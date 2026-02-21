@@ -5,7 +5,9 @@ import unittest
 from dialogue_visual_editor.helpers.core.script_message_utils import (
     build_game_message_call,
     parse_game_message_call,
+    parse_game_message_set_background_call,
     parse_game_message_set_face_image_call,
+    parse_game_message_set_position_type_call,
 )
 
 
@@ -49,6 +51,18 @@ class ScriptMessageUtilsTests(unittest.TestCase):
             '$gameMessage.setFaceImage("Actor1", 3);'
         )
         self.assertEqual(parsed, ("Actor1", "3"))
+
+    def test_parse_set_background_with_numeric_arg(self) -> None:
+        parsed = parse_game_message_set_background_call(
+            "$gameMessage.setBackground(1);"
+        )
+        self.assertEqual(parsed, "1")
+
+    def test_parse_set_position_type_with_numeric_arg(self) -> None:
+        parsed = parse_game_message_set_position_type_call(
+            "$gameMessage.setPositionType(2);"
+        )
+        self.assertEqual(parsed, "2")
 
 
 if __name__ == "__main__":
