@@ -61,6 +61,7 @@ class RenderMixin(_RenderHostTypingFallback):
             "system_text",
             "plugin_text",
             "plugin_command_text",
+            "note_text",
             "actor_name_alias",
         }
 

@@ -272,6 +272,33 @@ class ParserTests(unittest.TestCase):
         self.assertIn(text_path, by_path)
         self.assertEqual(by_path[text_path].lines, ["\\i[7]\\C[27]メイドレベル\\C[0]"])
 
+    def test_parse_map_event_note_text_segments(self) -> None:
+        data = {
+            "events": [
+                None,
+                {
+                    "id": 3,
+                    "name": "EV003",
+                    "note": "<LB:\\i[150]あずみさん>",
+                    "pages": [],
+                },
+            ]
+        }
+        session = parse_dialogue_data(Path("Map001.json"), data)
+        note_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "note_text"
+        ]
+
+        self.assertEqual(len(note_segments), 1)
+        note_segment = note_segments[0]
+        self.assertEqual(note_segment.lines, ["<LB:\\i[150]あずみさん>"])
+        self.assertEqual(
+            getattr(note_segment, "json_text_path", ()),
+            ("events", 1, "note"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

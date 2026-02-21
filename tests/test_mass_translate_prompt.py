@@ -257,6 +257,22 @@ class MassTranslatePromptTests(unittest.TestCase):
 
         self.assertEqual(content_type, "misc")
 
+    def test_segment_content_type_treats_note_text_as_misc(self) -> None:
+        editor = _SpeakerKeyEditorMeta()
+        segment = _segment("Map001.json:N:abc", "<LB:\\i[150]あずみさん>")
+        segment.segment_kind = "note_text"
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+        harness = _PromptDialogHarness(editor)
+
+        content_type = harness._segment_content_type(session.path, session, segment)
+
+        self.assertEqual(content_type, "misc")
+
 
 if __name__ == "__main__":
     unittest.main()

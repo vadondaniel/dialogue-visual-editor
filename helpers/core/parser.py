@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -64,6 +65,10 @@ _PLUGINS_JS_ARRAY_KEY = "__dve_plugins_js_array__"
 _PLUGINS_JS_DEFAULT_PREFIX = "var $plugins =\n"
 _PLUGINS_JS_DEFAULT_SUFFIX = ";\n"
 _MAP_FILE_NAME_RE = re.compile(r"^map\d+\.json$", re.IGNORECASE)
+_NOTE_JAPANESE_CHAR_RE = re.compile(
+    r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
+    r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF66-\uFF9F]"
+)
 _PLUGIN_ARG_NUMBER_RE = re.compile(
     r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"
 )
@@ -456,6 +461,64 @@ def _plugin_command_argument_value_is_non_meaningful(text: str) -> bool:
     if not parts or any(not part for part in parts):
         return False
     return all(_plugin_command_argument_part_is_non_meaningful(part) for part in parts)
+
+
+def _event_note_is_translatable(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return bool(_NOTE_JAPANESE_CHAR_RE.search(stripped))
+
+
+def _json_path_label(path_tokens: tuple[Any, ...]) -> str:
+    label = ""
+    for token in path_tokens:
+        if isinstance(token, int):
+            label += f"[{token}]"
+            continue
+        token_text = str(token)
+        if label:
+            label += "."
+        label += token_text
+    return label
+
+
+def _build_event_note_segments(path: Path, data: Any) -> list[DialogueSegment]:
+    segments: list[DialogueSegment] = []
+
+    def walk(node: Any, path_tokens: list[Any]) -> None:
+        if isinstance(node, dict):
+            note_raw = node.get("note")
+            if (
+                "events" in path_tokens
+                and isinstance(note_raw, str)
+                and _event_note_is_translatable(note_raw)
+            ):
+                note_path_tokens = tuple(path_tokens + ["note"])
+                note_path_key = "|".join(str(token) for token in note_path_tokens)
+                digest = hashlib.sha1(note_path_key.encode("utf-8")).hexdigest()[:12]
+                lines = split_lines_preserve_empty(note_raw)
+                segment = DialogueSegment(
+                    uid=f"{path.name}:N:{digest}",
+                    context=f"{path.name} > {_json_path_label(note_path_tokens)}",
+                    code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+                    lines=list(lines),
+                    original_lines=list(lines),
+                    source_lines=list(lines),
+                    segment_kind="note_text",
+                )
+                setattr(segment, "note_text_path", note_path_tokens)
+                setattr(segment, "json_text_path", note_path_tokens)
+                segments.append(segment)
+            for key, value in node.items():
+                walk(value, path_tokens + [key])
+            return
+        if isinstance(node, list):
+            for idx, value in enumerate(node):
+                walk(value, path_tokens + [idx])
+
+    walk(data, [])
+    return segments
 
 
 def _safe_system_field_slug(field_path: str) -> str:
@@ -874,6 +937,9 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
     map_display_name_segment = _build_map_display_name_segment(path, data)
     if map_display_name_segment is not None:
         session.segments.insert(0, map_display_name_segment)
+    event_note_segments = _build_event_note_segments(path, data)
+    if event_note_segments:
+        session.segments.extend(event_note_segments)
 
     return session
 

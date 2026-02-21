@@ -459,6 +459,32 @@ class PersistenceExportMixinTests(unittest.TestCase):
             "new value",
         )
 
+    def test_apply_session_to_json_updates_event_note_path(self) -> None:
+        harness = _Harness()
+        segment = _dialogue_segment("Map001.json:N:abc", "<LB:\\i[150]あずみさん>")
+        segment.segment_kind = "note_text"
+        segment.lines = ["<LB:\\i[150]アズミさん>"]
+        segment.original_lines = ["<LB:\\i[150]あずみさん>"]
+        setattr(segment, "json_text_path", ("events", 1, "note"))
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={
+                "events": [
+                    None,
+                    {"id": 3, "note": "<LB:\\i[150]あずみさん>", "pages": []},
+                ]
+            },
+            bundles=[],
+            segments=[segment],
+        )
+
+        harness._apply_session_to_json(session)
+
+        self.assertEqual(
+            session.data["events"][1]["note"],
+            "<LB:\\i[150]アズミさん>",
+        )
+
     def test_apply_session_to_json_rebuilds_command_list(self) -> None:
         harness = _Harness()
         commands_ref: list[Any] = []
