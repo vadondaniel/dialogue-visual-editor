@@ -756,10 +756,10 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         updated = list(lines) if lines else [""]
         total = 0
         for idx, line in enumerate(updated):
-            hits = len(list(pattern.finditer(line)))
-            if hits <= 0:
+            replaced_line, hits = pattern.subn(lambda _match: replace_text, line)
+            if hits <= 0 or replaced_line == line:
                 continue
-            updated[idx] = pattern.sub(replace_text, line)
+            updated[idx] = replaced_line
             total += hits
         return updated, total
 

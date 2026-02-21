@@ -140,6 +140,19 @@ class AuditSearchMixinTests(unittest.TestCase):
         self.assertIn("Block 1", labels)
         self.assertNotIn("Block 2", labels)
 
+    def test_replace_in_lines_treats_backslashes_in_replacement_as_literal(self) -> None:
+        harness = _Harness()
+
+        replaced, count = harness._replace_in_lines(
+            [r"Szintosszeg \V", r"Szintosszeg \V \V"],
+            r"Szintosszeg \V",
+            r"Szintosszeg: \V",
+            True,
+        )
+
+        self.assertEqual(count, 2)
+        self.assertEqual(replaced, [r"Szintosszeg: \V", r"Szintosszeg: \V \V"])
+
 
 if __name__ == "__main__":
     unittest.main()
