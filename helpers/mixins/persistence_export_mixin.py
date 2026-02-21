@@ -24,6 +24,7 @@ from ..core.parser import (
     is_tyrano_script_data,
     is_tyrano_script_path,
     plugins_js_source_from_data,
+    split_tyrano_dialogue_line_and_suffix,
     tyrano_script_source_from_data,
 )
 from ..core.script_message_utils import (
@@ -925,6 +926,49 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         return incoming_lines or [""]
 
     @staticmethod
+    def _segment_tyrano_line_suffixes(segment: DialogueSegment) -> list[str]:
+        suffixes_raw = getattr(segment, "tyrano_line_suffixes", ())
+        if not isinstance(suffixes_raw, (list, tuple)):
+            return []
+        return [
+            suffix if isinstance(suffix, str) else ""
+            for suffix in suffixes_raw
+        ]
+
+    @classmethod
+    def _render_tyrano_segment_lines_for_save(
+        cls,
+        segment: DialogueSegment,
+        normalized_lines: list[str],
+    ) -> tuple[list[str], list[str]]:
+        stored_suffixes = cls._segment_tyrano_line_suffixes(segment)
+        fallback_suffix = ""
+        for suffix in reversed(stored_suffixes):
+            if suffix:
+                fallback_suffix = suffix
+                break
+
+        rendered_lines: list[str] = []
+        used_suffixes: list[str] = []
+        for line_index, raw_line in enumerate(normalized_lines):
+            line_text, inline_suffix = split_tyrano_dialogue_line_and_suffix(raw_line)
+            suffix = ""
+            if line_index < len(stored_suffixes):
+                suffix = stored_suffixes[line_index] or inline_suffix
+            else:
+                suffix = inline_suffix or fallback_suffix
+            rendered_lines.append(f"{line_text}{suffix}")
+            used_suffixes.append(suffix)
+
+        if rendered_lines and stored_suffixes and len(normalized_lines) < len(stored_suffixes):
+            terminal_suffix = stored_suffixes[-1]
+            if terminal_suffix:
+                last_text, _ = split_tyrano_dialogue_line_and_suffix(rendered_lines[-1])
+                rendered_lines[-1] = f"{last_text}{terminal_suffix}"
+                used_suffixes[-1] = terminal_suffix
+        return rendered_lines, used_suffixes
+
+    @staticmethod
     def _segment_tyrano_text_indexes(segment: DialogueSegment) -> list[int]:
         text_indexes_raw = getattr(segment, "tyrano_text_item_indexes", ())
         if not isinstance(text_indexes_raw, (list, tuple)):
@@ -1037,26 +1081,29 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if body_item.get("kind") == "text"
             ]
 
-            segment_lines_payload: list[tuple[DialogueSegment, list[str]]] = []
+            segment_lines_payload: list[tuple[DialogueSegment, list[str], list[str]]] = []
             for _, segment in chunk_segments_sorted:
-                segment_lines_payload.append(
-                    (segment, self._normalized_tyrano_segment_lines(segment))
+                normalized_lines = self._normalized_tyrano_segment_lines(segment)
+                rendered_lines, used_suffixes = self._render_tyrano_segment_lines_for_save(
+                    segment,
+                    normalized_lines,
                 )
+                segment_lines_payload.append((segment, rendered_lines, used_suffixes))
 
             has_any_non_blank_lines = any(
                 any(line != "" for line in lines)
-                for _, lines in segment_lines_payload
+                for _, lines, _ in segment_lines_payload
             )
             replacement_items: list[dict[str, str]] = []
-            segment_line_counts: list[tuple[DialogueSegment, int]] = []
+            segment_line_counts: list[tuple[DialogueSegment, int, list[str]]] = []
             if existing_text_indexes or has_any_non_blank_lines:
-                for segment, lines in segment_lines_payload:
-                    segment_line_counts.append((segment, len(lines)))
+                for segment, lines, used_suffixes in segment_lines_payload:
+                    segment_line_counts.append((segment, len(lines), used_suffixes))
                     for line in lines:
                         replacement_items.append({"kind": "text", "line": line})
             else:
-                for segment, _ in segment_lines_payload:
-                    segment_line_counts.append((segment, 0))
+                for segment, _, _ in segment_lines_payload:
+                    segment_line_counts.append((segment, 0, []))
 
             insert_at = len(body_items)
             new_body_items: list[dict[str, str]] = []
@@ -1093,10 +1140,11 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     break
 
             next_text_index = insert_at
-            for segment, line_count in segment_line_counts:
+            for segment, line_count, suffixes in segment_line_counts:
                 text_indexes = tuple(range(next_text_index, next_text_index + line_count))
                 setattr(segment, "tyrano_speaker_item_index", updated_speaker_item_index)
                 setattr(segment, "tyrano_text_item_indexes", text_indexes)
+                setattr(segment, "tyrano_line_suffixes", tuple(suffixes))
                 setattr(segment, "tyrano_editable_item_indexes", text_indexes)
                 next_text_index += line_count
 

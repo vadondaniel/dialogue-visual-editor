@@ -526,7 +526,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
             params.append("")
         params[4] = "Narrator"
         dialogue_segment.code101["parameters"] = params
-        dialogue_segment.lines = ["Hello[p]", "World[p]"]
+        dialogue_segment.lines = ["Hello", "World"]
         tag_segment.lines = ["Choice A"]
 
         harness._apply_session_to_json(session)
@@ -558,8 +558,8 @@ class PersistenceExportMixinTests(unittest.TestCase):
             if segment.segment_kind == "tyrano_dialogue"
         ]
         self.assertEqual(len(dialogue_segments), 2)
-        dialogue_segments[0].lines = ["First page[p][r]"]
-        dialogue_segments[1].lines = ["Second page[p][r]"]
+        dialogue_segments[0].lines = ["First page"]
+        dialogue_segments[1].lines = ["Second page"]
 
         harness._apply_session_to_json(session)
         rebuilt = tyrano_script_source_from_data(session.data)

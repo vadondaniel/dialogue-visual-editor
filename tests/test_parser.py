@@ -380,7 +380,11 @@ class ParserTests(unittest.TestCase):
         ]
         self.assertEqual(len(dialogue_segments), 1)
         self.assertEqual(dialogue_segments[0].speaker_name, "NPC")
-        self.assertEqual(dialogue_segments[0].lines, ["こんにちは[p]"])
+        self.assertEqual(dialogue_segments[0].lines, ["こんにちは"])
+        self.assertEqual(
+            getattr(dialogue_segments[0], "tyrano_line_suffixes", ()),
+            ("[p]",),
+        )
         self.assertEqual(len(tag_segments), 1)
         self.assertEqual(tag_segments[0].lines, ["選択肢"])
 
@@ -407,10 +411,18 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(dialogue_segments[0].speaker_name, "NPC")
         self.assertEqual(
             dialogue_segments[0].lines,
-            ["「前半」[r]", "「後半」[p][r]"],
+            ["「前半」", "「後半」"],
+        )
+        self.assertEqual(
+            getattr(dialogue_segments[0], "tyrano_line_suffixes", ()),
+            ("[r]", "[p][r]"),
         )
         self.assertEqual(dialogue_segments[1].speaker_name, "NPC")
-        self.assertEqual(dialogue_segments[1].lines, ["「次のページ」[p][r]"])
+        self.assertEqual(dialogue_segments[1].lines, ["「次のページ」"])
+        self.assertEqual(
+            getattr(dialogue_segments[1], "tyrano_line_suffixes", ()),
+            ("[p][r]",),
+        )
 
     def test_parse_tyrano_script_blank_speaker_marker_is_no_speaker(self) -> None:
         source = (
@@ -430,7 +442,11 @@ class ParserTests(unittest.TestCase):
             if segment.segment_kind == "tyrano_dialogue"
         )
         self.assertEqual(dialogue_segment.speaker_name, NO_SPEAKER_KEY)
-        self.assertEqual(dialogue_segment.lines, ["地の文[p]"])
+        self.assertEqual(dialogue_segment.lines, ["地の文"])
+        self.assertEqual(
+            getattr(dialogue_segment, "tyrano_line_suffixes", ()),
+            ("[p]",),
+        )
 
     def test_tyrano_script_source_from_data_round_trip(self) -> None:
         source = (
