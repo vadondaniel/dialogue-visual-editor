@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -295,6 +296,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_sort_combo.addItem("Most variants", "variants")
         consistency_sort_combo.addItem("A-Z", "alphabetical")
         consistency_controls_row.addWidget(consistency_sort_combo)
+        consistency_neighbors_check = QCheckBox("Show Context")
+        consistency_neighbors_check.setChecked(False)
+        consistency_controls_row.addWidget(consistency_neighbors_check)
         consistency_controls_row.addStretch(1)
         consistency_refresh_btn = QPushButton("Refresh")
         consistency_controls_row.addWidget(consistency_refresh_btn)
@@ -302,6 +306,16 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
 
         consistency_splitter = QSplitter(Qt.Orientation.Horizontal)
         consistency_layout.addWidget(consistency_splitter, 1)
+
+        def _plain_text_height_for_lines(
+            editor: QPlainTextEdit,
+            line_count: int,
+        ) -> int:
+            safe_line_count = max(1, int(line_count))
+            line_height = editor.fontMetrics().lineSpacing()
+            doc_margin = int(editor.document().documentMargin() * 2)
+            frame = int(editor.frameWidth() * 2)
+            return line_height * safe_line_count + doc_margin + frame + 2
 
         consistency_groups_panel = QWidget()
         consistency_groups_layout = QVBoxLayout(consistency_groups_panel)
@@ -319,14 +333,22 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_entries_layout.addWidget(
             QLabel("Entries In Selected Group"))
         consistency_entries_list = QListWidget()
+        consistency_entries_font = QFont("Consolas")
+        if not consistency_entries_font.exactMatch():
+            consistency_entries_font = QFont("Courier New")
+        consistency_entries_font.setStyleHint(QFont.StyleHint.Monospace)
+        consistency_entries_list.setFont(consistency_entries_font)
         consistency_entries_layout.addWidget(consistency_entries_list, 1)
-        consistency_entries_layout.addWidget(QLabel("Original Source"))
+        consistency_entries_layout.addWidget(QLabel("Shared Source Text"))
         consistency_source_edit = QPlainTextEdit()
         consistency_source_edit.setReadOnly(True)
         consistency_source_edit.setPlaceholderText(
             "Selected duplicate group's source text."
         )
-        consistency_source_edit.setFixedHeight(84)
+        consistency_source_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        consistency_source_edit.setFixedHeight(
+            _plain_text_height_for_lines(consistency_source_edit, 5)
+        )
         consistency_source_highlighter = ControlCodeHighlighter(
             consistency_source_edit.document(),
             is_dark_palette(),
@@ -334,12 +356,15 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             resolve_color_flow=True,
         )
         consistency_entries_layout.addWidget(consistency_source_edit)
-        consistency_entries_layout.addWidget(QLabel("Sync Translation Target"))
+        consistency_entries_layout.addWidget(QLabel("Apply Translation To Group"))
         consistency_target_edit = QPlainTextEdit()
         consistency_target_edit.setPlaceholderText(
             "Type translation to apply to all entries in selected group."
         )
-        consistency_target_edit.setFixedHeight(84)
+        consistency_target_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        consistency_target_edit.setFixedHeight(
+            _plain_text_height_for_lines(consistency_target_edit, 5)
+        )
         consistency_target_highlighter = ControlCodeHighlighter(
             consistency_target_edit.document(),
             is_dark_palette(),
@@ -364,8 +389,103 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_status_label = QLabel("Duplicate groups: 0 | Duplicate entries: 0")
         consistency_entries_layout.addWidget(consistency_status_label)
         consistency_splitter.addWidget(consistency_entries_panel)
+
+        consistency_neighbors_panel = QWidget()
+        consistency_neighbors_layout = QVBoxLayout(consistency_neighbors_panel)
+        consistency_neighbors_layout.setContentsMargins(0, 0, 0, 0)
+        consistency_neighbors_layout.setSpacing(6)
+        consistency_neighbors_layout.addWidget(QLabel("Neighbor Context"))
+        consistency_neighbors_legend_label = QLabel(
+            "Enable Show Context, then select an entry."
+        )
+        consistency_neighbors_legend_label.setObjectName("MetaDim")
+        consistency_neighbors_legend_label.setWordWrap(True)
+        consistency_neighbors_layout.addWidget(consistency_neighbors_legend_label)
+
+        def _neighbor_context_section(
+            title: str,
+        ) -> tuple[QGroupBox, dict[str, object], list[ControlCodeHighlighter]]:
+            group = QGroupBox(title)
+            section_layout = QVBoxLayout(group)
+            section_layout.setContentsMargins(8, 8, 8, 8)
+            section_layout.setSpacing(6)
+
+            speaker_row = QHBoxLayout()
+            speaker_row.setContentsMargins(0, 0, 0, 0)
+            speaker_row.setSpacing(6)
+
+            speaker_row.addWidget(QLabel("Source speaker"))
+            source_speaker_edit = QLineEdit()
+            source_speaker_edit.setReadOnly(True)
+            source_speaker_edit.setPlaceholderText("(none)")
+            speaker_row.addWidget(source_speaker_edit, 1)
+
+            speaker_row.addWidget(QLabel("Target speaker"))
+            target_speaker_edit = QLineEdit()
+            target_speaker_edit.setReadOnly(True)
+            target_speaker_edit.setPlaceholderText("-")
+            speaker_row.addWidget(target_speaker_edit, 1)
+            section_layout.addLayout(speaker_row)
+
+            section_layout.addWidget(QLabel("Source text"))
+            source_text_edit = QPlainTextEdit()
+            source_text_edit.setReadOnly(True)
+            source_text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            source_text_edit.setFixedHeight(
+                _plain_text_height_for_lines(source_text_edit, 4)
+            )
+            source_highlighter = ControlCodeHighlighter(
+                source_text_edit.document(),
+                is_dark_palette(),
+                color_code_resolver=self._color_for_rpgm_code,
+                resolve_color_flow=True,
+            )
+            section_layout.addWidget(source_text_edit, 1)
+
+            section_layout.addWidget(QLabel("Target text"))
+            target_text_edit = QPlainTextEdit()
+            target_text_edit.setReadOnly(True)
+            target_text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            target_text_edit.setFixedHeight(
+                _plain_text_height_for_lines(target_text_edit, 4)
+            )
+            target_highlighter = ControlCodeHighlighter(
+                target_text_edit.document(),
+                is_dark_palette(),
+                color_code_resolver=self._color_for_rpgm_code,
+                resolve_color_flow=True,
+            )
+            section_layout.addWidget(target_text_edit, 1)
+
+            widgets: dict[str, object] = {
+                "source_speaker_edit": source_speaker_edit,
+                "source_text_edit": source_text_edit,
+                "target_speaker_edit": target_speaker_edit,
+                "target_text_edit": target_text_edit,
+            }
+            return group, widgets, [source_highlighter, target_highlighter]
+
+        consistency_neighbors_sections: dict[str, dict[str, object]] = {}
+        consistency_neighbors_highlighters: list[ControlCodeHighlighter] = []
+        for section_key, section_title in (
+            ("previous", "Previous"),
+            ("current", "Current"),
+            ("next", "Next"),
+        ):
+            group, section_widgets, section_highlighters = _neighbor_context_section(
+                section_title
+            )
+            consistency_neighbors_sections[section_key] = section_widgets
+            consistency_neighbors_highlighters.extend(section_highlighters)
+            consistency_neighbors_layout.addWidget(group)
+        consistency_neighbors_layout.addStretch(1)
+        consistency_splitter.addWidget(consistency_neighbors_panel)
+
+        consistency_neighbors_panel.setVisible(False)
+
         consistency_splitter.setStretchFactor(0, 4)
         consistency_splitter.setStretchFactor(1, 6)
+        consistency_splitter.setStretchFactor(2, 6)
 
         tabs.addTab(consistency_tab, "Consistency")
 
@@ -653,12 +773,16 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_consistency_only_inconsistent_check = consistency_only_inconsistent_check
         self.audit_consistency_dialogue_only_check = consistency_dialogue_only_check
         self.audit_consistency_sort_combo = consistency_sort_combo
+        self.audit_consistency_neighbors_check = consistency_neighbors_check
         self.audit_consistency_groups_list = consistency_groups_list
         self.audit_consistency_entries_list = consistency_entries_list
         self.audit_consistency_source_edit = consistency_source_edit
         self.audit_consistency_target_edit = consistency_target_edit
+        self.audit_consistency_neighbors_legend_label = consistency_neighbors_legend_label
+        self.audit_consistency_neighbors_sections = consistency_neighbors_sections
         self.audit_consistency_source_highlighter = consistency_source_highlighter
         self.audit_consistency_target_highlighter = consistency_target_highlighter
+        self.audit_consistency_neighbors_highlighters = consistency_neighbors_highlighters
         self.audit_consistency_status_label = consistency_status_label
         self.audit_consistency_goto_btn = consistency_goto_btn
         self.audit_consistency_apply_btn = consistency_apply_btn
@@ -817,6 +941,12 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         )
         consistency_sort_combo.currentIndexChanged.connect(
             lambda _index: self._refresh_audit_consistency_panel()
+        )
+        consistency_neighbors_check.toggled.connect(
+            lambda checked: (
+                consistency_neighbors_panel.setVisible(bool(checked)),
+                self._refresh_audit_consistency_neighbors_preview(),
+            )
         )
         consistency_groups_list.currentItemChanged.connect(
             lambda _current, _previous: self._refresh_audit_consistency_entries()

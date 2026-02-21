@@ -36,6 +36,12 @@ class _Harness(AuditConsistencyMixin):
     def __init__(self) -> None:
         self.file_paths: list[Path] = []
         self.sessions: dict[Path, FileSession] = {}
+        self._speaker_map: dict[str, str] = {}
+        self.audit_consistency_entries_list: Any = None
+        self.audit_consistency_neighbors_check: Any = None
+        self.audit_consistency_neighbors_edit: Any = None
+        self._source_label = "JA"
+        self._target_label = "EN-US"
 
     @staticmethod
     def _segment_source_lines_for_display(segment: DialogueSegment) -> list[str]:
@@ -69,6 +75,28 @@ class _Harness(AuditConsistencyMixin):
             if candidate.uid == segment.uid:
                 return f"Block {block_index}"
         return f"Block {index}"
+
+    @staticmethod
+    def _normalize_speaker_key(value: str) -> str:
+        cleaned = (value or "").strip()
+        return cleaned if cleaned else "(none)"
+
+    def _speaker_translation_for_key(self, speaker_key: str) -> str:
+        return self._speaker_map.get(speaker_key, "")
+
+    @staticmethod
+    def _speaker_key_for_segment(segment: DialogueSegment) -> str:
+        return segment.speaker_name
+
+    @staticmethod
+    def _relative_path(path: Path) -> str:
+        return str(path)
+
+    def _translation_project_source_language_label(self) -> str:
+        return self._source_label
+
+    def _translation_profile_target_language_label(self) -> str:
+        return self._target_label
 
 
 class AuditConsistencyMixinTests(unittest.TestCase):
@@ -158,6 +186,95 @@ class AuditConsistencyMixinTests(unittest.TestCase):
         self.assertIn("Block 1", entries)
         self.assertIn("Block 2", entries)
         self.assertNotIn("Block 3", entries)
+
+    def test_collect_groups_includes_speaker_fields(self) -> None:
+        harness = _Harness()
+        harness._speaker_map["勇者"] = "Hero"
+        path = Path("Map001.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("d1", "共通語", "Alpha"),
+                _segment("d2", "共通語", "Beta"),
+            ],
+        )
+        harness.sessions[path].segments[0].code101["parameters"][4] = "勇者"
+        harness.sessions[path].segments[1].code101["parameters"][4] = "勇者"
+
+        groups = harness._collect_audit_consistency_groups(
+            only_inconsistent=True,
+            dialogue_only=True,
+            sort_mode="source_order",
+        )
+
+        self.assertEqual(len(groups), 1)
+        first_entry = groups[0]["entries"][0]
+        self.assertEqual(first_entry["speaker_jp"], "勇者")
+        self.assertEqual(first_entry["speaker_en"], "Hero")
+
+    def test_neighbor_preview_includes_neighbor_lines_and_speakers(self) -> None:
+        harness = _Harness()
+        harness._speaker_map["勇者"] = "Hero"
+        path = Path("Map002.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("d1", "前", "Before"),
+                _segment("d2", "中", "Middle"),
+                _segment("d3", "後", "After"),
+            ],
+        )
+        harness.sessions[path].segments[0].code101["parameters"][4] = "村人"
+        harness.sessions[path].segments[0].translation_speaker = "Villager"
+        harness.sessions[path].segments[1].code101["parameters"][4] = "勇者"
+        harness.sessions[path].segments[2].code101["parameters"][4] = "魔王"
+
+        preview = harness._build_consistency_neighbor_preview_text(
+            {
+                "path": str(path),
+                "uid": "d2",
+                "entry": "Block 2",
+            }
+        )
+
+        self.assertIn("Prev", preview)
+        self.assertIn("Current", preview)
+        self.assertIn("Next", preview)
+        self.assertIn("Speaker (JA): 勇者", preview)
+        self.assertIn("Speaker (EN-US): Hero", preview)
+        self.assertIn("Text (JA): 前", preview)
+        self.assertIn("Text (EN-US): After", preview)
+
+    def test_entry_display_label_uses_file_stem_and_block_number(self) -> None:
+        harness = _Harness()
+
+        label = harness._consistency_entry_display_label(
+            "folder/Map003.json",
+            "Block 12",
+            "Hello there",
+        )
+
+        self.assertTrue(label.startswith("Map003:12"))
+        self.assertTrue(label.endswith("| Hello there"))
+        self.assertIn(" | ", label)
+
+    def test_entry_display_label_keeps_long_file_stem(self) -> None:
+        harness = _Harness()
+
+        label = harness._consistency_entry_display_label(
+            "folder/ThisIsAnAbsurdlyLongFilenameForMap003.json",
+            "Block 9",
+            "Line",
+        )
+
+        self.assertIn("ThisIsAnAbsurdlyLongFilenameForMap003:9 |", label)
+        self.assertNotIn("..", label.split(":")[0])
 
 
 if __name__ == "__main__":

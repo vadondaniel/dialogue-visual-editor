@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections import Counter
 import hashlib
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QListWidgetItem
 
-from ..core.models import DialogueSegment, FileSession
+from ..core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
 from ..core.text_utils import preview_text
 from ..mixins.presentation_mixins import is_dark_palette
 
@@ -20,6 +21,315 @@ class _AuditConsistencyHostTypingFallback:
 
 
 class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
+    _BLOCK_ENTRY_RE = re.compile(r"^Block\s+(\d+)$", re.IGNORECASE)
+
+    def _consistency_entry_file_stem(self, path_raw: str) -> str:
+        relative_path = self._relative_path(Path(path_raw))
+        file_stem = Path(relative_path).stem.strip() or Path(path_raw).stem.strip()
+        if not file_stem:
+            file_stem = Path(path_raw).name.strip() or "File"
+        return file_stem
+
+    def _consistency_source_language_label(self) -> str:
+        source_label_resolver = getattr(
+            self,
+            "_translation_project_source_language_label",
+            None,
+        )
+        if callable(source_label_resolver):
+            try:
+                resolved = source_label_resolver()
+            except Exception:
+                resolved = ""
+            if isinstance(resolved, str) and resolved.strip():
+                return resolved.strip()
+        return "Source"
+
+    def _consistency_target_language_label(self) -> str:
+        target_label_resolver = getattr(
+            self,
+            "_translation_profile_target_language_label",
+            None,
+        )
+        if callable(target_label_resolver):
+            try:
+                resolved = target_label_resolver()
+            except Exception:
+                resolved = ""
+            if isinstance(resolved, str) and resolved.strip():
+                return resolved.strip()
+        return "Target"
+
+    def _consistency_speakers_for_segment(
+        self,
+        segment: DialogueSegment,
+    ) -> tuple[str, str]:
+        speaker_key = segment.speaker_name
+        speaker_key_resolver = getattr(self, "_speaker_key_for_segment", None)
+        if callable(speaker_key_resolver):
+            try:
+                resolved_key = speaker_key_resolver(segment)
+            except Exception:
+                resolved_key = speaker_key
+            if isinstance(resolved_key, str) and resolved_key.strip():
+                speaker_key = resolved_key.strip()
+
+        normalize_speaker_key = getattr(self, "_normalize_speaker_key", None)
+        if callable(normalize_speaker_key):
+            normalized = normalize_speaker_key(speaker_key)
+            if isinstance(normalized, str) and normalized.strip():
+                speaker_key = normalized.strip()
+        elif not speaker_key.strip():
+            speaker_key = NO_SPEAKER_KEY
+
+        if not speaker_key.strip():
+            speaker_key = NO_SPEAKER_KEY
+
+        speaker_en = ""
+        speaker_translation = getattr(self, "_speaker_translation_for_key", None)
+        if callable(speaker_translation):
+            translated = speaker_translation(speaker_key)
+            if isinstance(translated, str) and translated.strip():
+                speaker_en = translated.strip()
+        if not speaker_en and isinstance(segment.translation_speaker, str):
+            speaker_en = segment.translation_speaker.strip()
+        if speaker_key == NO_SPEAKER_KEY:
+            speaker_en = ""
+        return speaker_key, speaker_en
+
+    def _consistency_neighbor_text_for_segment(
+        self,
+        segment: DialogueSegment,
+    ) -> tuple[str, str]:
+        source_text = "\n".join(self._segment_source_lines_for_display(segment)).strip()
+        translation_text = "\n".join(
+            self._normalize_translation_lines(segment.translation_lines)
+        ).strip()
+        return source_text, translation_text
+
+    def _find_consistency_entry_segment(
+        self,
+        payload: dict[str, Any],
+    ) -> Optional[tuple[FileSession, int, DialogueSegment]]:
+        path_raw = payload.get("path")
+        uid_raw = payload.get("uid")
+        if not isinstance(path_raw, str) or not path_raw:
+            return None
+        if not isinstance(uid_raw, str) or not uid_raw:
+            return None
+
+        path = Path(path_raw)
+        session = self.sessions.get(path)
+        if session is None:
+            return None
+
+        for idx, segment in enumerate(session.segments):
+            if segment.uid == uid_raw:
+                return session, idx, segment
+        return None
+
+    def _consistency_neighbor_slot_payload(
+        self,
+        session: FileSession,
+        index: int,
+    ) -> dict[str, str]:
+        source_label = self._consistency_source_language_label()
+        target_label = self._consistency_target_language_label()
+        if index < 0 or index >= len(session.segments):
+            return {
+                "speaker_source": NO_SPEAKER_KEY,
+                "text_source": "-",
+                "speaker_target": "-",
+                "text_target": "-",
+                "source_label": source_label,
+                "target_label": target_label,
+            }
+        segment = session.segments[index]
+        speaker_source, speaker_target = self._consistency_speakers_for_segment(segment)
+        text_source, text_target = self._consistency_neighbor_text_for_segment(segment)
+        return {
+            "speaker_source": speaker_source or NO_SPEAKER_KEY,
+            "text_source": text_source or "-",
+            "speaker_target": speaker_target or "-",
+            "text_target": text_target or "-",
+            "source_label": source_label,
+            "target_label": target_label,
+        }
+
+    def _consistency_neighbor_context_payload(
+        self,
+        payload: Optional[dict[str, Any]],
+    ) -> dict[str, Any]:
+        source_label = self._consistency_source_language_label()
+        target_label = self._consistency_target_language_label()
+        empty_slots: dict[str, dict[str, str]] = {
+            "previous": {
+                "speaker_source": NO_SPEAKER_KEY,
+                "text_source": "-",
+                "speaker_target": "-",
+                "text_target": "-",
+                "source_label": source_label,
+                "target_label": target_label,
+            },
+            "current": {
+                "speaker_source": NO_SPEAKER_KEY,
+                "text_source": "-",
+                "speaker_target": "-",
+                "text_target": "-",
+                "source_label": source_label,
+                "target_label": target_label,
+            },
+            "next": {
+                "speaker_source": NO_SPEAKER_KEY,
+                "text_source": "-",
+                "speaker_target": "-",
+                "text_target": "-",
+                "source_label": source_label,
+                "target_label": target_label,
+            },
+        }
+        if payload is None:
+            return {
+                "status": "Select an entry to inspect neighboring strings.",
+                "slots": empty_slots,
+                "entry_header": "",
+            }
+        resolved = self._find_consistency_entry_segment(payload)
+        if resolved is None:
+            return {
+                "status": "Selected entry no longer exists.",
+                "slots": empty_slots,
+                "entry_header": "",
+            }
+        session, segment_index, _segment = resolved
+        relative = self._relative_path(session.path)
+        entry_label = payload.get("entry")
+        if not isinstance(entry_label, str) or not entry_label.strip():
+            entry_label = "Entry"
+        return {
+            "status": (
+                f"Source: {source_label} | Target: {target_label} | "
+                f"Entry: {relative} | {entry_label}"
+            ),
+            "entry_header": f"Entry: {relative} | {entry_label}",
+            "slots": {
+                "previous": self._consistency_neighbor_slot_payload(
+                    session, segment_index - 1
+                ),
+                "current": self._consistency_neighbor_slot_payload(session, segment_index),
+                "next": self._consistency_neighbor_slot_payload(session, segment_index + 1),
+            },
+        }
+
+    def _build_consistency_neighbor_preview_text(
+        self,
+        payload: Optional[dict[str, Any]],
+    ) -> str:
+        context_payload = self._consistency_neighbor_context_payload(payload)
+        slots = context_payload.get("slots")
+        if not isinstance(slots, dict):
+            return str(context_payload.get("status", "")).strip()
+
+        def block_text(label: str, key: str) -> str:
+            slot = slots.get(key)
+            if not isinstance(slot, dict):
+                return f"[{label}]"
+            source_label = str(slot.get("source_label", "Source"))
+            target_label = str(slot.get("target_label", "Target"))
+            return "\n".join(
+                [
+                    f"[{label}]",
+                    f"Speaker ({source_label}): {slot.get('speaker_source', NO_SPEAKER_KEY)}",
+                    f"Text ({source_label}): {slot.get('text_source', '-')}",
+                    f"Speaker ({target_label}): {slot.get('speaker_target', '-')}",
+                    f"Text ({target_label}): {slot.get('text_target', '-')}",
+                ]
+            )
+
+        entry_header = str(context_payload.get("entry_header", "")).strip()
+        if not entry_header:
+            status = str(context_payload.get("status", "")).strip()
+            return status or "Select an entry to inspect neighboring strings."
+        return "\n".join(
+            [
+                entry_header,
+                "",
+                block_text("Previous", "previous"),
+                "",
+                block_text("Current", "current"),
+                "",
+                block_text("Next", "next"),
+            ]
+        )
+
+    def _set_consistency_neighbor_section(
+        self,
+        section_widgets: dict[str, Any],
+        section_payload: dict[str, Any],
+    ) -> None:
+        source_speaker_edit = section_widgets.get("source_speaker_edit")
+        if source_speaker_edit is not None and hasattr(source_speaker_edit, "setText"):
+            source_speaker_edit.setText(str(section_payload.get("speaker_source", "")))
+        target_speaker_edit = section_widgets.get("target_speaker_edit")
+        if target_speaker_edit is not None and hasattr(target_speaker_edit, "setText"):
+            target_speaker_edit.setText(str(section_payload.get("speaker_target", "")))
+        source_text_edit = section_widgets.get("source_text_edit")
+        if source_text_edit is not None and hasattr(source_text_edit, "setPlainText"):
+            source_text_edit.setPlainText(str(section_payload.get("text_source", "")))
+        target_text_edit = section_widgets.get("target_text_edit")
+        if target_text_edit is not None and hasattr(target_text_edit, "setPlainText"):
+            target_text_edit.setPlainText(str(section_payload.get("text_target", "")))
+
+    def _refresh_audit_consistency_neighbors_preview(self) -> None:
+        neighbors_check = getattr(self, "audit_consistency_neighbors_check", None)
+        show_context = bool(neighbors_check is not None and neighbors_check.isChecked())
+
+        payload: Optional[dict[str, Any]] = None
+        if self.audit_consistency_entries_list is not None:
+            payload = self._audit_consistency_entry_payload(
+                self.audit_consistency_entries_list.currentItem()
+            )
+
+        sections = getattr(self, "audit_consistency_neighbors_sections", None)
+        legend_label = getattr(self, "audit_consistency_neighbors_legend_label", None)
+        if isinstance(sections, dict) and legend_label is not None:
+            if not show_context:
+                legend_label.setText("Show Context is disabled.")
+                empty = self._consistency_neighbor_context_payload(None)
+                empty_slots = empty.get("slots")
+                if isinstance(empty_slots, dict):
+                    for section_key, section_payload in empty_slots.items():
+                        section_widgets = sections.get(section_key)
+                        if isinstance(section_widgets, dict) and isinstance(
+                            section_payload, dict
+                        ):
+                            self._set_consistency_neighbor_section(
+                                section_widgets, section_payload
+                            )
+                return
+            context_payload = self._consistency_neighbor_context_payload(payload)
+            legend_label.setText(str(context_payload.get("status", "")))
+            slots = context_payload.get("slots")
+            if isinstance(slots, dict):
+                for section_key in ("previous", "current", "next"):
+                    section_widgets = sections.get(section_key)
+                    section_payload = slots.get(section_key)
+                    if isinstance(section_widgets, dict) and isinstance(
+                        section_payload, dict
+                    ):
+                        self._set_consistency_neighbor_section(
+                            section_widgets, section_payload
+                        )
+            return
+
+        neighbors_edit = getattr(self, "audit_consistency_neighbors_edit", None)
+        if neighbors_edit is None:
+            return
+        if not show_context:
+            neighbors_edit.setPlainText("")
+            return
+        neighbors_edit.setPlainText(self._build_consistency_neighbor_preview_text(payload))
+
     def _consistency_variant_hash(self, variant_text: str) -> int:
         digest = hashlib.blake2b(
             variant_text.encode("utf-8", errors="ignore"),
@@ -105,13 +415,46 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             return f"{name_index_label} ID {actor_id}"
         return f"{name_index_label} {block_index}"
 
+    def _consistency_entry_locator(
+        self,
+        path_raw: str,
+        entry_label: str,
+    ) -> str:
+        file_stem = self._consistency_entry_file_stem(path_raw)
+        match = self._BLOCK_ENTRY_RE.fullmatch(entry_label.strip())
+        if match is not None:
+            return f"{file_stem}:{match.group(1)}"
+        return f"{file_stem}:{entry_label.strip() or 'Entry'}"
+
+    def _consistency_entry_display_label(
+        self,
+        path_raw: str,
+        entry_label: str,
+        translation: str,
+        locator_width: int = 0,
+    ) -> str:
+        locator = self._consistency_entry_locator(path_raw, entry_label)
+        padded_locator = (
+            locator.ljust(locator_width) if locator_width > len(locator) else locator
+        )
+
+        translation_preview = (
+            (translation or "")
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+            .replace("\t", "\\t")
+        )
+        if not translation_preview:
+            translation_preview = "(empty)"
+        return f"{padded_locator} | {translation_preview}"
+
     def _collect_audit_consistency_groups(
         self,
         only_inconsistent: bool,
         dialogue_only: bool,
         sort_mode: str,
     ) -> list[dict[str, Any]]:
-        grouped: dict[str, list[dict[str, str]]] = {}
+        grouped: dict[str, list[dict[str, Any]]] = {}
         first_seen_order: dict[str, int] = {}
         source_order = 0
         for path in self.file_paths:
@@ -138,6 +481,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     "entry": self._consistency_entry_label(session, segment, idx),
                     "translation": tl_text,
                 }
+                speaker_jp, speaker_en = self._consistency_speakers_for_segment(segment)
+                entry["speaker_jp"] = speaker_jp
+                entry["speaker_en"] = speaker_en
                 grouped.setdefault(source_text, []).append(entry)
 
         groups: list[dict[str, Any]] = []
@@ -239,6 +585,8 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         }
         color_map = self._consistency_variant_color_map(variants)
         foreground = self._consistency_variant_fg()
+        parsed_entries: list[dict[str, str]] = []
+        max_locator_width = 0
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
@@ -254,11 +602,34 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 entry_label = "Entry"
             if not isinstance(translation, str):
                 translation = ""
-            relative = self._relative_path(Path(path_raw))
-            translation_preview = preview_text(
-                translation if translation else "(empty)", 90
+            speaker_jp = str(entry.get("speaker_jp", "")).strip()
+            speaker_en = str(entry.get("speaker_en", "")).strip()
+            locator = self._consistency_entry_locator(path_raw, entry_label)
+            max_locator_width = max(max_locator_width, len(locator))
+            parsed_entries.append(
+                {
+                    "path": path_raw,
+                    "uid": uid_raw,
+                    "entry": entry_label,
+                    "translation": translation,
+                    "speaker_jp": speaker_jp,
+                    "speaker_en": speaker_en,
+                }
             )
-            label = f"{relative} | {entry_label} | {translation_preview}"
+
+        for entry in parsed_entries:
+            path_raw = entry["path"]
+            uid_raw = entry["uid"]
+            entry_label = entry["entry"]
+            translation = entry["translation"]
+            speaker_jp = entry["speaker_jp"]
+            speaker_en = entry["speaker_en"]
+            label = self._consistency_entry_display_label(
+                path_raw,
+                entry_label,
+                translation,
+                locator_width=max_locator_width,
+            )
             item = QListWidgetItem(label)
             item.setBackground(
                 QBrush(
@@ -274,7 +645,10 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 {
                     "path": path_raw,
                     "uid": uid_raw,
+                    "entry": entry_label,
                     "translation": translation,
+                    "speaker_jp": speaker_jp,
+                    "speaker_en": speaker_en,
                 },
             )
             self.audit_consistency_entries_list.addItem(item)
@@ -290,8 +664,10 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     self.audit_consistency_target_edit.setPlainText(first_translation)
                 else:
                     self.audit_consistency_target_edit.setPlainText("")
+                self._refresh_audit_consistency_neighbors_preview()
                 return
         self.audit_consistency_target_edit.setPlainText("")
+        self._refresh_audit_consistency_neighbors_preview()
 
     def _on_audit_consistency_entry_selected(self) -> None:
         if (
@@ -307,6 +683,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         translation = payload.get("translation")
         if isinstance(translation, str):
             self.audit_consistency_target_edit.setPlainText(translation)
+        self._refresh_audit_consistency_neighbors_preview()
 
     def _refresh_audit_consistency_panel(self, preferred_source: Optional[str] = None) -> None:
         if (
@@ -352,6 +729,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             f"Duplicate groups: {len(groups)} | Duplicate entries: {total_entries}"
         )
         self._refresh_audit_consistency_entries()
+        self._refresh_audit_consistency_neighbors_preview()
 
     def _use_most_common_audit_consistency_translation(self) -> None:
         if self.audit_consistency_groups_list is None or self.audit_consistency_target_edit is None:

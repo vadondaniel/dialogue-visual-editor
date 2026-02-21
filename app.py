@@ -334,12 +334,16 @@ class DialogueVisualEditor(
         self.audit_consistency_only_inconsistent_check: Optional[QCheckBox] = None
         self.audit_consistency_dialogue_only_check: Optional[QCheckBox] = None
         self.audit_consistency_sort_combo: Optional[QComboBox] = None
+        self.audit_consistency_neighbors_check: Optional[QCheckBox] = None
         self.audit_consistency_groups_list: Optional[QListWidget] = None
         self.audit_consistency_entries_list: Optional[QListWidget] = None
         self.audit_consistency_source_edit: Optional[QPlainTextEdit] = None
         self.audit_consistency_target_edit: Optional[QPlainTextEdit] = None
+        self.audit_consistency_neighbors_legend_label: Optional[QLabel] = None
+        self.audit_consistency_neighbors_sections: dict[str, dict[str, object]] = {}
         self.audit_consistency_source_highlighter: Optional[ControlCodeHighlighter] = None
         self.audit_consistency_target_highlighter: Optional[ControlCodeHighlighter] = None
+        self.audit_consistency_neighbors_highlighters: list[ControlCodeHighlighter] = []
         self.audit_consistency_status_label: Optional[QLabel] = None
         self.audit_consistency_goto_btn: Optional[QPushButton] = None
         self.audit_consistency_apply_btn: Optional[QPushButton] = None
@@ -2956,6 +2960,9 @@ class DialogueVisualEditor(
         if self.audit_consistency_target_highlighter is not None:
             self.audit_consistency_target_highlighter.set_dark_theme(dark_theme)
             self.audit_consistency_target_highlighter.rehighlight()
+        for highlighter in self.audit_consistency_neighbors_highlighters:
+            highlighter.set_dark_theme(dark_theme)
+            highlighter.rehighlight()
         if self._middle_autoscroll_indicator is not None:
             self._apply_middle_autoscroll_indicator_style(
                 self._middle_autoscroll_indicator
