@@ -954,6 +954,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_groups_list.currentItemChanged.connect(
             lambda _current, _previous: self._refresh_audit_consistency_entries()
         )
+        consistency_groups_list.itemActivated.connect(
+            lambda _item: self._confirm_and_apply_audit_consistency_target_to_group()
+        )
         consistency_entries_list.currentItemChanged.connect(
             lambda current, _previous: (
                 consistency_goto_btn.setEnabled(current is not None),
@@ -964,7 +967,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             lambda _item: self._go_to_selected_audit_consistency_entry()
         )
         consistency_entries_list.itemActivated.connect(
-            lambda _item: self._go_to_selected_audit_consistency_entry()
+            lambda _item: self._confirm_and_apply_audit_consistency_target_to_group()
         )
         consistency_goto_btn.clicked.connect(
             self._go_to_selected_audit_consistency_entry

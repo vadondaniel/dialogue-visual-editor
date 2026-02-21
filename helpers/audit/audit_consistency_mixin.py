@@ -6,9 +6,9 @@ from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QListWidgetItem, QTextEdit
+from PySide6.QtWidgets import QApplication, QListWidgetItem, QMessageBox, QTextEdit
 
 from ..core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
 from ..core.text_utils import (
@@ -824,7 +824,11 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         self._refresh_audit_consistency_target_overflow_status()
         self._refresh_audit_consistency_neighbors_preview()
 
-    def _refresh_audit_consistency_panel(self, preferred_source: Optional[str] = None) -> None:
+    def _refresh_audit_consistency_panel(
+        self,
+        preferred_source: Optional[str] = None,
+        preferred_row: Optional[int] = None,
+    ) -> None:
         if (
             self.audit_consistency_only_inconsistent_check is None
             or self.audit_consistency_dialogue_only_check is None
@@ -862,7 +866,10 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
 
         if groups:
             if selected_row < 0:
-                selected_row = 0
+                if preferred_row is not None:
+                    selected_row = max(0, min(int(preferred_row), len(groups) - 1))
+                else:
+                    selected_row = 0
             self.audit_consistency_groups_list.setCurrentRow(selected_row)
         self.audit_consistency_status_label.setText(
             f"Duplicate groups: {len(groups)} | Duplicate entries: {total_entries}"
@@ -887,6 +894,33 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         self._refresh_audit_consistency_target_overflow_status()
         self.statusBar().showMessage("Loaded most-common translation as target.")
 
+    def _confirm_and_apply_audit_consistency_target_to_group(self) -> None:
+        if self.audit_consistency_groups_list is None:
+            return
+        payload = self._audit_consistency_group_payload(
+            self.audit_consistency_groups_list.currentItem()
+        )
+        if payload is None:
+            self.statusBar().showMessage("Select a duplicate group first.")
+            return
+        source_text = str(payload.get("source_text", "")).strip()
+        prompt = (
+            "Apply current target translation to this duplicate group?\n\n"
+            f"{preview_text(source_text, 120)}"
+        )
+        answer = QMessageBox.question(
+            self,
+            "Confirm Apply",
+            prompt,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._focus_audit_consistency_groups_list()
+            return
+        self._apply_audit_consistency_target_to_group(advance_to_next=True)
+        self._focus_audit_consistency_groups_list()
+
     def _go_to_selected_audit_consistency_entry(self) -> None:
         if self.audit_consistency_entries_list is None:
             return
@@ -903,12 +937,29 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             return
         self._jump_to_audit_location(path_raw, uid_raw)
 
-    def _apply_audit_consistency_target_to_group(self) -> None:
+    def _apply_audit_consistency_target_to_group(
+        self,
+        advance_to_next: bool = True,
+    ) -> None:
         if (
             self.audit_consistency_groups_list is None
             or self.audit_consistency_target_edit is None
         ):
             return
+        current_row = self.audit_consistency_groups_list.currentRow()
+        next_row = current_row
+        next_source_key = ""
+        if advance_to_next and current_row >= 0:
+            next_row = min(
+                current_row + 1,
+                max(0, self.audit_consistency_groups_list.count() - 1),
+            )
+            next_item = self.audit_consistency_groups_list.item(next_row)
+            next_payload = self._audit_consistency_group_payload(next_item)
+            if isinstance(next_payload, dict):
+                next_source_raw = next_payload.get("source_text")
+                if isinstance(next_source_raw, str):
+                    next_source_key = next_source_raw
         group_payload = self._audit_consistency_group_payload(
             self.audit_consistency_groups_list.currentItem()
         )
@@ -960,6 +1011,15 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
 
         if changed_entries <= 0:
             self.statusBar().showMessage("No translations changed in this group.")
+            if advance_to_next:
+                preferred_source = (
+                    next_source_key if next_source_key else source_key
+                )
+                self._refresh_audit_consistency_panel(
+                    preferred_source=preferred_source,
+                    preferred_row=next_row,
+                )
+                self._focus_audit_consistency_groups_list()
             return
 
         for path in touched_paths:
@@ -982,7 +1042,40 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 )
         else:
             self._refresh_translator_detail_panel()
-        self._refresh_audit_consistency_panel(preferred_source=source_key)
+        preferred_source = next_source_key if advance_to_next and next_source_key else source_key
+        preferred_row = next_row if advance_to_next else None
+        self._refresh_audit_consistency_panel(
+            preferred_source=preferred_source,
+            preferred_row=preferred_row,
+        )
+        if advance_to_next:
+            self._focus_audit_consistency_groups_list()
         self.statusBar().showMessage(
             f"Synchronized translation across {changed_entries} duplicate entries."
         )
+    def _focus_audit_consistency_groups_list(self) -> None:
+        if self.audit_consistency_groups_list is None:
+            return
+        groups_list_widget = self.audit_consistency_groups_list
+        entries_list_widget = self.audit_consistency_entries_list
+
+        def apply_focus() -> None:
+            if self.audit_consistency_groups_list is None:
+                return
+            audit_window = getattr(self, "audit_window", None)
+            if audit_window is not None and audit_window.isVisible():
+                audit_window.raise_()
+                audit_window.activateWindow()
+            target_widget = groups_list_widget
+            if entries_list_widget is not None and entries_list_widget.count() > 0:
+                target_widget = entries_list_widget
+            if target_widget.currentRow() < 0 and target_widget.count() > 0:
+                target_widget.setCurrentRow(0)
+            target_widget.setFocus(Qt.FocusReason.OtherFocusReason)
+
+        apply_focus()
+        for delay_ms in (0, 30, 120):
+            QTimer.singleShot(delay_ms, apply_focus)
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
