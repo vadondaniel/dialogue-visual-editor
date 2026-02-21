@@ -483,9 +483,23 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
 
         consistency_neighbors_panel.setVisible(False)
 
-        consistency_splitter.setStretchFactor(0, 4)
-        consistency_splitter.setStretchFactor(1, 6)
-        consistency_splitter.setStretchFactor(2, 6)
+        def _apply_consistency_splitter_sizes(context_visible: bool) -> None:
+            sizes = consistency_splitter.sizes()
+            total = sum(size for size in sizes if size > 0)
+            if total <= 0:
+                total = max(consistency_splitter.width(), consistency_tab.width(), 1)
+
+            if context_visible:
+                left = max(1, int(total * (1 / 6)))
+                middle = max(1, int(total * (3 / 6)))
+                right = max(1, total - left - middle)
+                consistency_splitter.setSizes([left, middle, right])
+            else:
+                left = max(1, int(total * (1 / 5)))
+                middle = max(1, total - left)
+                consistency_splitter.setSizes([left, middle, 0])
+
+        QTimer.singleShot(0, lambda: _apply_consistency_splitter_sizes(False))
 
         tabs.addTab(consistency_tab, "Consistency")
 
@@ -945,12 +959,16 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_target_edit.textChanged.connect(
             self._refresh_audit_consistency_target_overflow_status
         )
-        consistency_neighbors_check.toggled.connect(
-            lambda checked: (
-                consistency_neighbors_panel.setVisible(bool(checked)),
-                self._refresh_audit_consistency_neighbors_preview(),
+        def _on_consistency_context_toggled(checked: bool) -> None:
+            visible = bool(checked)
+            consistency_neighbors_panel.setVisible(visible)
+            QTimer.singleShot(
+                0,
+                lambda: _apply_consistency_splitter_sizes(visible),
             )
-        )
+            self._refresh_audit_consistency_neighbors_preview()
+
+        consistency_neighbors_check.toggled.connect(_on_consistency_context_toggled)
         consistency_groups_list.currentItemChanged.connect(
             lambda _current, _previous: self._refresh_audit_consistency_entries()
         )
