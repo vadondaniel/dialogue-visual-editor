@@ -16,6 +16,28 @@ class _AuditCoreHostTypingFallback:
 
 
 class AuditCoreMixin(_AuditCoreHostTypingFallback):
+    def _scope_for_audit_target_uid(self, path: Path, uid_raw: str) -> Optional[str]:
+        session = self.sessions.get(path)
+        if session is None:
+            return None
+        segments_raw = getattr(session, "segments", None)
+        if not isinstance(segments_raw, list):
+            return None
+
+        for segment in segments_raw:
+            segment_uid = getattr(segment, "uid", None)
+            if segment_uid != uid_raw:
+                continue
+            is_misc_resolver = getattr(self, "_is_misc_segment_kind_for_scope", None)
+            if callable(is_misc_resolver):
+                try:
+                    is_misc = bool(is_misc_resolver(segment))
+                except Exception:
+                    is_misc = False
+                return "misc" if is_misc else "dialogue"
+            return "dialogue"
+        return None
+
     def _set_audit_pinned_uid(self, uid: Optional[str]) -> None:
         self.audit_pinned_uid = uid
         refresh_visuals = getattr(self, "_refresh_block_visual_states", None)
@@ -210,11 +232,21 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
                 f"Cannot jump: {path.name} is not loaded."
             )
             return False
+        target_scope = self._scope_for_audit_target_uid(path, uid_raw)
 
         if path not in self.file_items:
             self._rebuild_file_list(preferred_path=path)
 
-        file_item = self.file_items.get(path)
+        file_item = None
+        if isinstance(target_scope, str):
+            scoped_items_raw = getattr(self, "file_items_scoped", None)
+            if isinstance(scoped_items_raw, dict):
+                scoped_key = (path, target_scope)
+                candidate_item = scoped_items_raw.get(scoped_key)
+                if candidate_item is not None:
+                    file_item = candidate_item
+        if file_item is None:
+            file_item = self.file_items.get(path)
         if file_item is not None:
             row = self.file_list.row(file_item)
             if row >= 0:
@@ -224,7 +256,7 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
 
         self.pending_audit_flash_uid = uid_raw
         self._set_audit_pinned_uid(uid_raw)
-        self._open_file(path, focus_uid=uid_raw)
+        self._open_file(path, focus_uid=uid_raw, view_scope=target_scope)
         self._schedule_audit_target_flash(uid_raw)
         self.statusBar().showMessage(
             f"Jumped to {self._relative_path(path)} ({uid_raw})."
