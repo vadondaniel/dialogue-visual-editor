@@ -127,6 +127,31 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(segment.background, 1)
         self.assertEqual(segment.position, 0)
 
+    def test_parse_script_message_block_with_templated_add_expression(self) -> None:
+        data = [
+            {
+                "code": 355,
+                "indent": 0,
+                "parameters": ["var n = 1;"],
+            },
+            {
+                "code": 655,
+                "indent": 0,
+                "parameters": ['$gameMessage.add("A" + m + "B");'],
+            },
+        ]
+        session = parse_dialogue_data(Path("Map006.json"), data)
+        self.assertEqual(len(session.segments), 1)
+        segment = session.segments[0]
+        self.assertEqual(segment.segment_kind, "script_message")
+        self.assertEqual(segment.lines, ["A{{EXPR1}}B"])
+        self.assertEqual(len(segment.script_entry_expression_templates), 2)
+        template_payload = segment.script_entry_expression_templates[1]
+        self.assertIsInstance(template_payload, dict)
+        assert isinstance(template_payload, dict)
+        self.assertEqual(template_payload.get("kind"), "add")
+        self.assertEqual(template_payload.get("expr_terms"), ["m"])
+
     def test_map_display_name_segment_is_inserted(self) -> None:
         data = {"displayName": "Town Square"}
         session = parse_dialogue_data(Path("Map010.json"), data)
@@ -327,7 +352,6 @@ class ParserTests(unittest.TestCase):
             getattr(note_segments[0], "json_text_path", ()),
             (1, "note"),
         )
-
 
 if __name__ == "__main__":
     unittest.main()

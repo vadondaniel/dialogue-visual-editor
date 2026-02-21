@@ -10,6 +10,7 @@ _GAME_MESSAGE_BACKGROUND_PREFIX_RE = re.compile(
     r"^\s*\$gameMessage\.setBackground\s*\(")
 _GAME_MESSAGE_POSITION_PREFIX_RE = re.compile(
     r"^\s*\$gameMessage\.setPositionType\s*\(")
+_GAME_MESSAGE_EXPR_PLACEHOLDER_RE = re.compile(r"\{\{EXPR(\d+)\}\}")
 _HEX_DIGITS = set("0123456789abcdefABCDEF")
 
 
@@ -159,6 +160,131 @@ def parse_game_message_call(line: str) -> tuple[str, str, str] | None:
     raw_value = "".join(raw_value_chars)
     decoded_value = _decode_js_string_literal(raw_value)
     return call_kind, decoded_value, quote_char
+
+
+def _split_top_level_plus_expression(expression: str) -> list[str]:
+    terms: list[str] = []
+    chars: list[str] = []
+    quote_char = ""
+    escape_next = False
+    paren_depth = 0
+    bracket_depth = 0
+    brace_depth = 0
+
+    for ch in expression:
+        if escape_next:
+            chars.append(ch)
+            escape_next = False
+            continue
+        if quote_char:
+            chars.append(ch)
+            if ch == "\\":
+                escape_next = True
+                continue
+            if ch == quote_char:
+                quote_char = ""
+            continue
+        if ch in {'"', "'"}:
+            quote_char = ch
+            chars.append(ch)
+            continue
+        if ch == "(":
+            paren_depth += 1
+            chars.append(ch)
+            continue
+        if ch == ")":
+            paren_depth = max(0, paren_depth - 1)
+            chars.append(ch)
+            continue
+        if ch == "[":
+            bracket_depth += 1
+            chars.append(ch)
+            continue
+        if ch == "]":
+            bracket_depth = max(0, bracket_depth - 1)
+            chars.append(ch)
+            continue
+        if ch == "{":
+            brace_depth += 1
+            chars.append(ch)
+            continue
+        if ch == "}":
+            brace_depth = max(0, brace_depth - 1)
+            chars.append(ch)
+            continue
+        if ch == "+" and paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+            part = "".join(chars).strip()
+            if part:
+                terms.append(part)
+            chars = []
+            continue
+        chars.append(ch)
+
+    tail = "".join(chars).strip()
+    if tail:
+        terms.append(tail)
+    return terms
+
+
+def _decode_js_string_term(term: str) -> tuple[str, str] | None:
+    stripped = term.strip()
+    if len(stripped) < 2:
+        return None
+    quote_char = stripped[0]
+    if quote_char not in {'"', "'"}:
+        return None
+    if stripped[-1] != quote_char:
+        return None
+    return _decode_js_string_literal(stripped[1:-1]), quote_char
+
+
+def _encode_js_string_term(text: str, quote_char: str) -> str:
+    encoded = _encode_js_string_literal(text, quote_char)
+    return f"{quote_char}{encoded}{quote_char}"
+
+
+def parse_game_message_templated_call(
+    line: str,
+) -> tuple[str, str, str, list[str]] | None:
+    match = _GAME_MESSAGE_PREFIX_RE.match(line)
+    if match is None:
+        return None
+    call_kind = match.group(1)
+    args_raw = _parse_game_message_arguments(line, _GAME_MESSAGE_PREFIX_RE)
+    if not args_raw:
+        return None
+    if _has_top_level_comma(args_raw):
+        return None
+
+    terms = _split_top_level_plus_expression(args_raw)
+    if len(terms) <= 1:
+        return None
+
+    display_parts: list[str] = []
+    expression_terms: list[str] = []
+    quote_char = '"'
+    saw_string_literal = False
+    saw_expression = False
+
+    for term in terms:
+        decoded_term = _decode_js_string_term(term)
+        if decoded_term is not None:
+            decoded_text, decoded_quote = decoded_term
+            saw_string_literal = True
+            quote_char = decoded_quote
+            display_parts.append(decoded_text)
+            continue
+        cleaned_expression = term.strip()
+        if not cleaned_expression:
+            continue
+        saw_expression = True
+        expression_terms.append(cleaned_expression)
+        display_parts.append(f"{{{{EXPR{len(expression_terms)}}}}}")
+
+    if not saw_string_literal or not saw_expression:
+        return None
+
+    return call_kind, "".join(display_parts), quote_char, expression_terms
 
 
 def parse_game_message_set_face_image_call(line: str) -> tuple[str, str] | None:
@@ -320,3 +446,54 @@ def build_game_message_call(kind: str, text: str, quote_char: str = '"') -> str:
     quote = quote_char if quote_char in {'"', "'"} else '"'
     encoded_value = _encode_js_string_literal(text, quote)
     return f"$gameMessage.{call_kind}({quote}{encoded_value}{quote});"
+
+
+def build_game_message_templated_call(
+    kind: str,
+    text: str,
+    quote_char: str = '"',
+    expression_terms: list[str] | None = None,
+) -> str:
+    call_kind = kind.strip()
+    if call_kind not in {"add", "setSpeakerName"}:
+        call_kind = "add"
+    quote = quote_char if quote_char in {'"', "'"} else '"'
+    expr_terms = [
+        term.strip()
+        for term in (expression_terms or [])
+        if isinstance(term, str) and term.strip()
+    ]
+    if not expr_terms:
+        return build_game_message_call(call_kind, text, quote)
+
+    parts: list[str] = []
+    used_indexes: set[int] = set()
+    cursor = 0
+    for match in _GAME_MESSAGE_EXPR_PLACEHOLDER_RE.finditer(text):
+        literal = text[cursor: match.start()]
+        if literal:
+            parts.append(_encode_js_string_term(literal, quote))
+        cursor = match.end()
+        try:
+            index = int(match.group(1)) - 1
+        except Exception:
+            index = -1
+        if 0 <= index < len(expr_terms):
+            parts.append(expr_terms[index])
+            used_indexes.add(index)
+        else:
+            parts.append(_encode_js_string_term(match.group(0), quote))
+
+    trailing_literal = text[cursor:]
+    if trailing_literal:
+        parts.append(_encode_js_string_term(trailing_literal, quote))
+
+    # Preserve source expressions even if translator removed placeholders.
+    for index, expression in enumerate(expr_terms):
+        if index not in used_indexes:
+            parts.append(expression)
+
+    if not parts:
+        parts.append(_encode_js_string_term("", quote))
+    joined_args = " + ".join(parts)
+    return f"$gameMessage.{call_kind}({joined_args});"

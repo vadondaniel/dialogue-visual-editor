@@ -39,6 +39,10 @@ class _Harness(PersistenceExportMixin):
     def __init__(self) -> None:
         self.auto_split_check = _BoolControl(False)
         self.max_lines_spin = _SpinControl(4)
+        self.problem_char_limit_check = _BoolControl(False)
+        self.problem_line_limit_check = _BoolControl(False)
+        self.problem_control_mismatch_check = _BoolControl(False)
+        self.problem_trailing_color_code_check = _BoolControl(False)
         self.problem_missing_translation_check = _BoolControl(False)
         self.problem_contains_japanese_check = _BoolControl(False)
 
@@ -552,6 +556,36 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual(rebuilt_lines[4], '$gameMessage.add("TL 1");')
         self.assertEqual(rebuilt_lines[5], '$gameMessage.add("TL 2");')
         self.assertEqual(rebuilt_lines[6], "this.setWaitMode('message');")
+
+    def test_build_entries_for_script_message_segment_preserves_expression_terms(self) -> None:
+        harness = _Harness()
+        segment = DialogueSegment(
+            uid="Map011.json:L0:0",
+            context="ctx",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=["A{{EXPR1}}B"],
+            original_lines=["A{{EXPR1}}B"],
+            source_lines=["A{{EXPR1}}B"],
+            code401_template={"code": 655, "indent": 0, "parameters": ["$gameMessage.add(\"\");"]},
+            segment_kind="script_message",
+            line_entry_code=655,
+            script_entries_template=[
+                {"code": 355, "indent": 0, "parameters": ["var seed = 1;"]},
+                {"code": 655, "indent": 0, "parameters": ['$gameMessage.add("A" + m + "B");']},
+            ],
+            script_entry_roles=["other", "add"],
+            script_entry_quotes=['"', '"'],
+            script_entry_expression_templates=[None, {"kind": "add", "expr_terms": ["m"]}],
+        )
+
+        rebuilt = harness._build_entries_for_script_message_segment(
+            segment,
+            ["TL {{EXPR1}} done"],
+        )
+
+        rebuilt_lines = [entry["parameters"][0] for entry in rebuilt]
+        self.assertEqual(rebuilt_lines[0], "var seed = 1;")
+        self.assertEqual(rebuilt_lines[1], '$gameMessage.add("TL " + m + " done");')
 
     def test_build_source_data_for_session_rebuilds_without_mutating_original(self) -> None:
         harness = _Harness()

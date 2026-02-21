@@ -22,6 +22,7 @@ class DialogueSegment:
     script_entries_template: list[dict[str, Any]] = field(default_factory=list)
     script_entry_roles: list[str] = field(default_factory=list)
     script_entry_quotes: list[str] = field(default_factory=list)
+    script_entry_expression_templates: list[dict[str, Any] | None] = field(default_factory=list)
     tl_uid: str = ""
     translation_lines: list[str] = field(default_factory=list)
     original_translation_lines: list[str] = field(default_factory=list)

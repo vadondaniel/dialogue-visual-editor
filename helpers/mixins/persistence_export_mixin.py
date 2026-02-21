@@ -20,7 +20,10 @@ from ..core.models import (
     FileSession,
 )
 from ..core.parser import is_plugins_js_path, plugins_js_source_from_data
-from ..core.script_message_utils import build_game_message_call
+from ..core.script_message_utils import (
+    build_game_message_call,
+    build_game_message_templated_call,
+)
 from ..core.text_utils import (
     CONTROL_TOKEN_RE,
     chunk_lines_by_row_budget,
@@ -569,13 +572,22 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         kind: str,
         text: str,
         quote_char: str,
+        expression_terms: Optional[list[str]] = None,
     ) -> None:
         params = entry.get("parameters")
         if not isinstance(params, list):
             params = []
         while len(params) <= 0:
             params.append("")
-        params[0] = build_game_message_call(kind, text, quote_char)
+        if expression_terms:
+            params[0] = build_game_message_templated_call(
+                kind,
+                text,
+                quote_char,
+                expression_terms=expression_terms,
+            )
+        else:
+            params[0] = build_game_message_call(kind, text, quote_char)
         entry["parameters"] = params
 
     def _build_entries_for_script_message_segment(
@@ -589,6 +601,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         ]
         roles = list(segment.script_entry_roles)
         quotes = list(segment.script_entry_quotes)
+        expression_templates = list(segment.script_entry_expression_templates)
         if not templates:
             return self._build_entries_for_segment_lines(
                 segment,
@@ -617,12 +630,34 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             if add_indexes[0] < len(quotes)
             else '"'
         )
+        first_add_expression_terms: Optional[list[str]] = None
+        if add_indexes[0] < len(expression_templates):
+            first_add_template_payload = expression_templates[add_indexes[0]]
+            if isinstance(first_add_template_payload, dict):
+                expr_terms_raw = first_add_template_payload.get("expr_terms")
+                if isinstance(expr_terms_raw, list):
+                    first_add_expression_terms = [
+                        term.strip()
+                        for term in expr_terms_raw
+                        if isinstance(term, str) and term.strip()
+                    ] or None
         built_entries: list[dict[str, Any]] = []
         add_cursor = 0
 
         for idx, template in enumerate(templates):
             role = roles[idx] if idx < len(roles) else "other"
             quote_char = quotes[idx] if idx < len(quotes) else '"'
+            expression_terms: Optional[list[str]] = None
+            if idx < len(expression_templates):
+                expression_template_payload = expression_templates[idx]
+                if isinstance(expression_template_payload, dict):
+                    expr_terms_raw = expression_template_payload.get("expr_terms")
+                    if isinstance(expr_terms_raw, list):
+                        expression_terms = [
+                            term.strip()
+                            for term in expr_terms_raw
+                            if isinstance(term, str) and term.strip()
+                        ] or None
             rebuilt_entry = copy.deepcopy(template)
             if role == "speaker":
                 self._set_script_message_call_entry(
@@ -630,6 +665,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     kind="setSpeakerName",
                     text=speaker_text,
                     quote_char=quote_char,
+                    expression_terms=expression_terms,
                 )
                 built_entries.append(rebuilt_entry)
                 continue
@@ -643,6 +679,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     kind="add",
                     text=next_text,
                     quote_char=quote_char,
+                    expression_terms=expression_terms,
                 )
                 built_entries.append(rebuilt_entry)
                 if idx == last_add_index:
@@ -656,6 +693,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                             kind="add",
                             text=incoming_lines[add_cursor],
                             quote_char=first_add_quote,
+                            expression_terms=first_add_expression_terms,
                         )
                         built_entries.append(extra_entry)
                         add_cursor += 1

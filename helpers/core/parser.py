@@ -10,6 +10,7 @@ from typing import Any
 from .models import CommandBundle, CommandToken, DialogueSegment, FileSession
 from .script_message_utils import (
     parse_game_message_call,
+    parse_game_message_templated_call,
     parse_game_message_set_background_call,
     parse_game_message_set_face_image_call,
     parse_game_message_set_position_type_call,
@@ -463,7 +464,7 @@ def _plugin_command_argument_value_is_non_meaningful(text: str) -> bool:
     return all(_plugin_command_argument_part_is_non_meaningful(part) for part in parts)
 
 
-def _event_note_is_translatable(text: str) -> bool:
+def _text_is_translatable_for_misc_extraction(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return False
@@ -483,6 +484,30 @@ def _json_path_label(path_tokens: tuple[Any, ...]) -> str:
     return label
 
 
+def _build_json_text_segment(
+    *,
+    path: Path,
+    uid: str,
+    context: str,
+    text: str,
+    path_tokens: tuple[Any, ...],
+    speaker: str = "",
+    segment_kind: str = "note_text",
+) -> DialogueSegment:
+    lines = split_lines_preserve_empty(text)
+    segment = DialogueSegment(
+        uid=uid,
+        context=context,
+        code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, speaker]},
+        lines=list(lines),
+        original_lines=list(lines),
+        source_lines=list(lines),
+        segment_kind=segment_kind,
+    )
+    setattr(segment, "json_text_path", path_tokens)
+    return segment
+
+
 def _build_note_text_segments(path: Path, data: Any) -> list[DialogueSegment]:
     segments: list[DialogueSegment] = []
 
@@ -491,23 +516,20 @@ def _build_note_text_segments(path: Path, data: Any) -> list[DialogueSegment]:
             note_raw = node.get("note")
             if (
                 isinstance(note_raw, str)
-                and _event_note_is_translatable(note_raw)
+                and _text_is_translatable_for_misc_extraction(note_raw)
             ):
                 note_path_tokens = tuple(path_tokens + ["note"])
                 note_path_key = "|".join(str(token) for token in note_path_tokens)
                 digest = hashlib.sha1(note_path_key.encode("utf-8")).hexdigest()[:12]
-                lines = split_lines_preserve_empty(note_raw)
-                segment = DialogueSegment(
+                segment = _build_json_text_segment(
+                    path=path,
                     uid=f"{path.name}:N:{digest}",
                     context=f"{path.name} > {_json_path_label(note_path_tokens)}",
-                    code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
-                    lines=list(lines),
-                    original_lines=list(lines),
-                    source_lines=list(lines),
+                    text=note_raw,
+                    path_tokens=note_path_tokens,
                     segment_kind="note_text",
                 )
                 setattr(segment, "note_text_path", note_path_tokens)
-                setattr(segment, "json_text_path", note_path_tokens)
                 segments.append(segment)
             for key, value in node.items():
                 walk(value, path_tokens + [key])
@@ -702,6 +724,7 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                             ]
                             script_roles: list[str] = []
                             script_quotes: list[str] = []
+                            script_expression_templates: list[dict[str, Any] | None] = []
                             script_lines: list[str] = []
                             speaker_text = ""
                             face_name = ""
@@ -713,12 +736,36 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                 text = first_parameter_text(script_entry)
                                 parsed = parse_game_message_call(text)
                                 if parsed is None:
+                                    templated_parsed = parse_game_message_templated_call(
+                                        text
+                                    )
+                                    if templated_parsed is not None:
+                                        call_kind, decoded_text, quote_char, expr_terms = templated_parsed
+                                        template_payload: dict[str, Any] = {
+                                            "kind": call_kind,
+                                            "expr_terms": list(expr_terms),
+                                        }
+                                        if call_kind == "add":
+                                            script_roles.append("add")
+                                            script_quotes.append(quote_char)
+                                            script_expression_templates.append(template_payload)
+                                            script_lines.append(decoded_text)
+                                            if not line_template:
+                                                line_template = copy.deepcopy(
+                                                    script_entry)
+                                        else:
+                                            script_roles.append("speaker")
+                                            script_quotes.append(quote_char)
+                                            script_expression_templates.append(template_payload)
+                                            speaker_text = decoded_text
+                                        continue
                                     face_parsed = parse_game_message_set_face_image_call(
                                         text
                                     )
                                     if face_parsed is not None:
                                         script_roles.append("face")
                                         script_quotes.append('"')
+                                        script_expression_templates.append(None)
                                         parsed_face_name, parsed_face_index_raw = face_parsed
                                         face_name = parsed_face_name.strip()
                                         try:
@@ -732,6 +779,7 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                     if background_parsed is not None:
                                         script_roles.append("background")
                                         script_quotes.append('"')
+                                        script_expression_templates.append(None)
                                         try:
                                             background = int(background_parsed)
                                         except Exception:
@@ -743,6 +791,7 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                     if position_parsed is not None:
                                         script_roles.append("position")
                                         script_quotes.append('"')
+                                        script_expression_templates.append(None)
                                         try:
                                             position = int(position_parsed)
                                         except Exception:
@@ -750,11 +799,13 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                         continue
                                     script_roles.append("other")
                                     script_quotes.append('"')
+                                    script_expression_templates.append(None)
                                     continue
                                 call_kind, decoded_text, quote_char = parsed
                                 if call_kind == "add":
                                     script_roles.append("add")
                                     script_quotes.append(quote_char)
+                                    script_expression_templates.append(None)
                                     script_lines.append(decoded_text)
                                     if not line_template:
                                         line_template = copy.deepcopy(
@@ -762,6 +813,7 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                 else:
                                     script_roles.append("speaker")
                                     script_quotes.append(quote_char)
+                                    script_expression_templates.append(None)
                                     speaker_text = decoded_text
                             if script_lines:
                                 if not line_template:
@@ -799,6 +851,7 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
                                     script_entries_template=script_templates,
                                     script_entry_roles=script_roles,
                                     script_entry_quotes=script_quotes,
+                                    script_entry_expression_templates=script_expression_templates,
                                 )
                                 tokens.append(CommandToken(
                                     kind="dialogue", segment=segment))

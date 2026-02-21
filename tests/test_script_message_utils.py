@@ -4,7 +4,9 @@ import unittest
 
 from dialogue_visual_editor.helpers.core.script_message_utils import (
     build_game_message_call,
+    build_game_message_templated_call,
     parse_game_message_call,
+    parse_game_message_templated_call,
     parse_game_message_set_background_call,
     parse_game_message_set_face_image_call,
     parse_game_message_set_position_type_call,
@@ -63,6 +65,33 @@ class ScriptMessageUtilsTests(unittest.TestCase):
             "$gameMessage.setPositionType(2);"
         )
         self.assertEqual(parsed, "2")
+
+    def test_parse_game_message_templated_add_call(self) -> None:
+        parsed = parse_game_message_templated_call(
+            '$gameMessage.add("\\\\C[2]\\\\n[3]\\\\C[0]は\\\\C[2]" + m + "\\\\C[0]の勧誘に成功した！");'
+        )
+        self.assertEqual(
+            parsed,
+            ("add", "\\C[2]\\n[3]\\C[0]は\\C[2]{{EXPR1}}\\C[0]の勧誘に成功した！", '"', ["m"]),
+        )
+
+    def test_build_game_message_templated_call_reuses_expression_terms(self) -> None:
+        built = build_game_message_templated_call(
+            "add",
+            "A{{EXPR1}}B",
+            '"',
+            expression_terms=["m"],
+        )
+        self.assertEqual(built, '$gameMessage.add("A" + m + "B");')
+
+    def test_build_game_message_templated_call_preserves_missing_placeholders(self) -> None:
+        built = build_game_message_templated_call(
+            "add",
+            "Only text",
+            '"',
+            expression_terms=["m"],
+        )
+        self.assertEqual(built, '$gameMessage.add("Only text" + m);')
 
 
 if __name__ == "__main__":
