@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import hashlib
 import json
@@ -28,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
-from ..core.text_utils import natural_sort_key
+from ..core.text_utils import CONTROL_TOKEN_RE, natural_sort_key
 
 
 class MassTranslateHost(Protocol):
@@ -78,23 +79,22 @@ class MassTranslateHost(Protocol):
 
 
 @dataclass(frozen=True)
-class _LineMismatchIssue:
+class _ApplyWarningIssue:
     entry_id: str
     relative_path: str
-    expected_lines: int
-    actual_lines: int
+    warning_reasons: tuple[str, ...]
     source_preview: str
     translation_preview: str
 
 
-class _LineMismatchReviewDialog(QDialog):
+class _ApplyWarningsReviewDialog(QDialog):
     def __init__(
         self,
         parent: QWidget,
-        issues: list[_LineMismatchIssue],
+        issues: list[_ApplyWarningIssue],
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Review Line-Count Mismatches")
+        self.setWindowTitle("Review Apply Warnings")
         self.resize(920, 680)
         self._checks_by_entry_id: dict[str, QCheckBox] = {}
 
@@ -103,7 +103,7 @@ class _LineMismatchReviewDialog(QDialog):
         root.setSpacing(8)
 
         intro = QLabel(
-            "Review entries where output line count differs from source. "
+            "Review entries with line-count and/or control-code warnings. "
             "Checked entries will be applied, unchecked entries will be skipped."
         )
         intro.setWordWrap(True)
@@ -130,10 +130,10 @@ class _LineMismatchReviewDialog(QDialog):
             card_layout.setContentsMargins(6, 6, 6, 6)
             card_layout.setSpacing(4)
 
-            line_label = "line" if issue.actual_lines == 1 else "lines"
+            reasons_text = "; ".join(issue.warning_reasons)
             check = QCheckBox(
                 f"{issue.entry_id} @ {issue.relative_path} "
-                f"({issue.actual_lines} {line_label}, expected {issue.expected_lines})"
+                f"| {reasons_text}"
             )
             check.setChecked(True)
             self._checks_by_entry_id[issue.entry_id] = check
@@ -293,6 +293,27 @@ class MassTranslateDialog(QDialog):
         self.max_chunk_chars_spin.setValue(9000)
         self.max_chunk_chars_spin.setFixedWidth(92)
         options_row.addWidget(self.max_chunk_chars_spin)
+
+        options_row.addWidget(QLabel("Warning level"))
+        self.warning_level_combo = QComboBox()
+        self.warning_level_combo.addItem(
+            "Collapsed Lines Only",
+            "collapsed_lines_only",
+        )
+        self.warning_level_combo.addItem(
+            "All Line Mismatches",
+            "all_line_mismatches",
+        )
+        self.warning_level_combo.addItem(
+            "All Line + Control Mismatches",
+            "all_line_and_control_mismatches",
+        )
+        self.warning_level_combo.setToolTip(
+            "Choose strictness for apply-warning checks."
+        )
+        self.warning_level_combo.setMinimumWidth(180)
+        self.warning_level_combo.setCurrentIndex(0)
+        options_row.addWidget(self.warning_level_combo)
 
         options_row.addStretch(1)
         self.build_chunks_btn = QPushButton("Rebuild Chunks")
@@ -1891,11 +1912,51 @@ class MassTranslateDialog(QDialog):
         return f"{text[: max_chars - 3]}..."
 
     @staticmethod
-    def _line_mismatch_summary_message(issue: _LineMismatchIssue) -> str:
-        line_label = "line" if issue.actual_lines == 1 else "lines"
+    def _counter_summary_text(counts: Counter[str], limit: int = 8) -> str:
+        if not counts:
+            return "(none)"
+        pieces: list[str] = []
+        sorted_items = sorted(counts.items(), key=lambda item: item[0])
+        for idx, (token, count) in enumerate(sorted_items):
+            if idx >= limit:
+                break
+            if count == 1:
+                pieces.append(token)
+            else:
+                pieces.append(f"{token} x{count}")
+        if len(sorted_items) > limit:
+            pieces.append("...")
+        return ", ".join(pieces)
+
+    @staticmethod
+    def _control_tokens(text: str) -> list[str]:
+        return [match.group(0) for match in CONTROL_TOKEN_RE.finditer(text)]
+
+    def _warning_level_mode(self) -> str:
+        combo = getattr(self, "warning_level_combo", None)
+        if combo is not None:
+            current_data_resolver = getattr(combo, "currentData", None)
+            if callable(current_data_resolver):
+                raw_value = current_data_resolver()
+                if isinstance(raw_value, str) and raw_value.strip():
+                    return raw_value
+        return "all_line_and_control_mismatches"
+
+    def _line_warning_should_flag(self, expected_lines: int, actual_lines: int) -> bool:
+        mode = self._warning_level_mode()
+        if mode == "collapsed_lines_only":
+            return expected_lines > 1 and actual_lines == 1
+        return expected_lines != actual_lines
+
+    def _control_warning_enabled(self) -> bool:
+        return self._warning_level_mode() == "all_line_and_control_mismatches"
+
+    @staticmethod
+    def _apply_warning_summary_message(issue: _ApplyWarningIssue) -> str:
+        reasons_text = "; ".join(issue.warning_reasons)
         return (
             f"{issue.entry_id} @ {issue.relative_path} "
-            f"({issue.actual_lines} {line_label}, expected {issue.expected_lines})"
+            f"| {reasons_text}"
         )
 
     def _entry_primary_target_for_id(
@@ -1929,12 +1990,12 @@ class MassTranslateDialog(QDialog):
     def _expected_source_line_count(self, segment: DialogueSegment) -> int:
         return len(self._segment_source_lines_for_mass_translate(segment))
 
-    def _collect_line_mismatch_issues(
+    def _collect_apply_warning_issues(
         self,
         chunk_entries: list[dict[str, Any]],
         updates_by_id: dict[str, dict[str, Any]],
-    ) -> list[_LineMismatchIssue]:
-        issues: list[_LineMismatchIssue] = []
+    ) -> list[_ApplyWarningIssue]:
+        issues: list[_ApplyWarningIssue] = []
         seen_entry_ids: set[str] = set()
         for base_entry in chunk_entries:
             entry_id = base_entry.get("id")
@@ -1952,18 +2013,45 @@ class MassTranslateDialog(QDialog):
             if primary_target is None:
                 continue
             path, segment = primary_target
+            source_lines = self._segment_source_lines_for_mass_translate(segment)
             actual_lines = len(lines)
-            expected_lines = self._expected_source_line_count(segment)
-            if actual_lines == expected_lines:
+            expected_lines = len(source_lines)
+
+            warning_reasons: list[str] = []
+            if self._line_warning_should_flag(expected_lines, actual_lines):
+                if actual_lines == 1 and expected_lines > 1:
+                    warning_reasons.append(
+                        f"Collapsed to 1 line (expected {expected_lines})."
+                    )
+                else:
+                    line_label = "line" if actual_lines == 1 else "lines"
+                    warning_reasons.append(
+                        f"Line count {actual_lines} {line_label}, expected {expected_lines}."
+                    )
+
+            source_text = "\n".join(source_lines)
+            translation_text = "\n".join(lines)
+            if self._control_warning_enabled():
+                source_counter = Counter(self._control_tokens(source_text))
+                tl_counter = Counter(self._control_tokens(translation_text))
+                if source_counter != tl_counter:
+                    missing_in_tl = source_counter - tl_counter
+                    extra_in_tl = tl_counter - source_counter
+                    warning_reasons.append(
+                        "Control-code mismatch "
+                        f"(missing: {self._counter_summary_text(missing_in_tl)}; "
+                        f"extra: {self._counter_summary_text(extra_in_tl)})."
+                    )
+
+            if not warning_reasons:
                 continue
             issues.append(
-                _LineMismatchIssue(
+                _ApplyWarningIssue(
                     entry_id=entry_id,
                     relative_path=self.editor._relative_path(path),
-                    expected_lines=expected_lines,
-                    actual_lines=actual_lines,
+                    warning_reasons=tuple(warning_reasons),
                     source_preview=self._preview_text_for_lines(
-                        self._segment_source_lines_for_mass_translate(segment)
+                        source_lines
                     ),
                     translation_preview=self._preview_text_for_lines(lines),
                 )
@@ -1972,13 +2060,13 @@ class MassTranslateDialog(QDialog):
         issues.sort(key=lambda issue: natural_sort_key(issue.entry_id))
         return issues
 
-    def _review_line_mismatch_issues(
+    def _review_apply_warning_issues(
         self,
-        issues: list[_LineMismatchIssue],
+        issues: list[_ApplyWarningIssue],
     ) -> Optional[set[str]]:
         if not issues:
             return set()
-        review_dialog = _LineMismatchReviewDialog(self, issues)
+        review_dialog = _ApplyWarningsReviewDialog(self, issues)
         if review_dialog.exec() != int(QDialog.DialogCode.Accepted):
             return None
         return review_dialog.selected_entry_ids()
@@ -2075,7 +2163,7 @@ class MassTranslateDialog(QDialog):
             key=natural_sort_key,
         )
 
-        line_mismatch_issues = self._collect_line_mismatch_issues(
+        warning_issues = self._collect_apply_warning_issues(
             [
                 entry
                 for entry in chunk_entries
@@ -2083,29 +2171,29 @@ class MassTranslateDialog(QDialog):
             ],
             updates_by_id,
         )
-        mismatch_entry_ids = {issue.entry_id for issue in line_mismatch_issues}
-        selected_mismatch_ids = set(mismatch_entry_ids)
-        if line_mismatch_issues:
-            reviewed_selection = self._review_line_mismatch_issues(
-                line_mismatch_issues
+        warning_entry_ids = {issue.entry_id for issue in warning_issues}
+        selected_warning_ids = set(warning_entry_ids)
+        if warning_issues:
+            reviewed_selection = self._review_apply_warning_issues(
+                warning_issues
             )
             if reviewed_selection is None:
                 self.result_box.setPlainText(
-                    "Apply canceled while reviewing line-count mismatches."
+                    "Apply canceled while reviewing warnings."
                 )
                 return False
-            selected_mismatch_ids = reviewed_selection
-        rejected_line_mismatch_ids = sorted(
+            selected_warning_ids = reviewed_selection
+        rejected_warning_ids = sorted(
             [
                 entry_id
-                for entry_id in mismatch_entry_ids
-                if entry_id not in selected_mismatch_ids
+                for entry_id in warning_entry_ids
+                if entry_id not in selected_warning_ids
             ],
             key=natural_sort_key,
         )
-        line_count_mismatches = [
-            self._line_mismatch_summary_message(issue)
-            for issue in line_mismatch_issues
+        warning_messages = [
+            self._apply_warning_summary_message(issue)
+            for issue in warning_issues
         ]
 
         touched_paths: set[Path] = set()
@@ -2124,7 +2212,7 @@ class MassTranslateDialog(QDialog):
             update = updates_by_id.get(entry_id)
             if update is None:
                 continue
-            if entry_id in mismatch_entry_ids and entry_id not in selected_mismatch_ids:
+            if entry_id in warning_entry_ids and entry_id not in selected_warning_ids:
                 continue
 
             if entry_id.startswith("D:"):
@@ -2229,9 +2317,9 @@ class MassTranslateDialog(QDialog):
             missing_ids
             or unknown_ids
             or missing_translation_field_ids
-            or line_count_mismatches
+            or warning_messages
             or duplicate_ids
-            or rejected_line_mismatch_ids
+            or rejected_warning_ids
         )
         clear_paste_after_apply = not has_warnings
         self.chunk_status[idx] = "warning" if has_warnings else "applied"
@@ -2283,17 +2371,18 @@ class MassTranslateDialog(QDialog):
             summary_lines.append(
                 f"Entries missing translation field: {len(missing_translation_field_ids)}"
             )
-        if line_count_mismatches:
-            reviewed_count = len(line_count_mismatches)
-            applied_count = reviewed_count - len(rejected_line_mismatch_ids)
-            summary_lines.append(f"Line-count mismatches reviewed: {reviewed_count}")
-            summary_lines.append(f"Mismatches applied: {applied_count}")
-            if rejected_line_mismatch_ids:
+        if warning_messages:
+            reviewed_count = len(warning_messages)
+            applied_count = reviewed_count - len(rejected_warning_ids)
+            summary_lines.append(f"Warning level: {self.warning_level_combo.currentText()}")
+            summary_lines.append(f"Warnings reviewed: {reviewed_count}")
+            summary_lines.append(f"Warning entries applied: {applied_count}")
+            if rejected_warning_ids:
                 summary_lines.append(
-                    f"Mismatches skipped: {len(rejected_line_mismatch_ids)}"
+                    f"Warning entries skipped: {len(rejected_warning_ids)}"
                 )
-            summary_lines.extend(line_count_mismatches[:8])
-            if len(line_count_mismatches) > 8:
+            summary_lines.extend(warning_messages[:8])
+            if len(warning_messages) > 8:
                 summary_lines.append("...")
         if copy_next_prompt:
             if copied_next_prompt:

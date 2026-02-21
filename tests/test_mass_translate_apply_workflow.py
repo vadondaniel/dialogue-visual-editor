@@ -41,9 +41,14 @@ class _ApplyWorkflowHarness:
         MassTranslateDialog._segment_source_lines_for_mass_translate
     )
     _preview_text_for_lines = staticmethod(MassTranslateDialog._preview_text_for_lines)
+    _counter_summary_text = staticmethod(MassTranslateDialog._counter_summary_text)
+    _control_tokens = staticmethod(MassTranslateDialog._control_tokens)
+    _warning_level_mode = MassTranslateDialog._warning_level_mode
+    _line_warning_should_flag = MassTranslateDialog._line_warning_should_flag
+    _control_warning_enabled = MassTranslateDialog._control_warning_enabled
     _entry_primary_target_for_id = MassTranslateDialog._entry_primary_target_for_id
     _expected_source_line_count = MassTranslateDialog._expected_source_line_count
-    _collect_line_mismatch_issues = MassTranslateDialog._collect_line_mismatch_issues
+    _collect_apply_warning_issues = MassTranslateDialog._collect_apply_warning_issues
     _next_chunk_index_after_apply = staticmethod(
         MassTranslateDialog._next_chunk_index_after_apply
     )
@@ -53,6 +58,15 @@ class _ApplyWorkflowHarness:
         self.dialogue_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.misc_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.speaker_segment_targets: dict[str, tuple[Path, DialogueSegment]] = {}
+        self.warning_level_combo = _ComboStub("all_line_and_control_mismatches")
+
+
+class _ComboStub:
+    def __init__(self, value: str) -> None:
+        self._value = value
+
+    def currentData(self) -> str:
+        return self._value
 
 
 def _segment(uid: str, lines: list[str]) -> DialogueSegment:
@@ -67,24 +81,25 @@ def _segment(uid: str, lines: list[str]) -> DialogueSegment:
 
 
 class MassTranslateApplyWorkflowTests(unittest.TestCase):
-    def test_collect_line_mismatch_issues_includes_previews(self) -> None:
+    def test_collect_apply_warning_issues_includes_line_warning_and_previews(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
         segment = _segment("Map001.json:1", ["src-a", "src-b"])
         harness.dialogue_targets["D:1"] = (Path("Map001.json"), segment)
         chunk_entries = [{"id": "D:1"}]
         updates_by_id = {"D:1": {"id": "D:1", "translation": "one-line"}}
 
-        issues = harness._collect_line_mismatch_issues(chunk_entries, updates_by_id)
+        issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
 
         self.assertEqual(len(issues), 1)
         issue = issues[0]
         self.assertEqual(issue.entry_id, "D:1")
-        self.assertEqual(issue.expected_lines, 2)
-        self.assertEqual(issue.actual_lines, 1)
+        self.assertTrue(
+            any("Collapsed to 1 line" in reason for reason in issue.warning_reasons)
+        )
         self.assertIn("src-a", issue.source_preview)
         self.assertIn("one-line", issue.translation_preview)
 
-    def test_collect_line_mismatch_issues_skips_matching_and_speaker_ids(self) -> None:
+    def test_collect_apply_warning_issues_skips_matching_and_speaker_ids(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
         segment = _segment("Map001.json:2", ["src-a", "src-b"])
         harness.dialogue_targets["D:2"] = (Path("Map001.json"), segment)
@@ -94,7 +109,66 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
             "S:hero": {"id": "S:hero", "translation": "Hero"},
         }
 
-        issues = harness._collect_line_mismatch_issues(chunk_entries, updates_by_id)
+        issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
+
+        self.assertEqual(issues, [])
+
+    def test_collapsed_warning_mode_ignores_noncollapsed_line_count_mismatch(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.warning_level_combo = _ComboStub("collapsed_lines_only")
+        segment = _segment("Map001.json:3", ["src-a", "src-b"])
+        harness.dialogue_targets["D:3"] = (Path("Map001.json"), segment)
+        chunk_entries = [{"id": "D:3"}]
+        updates_by_id = {"D:3": {"id": "D:3", "translation_lines": ["a", "b", "c"]}}
+
+        issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
+
+        self.assertEqual(issues, [])
+
+    def test_all_line_warning_mode_flags_noncollapsed_line_count_mismatch(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.warning_level_combo = _ComboStub("all_line_mismatches")
+        segment = _segment("Map001.json:3", ["src-a", "src-b"])
+        harness.dialogue_targets["D:3"] = (Path("Map001.json"), segment)
+        chunk_entries = [{"id": "D:3"}]
+        updates_by_id = {"D:3": {"id": "D:3", "translation_lines": ["a", "b", "c"]}}
+
+        issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
+
+        self.assertEqual(len(issues), 1)
+        self.assertTrue(
+            any("Line count 3 lines" in reason for reason in issues[0].warning_reasons)
+        )
+
+    def test_collect_apply_warning_issues_warns_on_control_code_mismatch(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.warning_level_combo = _ComboStub("all_line_and_control_mismatches")
+        segment = _segment("Map001.json:4", [r"\C[2]src-a", r"src-b\C[0]"])
+        harness.dialogue_targets["D:4"] = (Path("Map001.json"), segment)
+        chunk_entries = [{"id": "D:4"}]
+        updates_by_id = {
+            "D:4": {"id": "D:4", "translation_lines": [r"\C[2]tl-a", "tl-b"]}
+        }
+
+        issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
+
+        self.assertEqual(len(issues), 1)
+        issue = issues[0]
+        self.assertTrue(
+            any("Control-code mismatch" in reason for reason in issue.warning_reasons)
+        )
+
+    def test_all_line_warning_mode_does_not_flag_control_code_only_mismatch(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.warning_level_combo = _ComboStub("all_line_mismatches")
+        segment = _segment("Map001.json:5", [r"\C[2]src-a", r"src-b\C[0]"])
+        harness.dialogue_targets["D:5"] = (Path("Map001.json"), segment)
+        chunk_entries = [{"id": "D:5"}]
+        updates_by_id = {
+            "D:5": {"id": "D:5", "translation_lines": [r"\C[2]tl-a", "tl-b"]}
+        }
+
+        issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
 
         self.assertEqual(issues, [])
 
