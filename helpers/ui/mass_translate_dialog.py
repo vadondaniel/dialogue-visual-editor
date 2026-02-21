@@ -1835,21 +1835,6 @@ class MassTranslateDialog(QDialog):
     def _copy_prompt_for_current_chunk(self) -> bool:
         return self._copy_prompt_for_chunk_index(self.chunk_combo.currentIndex())
 
-    def _copy_after_switch_if_needed(
-        self,
-        *,
-        copy_next_prompt: bool,
-        copied_next_prompt: bool,
-        switched_destination: bool,
-    ) -> bool:
-        if not copy_next_prompt:
-            return copied_next_prompt
-        if copied_next_prompt:
-            return True
-        if not switched_destination:
-            return False
-        return self._copy_prompt_for_current_chunk()
-
     def _build_chunks(self) -> None:
         include_dialogue, include_misc, include_speakers = self._content_mode_flags()
         if not include_dialogue and not include_misc and not include_speakers:
@@ -2525,10 +2510,6 @@ class MassTranslateDialog(QDialog):
             self.chunk_combo.setCurrentIndex(next_chunk_index)
         self._update_chunk_controls()
 
-        copied_next_prompt = False
-        if copy_next_prompt and next_chunk_index != idx:
-            copied_next_prompt = self._copy_prompt_for_chunk_index(next_chunk_index)
-
         summary_lines: list[str] = [
             f"Parsed entries: {len(updates_by_id)}",
             f"Applied dialogue entries: {dialogue_applied}",
@@ -2581,7 +2562,6 @@ class MassTranslateDialog(QDialog):
         self._refresh_scope_items()
 
         switched_content_mode = False
-        switched_scope = False
         current_mode = str(self.content_scope_combo.currentData())
         if (
             current_mode in self._WORKFLOW_CONTENT_MODES
@@ -2608,17 +2588,14 @@ class MassTranslateDialog(QDialog):
                 if next_scope_value is not None:
                     next_scope_label = self._set_scope_value(next_scope_value)
                     if next_scope_label:
-                        switched_scope = True
                         self._append_result_message_for_chunk(
                             self.chunk_combo.currentIndex(),
                             f"Switched scope to '{next_scope_label}' (next incomplete scope)."
                         )
 
-        copied_next_prompt = self._copy_after_switch_if_needed(
-            copy_next_prompt=copy_next_prompt,
-            copied_next_prompt=copied_next_prompt,
-            switched_destination=(switched_content_mode or switched_scope),
-        )
+        copied_next_prompt = False
+        if copy_next_prompt:
+            copied_next_prompt = self._copy_prompt_for_current_chunk()
         if copy_next_prompt:
             if copied_next_prompt:
                 self._append_result_message_for_chunk(

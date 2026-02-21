@@ -86,7 +86,6 @@ class _ApplyWorkflowHarness:
     )
     _next_incomplete_scope_value = MassTranslateDialog._next_incomplete_scope_value
     _copy_prompt_for_current_chunk = MassTranslateDialog._copy_prompt_for_current_chunk
-    _copy_after_switch_if_needed = MassTranslateDialog._copy_after_switch_if_needed
     _next_chunk_index_after_apply = staticmethod(
         MassTranslateDialog._next_chunk_index_after_apply
     )
@@ -318,28 +317,20 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(idx, 2)
 
-    def test_copy_after_switch_if_needed_copies_active_chunk_prompt(self) -> None:
+    def test_copy_prompt_for_current_chunk_copies_active_chunk_prompt(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
         harness.chunk_combo = _ChunkComboStub(3)
 
-        copied = harness._copy_after_switch_if_needed(
-            copy_next_prompt=True,
-            copied_next_prompt=False,
-            switched_destination=True,
-        )
+        copied = harness._copy_prompt_for_current_chunk()
 
         self.assertTrue(copied)
         self.assertEqual(harness.copied_prompt_indices, [3])
 
-    def test_copy_after_switch_if_needed_skips_without_switch(self) -> None:
+    def test_copy_prompt_for_current_chunk_fails_for_invalid_index(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
-        harness.chunk_combo = _ChunkComboStub(2)
+        harness.chunk_combo = _ChunkComboStub(-1)
 
-        copied = harness._copy_after_switch_if_needed(
-            copy_next_prompt=True,
-            copied_next_prompt=False,
-            switched_destination=False,
-        )
+        copied = harness._copy_prompt_for_current_chunk()
 
         self.assertFalse(copied)
         self.assertEqual(harness.copied_prompt_indices, [])
