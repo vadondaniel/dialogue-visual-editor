@@ -19,7 +19,11 @@ def _call_speaker_dialog_method(name: str, self_obj: object, *args: Any) -> Any:
     return method(self_obj, *args)
 
 
-def _segment_with_speaker(speaker_text: str) -> DialogueSegment:
+def _segment_with_speaker(
+    speaker_text: str,
+    *,
+    segment_kind: str = "dialogue",
+) -> DialogueSegment:
     return DialogueSegment(
         uid="seg",
         context="ctx",
@@ -27,6 +31,7 @@ def _segment_with_speaker(speaker_text: str) -> DialogueSegment:
         lines=["line"],
         original_lines=["line"],
         source_lines=["line"],
+        segment_kind=segment_kind,
     )
 
 
@@ -130,6 +135,14 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         )
 
         self.assertEqual(result, "")
+
+    def test_tyrano_dialogue_segment_keeps_explicit_speaker_key(self) -> None:
+        harness = _SpeakerKeyHarness()
+        segment = _segment_with_speaker("NPC", segment_kind="tyrano_dialogue")
+
+        key = cast(str, _call_editor_method("_speaker_key_for_segment", harness, segment))
+
+        self.assertEqual(key, "NPC")
 
     def test_speaker_manager_reads_raw_map_with_legacy_fallback(self) -> None:
         raw_key = r"\C[2]\N[1]\C[0]"

@@ -73,7 +73,7 @@ class DialogueSegment:
 
     @property
     def is_structural_dialogue(self) -> bool:
-        return self.segment_kind in {"dialogue", "script_message"}
+        return self.segment_kind in {"dialogue", "script_message", "tyrano_dialogue"}
 
     def text_joined(self) -> str:
         return "\n".join(self.lines)
