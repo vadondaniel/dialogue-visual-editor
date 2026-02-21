@@ -82,6 +82,18 @@ class _Harness(AuditNameConsistencyMixin):
 
 
 class AuditNameConsistencyMixinTests(unittest.TestCase):
+    def test_replace_name_consistency_case_insensitive(self) -> None:
+        harness = _Harness()
+
+        replaced, count = harness._replace_name_consistency_case_insensitive(
+            "Use leather armor and Leather Armor now.",
+            "leather armor",
+            "Leather Vest",
+        )
+
+        self.assertEqual(count, 2)
+        self.assertEqual(replaced, "Use Leather Vest and Leather Vest now.")
+
     def test_collect_groups_uses_misc_entry_translation_as_expected_tl(self) -> None:
         harness = _Harness()
         misc_path = Path("Armors.json")

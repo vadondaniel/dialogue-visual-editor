@@ -354,6 +354,8 @@ class DialogueVisualEditor(
         self.audit_name_consistency_sort_combo: Optional[QComboBox] = None
         self.audit_name_consistency_groups_list: Optional[QListWidget] = None
         self.audit_name_consistency_entries_list: Optional[QListWidget] = None
+        self.audit_name_consistency_replace_find_edit: Optional[QLineEdit] = None
+        self.audit_name_consistency_replace_btn: Optional[QPushButton] = None
         self.audit_name_consistency_status_label: Optional[QLabel] = None
         self.audit_name_consistency_goto_btn: Optional[QPushButton] = None
         self.mass_translate_dialog: Optional[MassTranslateDialog] = None

@@ -571,6 +571,20 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         name_consistency_entries_layout.addWidget(QLabel("Dialogue Hits"))
         name_consistency_entries_list = QListWidget()
         name_consistency_entries_layout.addWidget(name_consistency_entries_list, 1)
+        name_consistency_replace_row = QHBoxLayout()
+        name_consistency_replace_row.setContentsMargins(0, 0, 0, 0)
+        name_consistency_replace_row.setSpacing(6)
+        name_consistency_replace_row.addWidget(QLabel("Seen as"))
+        name_consistency_replace_find_edit = QLineEdit()
+        name_consistency_replace_find_edit.setPlaceholderText(
+            "TL term currently used in dialogue hits"
+        )
+        name_consistency_replace_find_edit.setClearButtonEnabled(True)
+        name_consistency_replace_row.addWidget(name_consistency_replace_find_edit, 1)
+        name_consistency_replace_btn = QPushButton("Replace In Hits")
+        name_consistency_replace_btn.setEnabled(False)
+        name_consistency_replace_row.addWidget(name_consistency_replace_btn)
+        name_consistency_entries_layout.addLayout(name_consistency_replace_row)
         name_consistency_footer = QHBoxLayout()
         name_consistency_footer.setContentsMargins(0, 0, 0, 0)
         name_consistency_footer.setSpacing(6)
@@ -661,6 +675,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_name_consistency_sort_combo = name_consistency_sort_combo
         self.audit_name_consistency_groups_list = name_consistency_groups_list
         self.audit_name_consistency_entries_list = name_consistency_entries_list
+        self.audit_name_consistency_replace_find_edit = name_consistency_replace_find_edit
+        self.audit_name_consistency_replace_btn = name_consistency_replace_btn
         self.audit_name_consistency_status_label = name_consistency_status_label
         self.audit_name_consistency_goto_btn = name_consistency_goto_btn
 
@@ -881,12 +897,24 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             self._refresh_audit_name_consistency_panel
         )
         name_consistency_groups_list.currentItemChanged.connect(
-            lambda _current, _previous: self._refresh_audit_name_consistency_entries()
+            lambda _current, _previous: (
+                self._refresh_audit_name_consistency_entries(),
+                self._refresh_audit_name_consistency_replace_state(),
+            )
         )
         name_consistency_entries_list.currentItemChanged.connect(
             lambda current, _previous: name_consistency_goto_btn.setEnabled(
                 current is not None
             )
+        )
+        name_consistency_replace_find_edit.textChanged.connect(
+            lambda _text: self._refresh_audit_name_consistency_replace_state()
+        )
+        name_consistency_replace_find_edit.returnPressed.connect(
+            self._apply_audit_name_consistency_replace_in_hits
+        )
+        name_consistency_replace_btn.clicked.connect(
+            self._apply_audit_name_consistency_replace_in_hits
         )
         name_consistency_entries_list.itemDoubleClicked.connect(
             lambda _item: self._go_to_selected_audit_name_consistency_entry()

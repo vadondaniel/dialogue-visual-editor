@@ -18,6 +18,17 @@ class _AuditNameConsistencyHostTypingFallback:
 
 
 class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
+    def _replace_name_consistency_case_insensitive(
+        self,
+        text: str,
+        source: str,
+        target: str,
+    ) -> tuple[str, int]:
+        if not text or not source:
+            return text, 0
+        pattern = re.compile(re.escape(source), flags=re.IGNORECASE)
+        return pattern.subn(target, text)
+
     def _name_consistency_plain_text(self, value: str) -> str:
         plain_resolver = getattr(self, "_plain_text_for_suggestions", None)
         if callable(plain_resolver):
@@ -426,6 +437,144 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             self.audit_name_consistency_entries_list.setCurrentRow(0)
             self.audit_name_consistency_goto_btn.setEnabled(True)
 
+    def _refresh_audit_name_consistency_replace_state(self) -> None:
+        if (
+            self.audit_name_consistency_replace_btn is None
+            or self.audit_name_consistency_replace_find_edit is None
+            or self.audit_name_consistency_groups_list is None
+        ):
+            return
+        payload = self._audit_name_consistency_group_payload(
+            self.audit_name_consistency_groups_list.currentItem()
+        )
+        find_text = self.audit_name_consistency_replace_find_edit.text().strip()
+        expected_tl = ""
+        if payload is not None:
+            expected_raw = payload.get("expected_tl")
+            if isinstance(expected_raw, str):
+                expected_tl = expected_raw.strip()
+        can_apply = bool(payload is not None and find_text and expected_tl)
+        self.audit_name_consistency_replace_btn.setEnabled(can_apply)
+
+    def _apply_audit_name_consistency_replace_in_hits(self) -> None:
+        if (
+            self.audit_name_consistency_groups_list is None
+            or self.audit_name_consistency_replace_find_edit is None
+            or self.audit_name_consistency_replace_btn is None
+        ):
+            return
+        payload = self._audit_name_consistency_group_payload(
+            self.audit_name_consistency_groups_list.currentItem()
+        )
+        if payload is None:
+            self.statusBar().showMessage("Select a mismatch group first.")
+            self._refresh_audit_name_consistency_replace_state()
+            return
+        find_text = self.audit_name_consistency_replace_find_edit.text().strip()
+        if not find_text:
+            self.statusBar().showMessage("Enter the current TL term in 'Seen as'.")
+            self._refresh_audit_name_consistency_replace_state()
+            return
+        expected_raw = payload.get("expected_tl")
+        expected_tl = expected_raw.strip() if isinstance(expected_raw, str) else ""
+        if not expected_tl:
+            self.statusBar().showMessage("Expected glossary translation is empty.")
+            self._refresh_audit_name_consistency_replace_state()
+            return
+        if find_text.casefold() == expected_tl.casefold():
+            self.statusBar().showMessage("'Seen as' already matches expected glossary TL.")
+            self._refresh_audit_name_consistency_replace_state()
+            return
+
+        entries_raw = payload.get("entries")
+        entries = entries_raw if isinstance(entries_raw, list) else []
+        if not entries:
+            self.statusBar().showMessage("Selected group has no dialogue hits.")
+            self._refresh_audit_name_consistency_replace_state()
+            return
+
+        touched_paths: set[Path] = set()
+        changed_blocks = 0
+        replaced_total = 0
+        processed: set[tuple[str, str]] = set()
+        touched_current = False
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            path_raw = entry.get("path")
+            uid_raw = entry.get("uid")
+            if not isinstance(path_raw, str) or not path_raw:
+                continue
+            if not isinstance(uid_raw, str) or not uid_raw:
+                continue
+            key = (path_raw, uid_raw)
+            if key in processed:
+                continue
+            processed.add(key)
+            path = Path(path_raw)
+            session = self.sessions.get(path)
+            if session is None:
+                continue
+            target_segment: Optional[DialogueSegment] = None
+            for segment in session.segments:
+                if segment.uid == uid_raw:
+                    target_segment = segment
+                    break
+            if target_segment is None:
+                continue
+            current_lines = self._normalize_translation_lines(
+                target_segment.translation_lines
+            )
+            next_lines: list[str] = []
+            block_replacements = 0
+            for line in current_lines:
+                replaced_line, count = self._replace_name_consistency_case_insensitive(
+                    line,
+                    find_text,
+                    expected_tl,
+                )
+                next_lines.append(replaced_line)
+                block_replacements += count
+            if block_replacements <= 0:
+                continue
+            target_segment.translation_lines = list(next_lines)
+            changed_blocks += 1
+            replaced_total += block_replacements
+            touched_paths.add(path)
+            if self.current_path is not None and path == self.current_path:
+                touched_current = True
+
+        if changed_blocks <= 0:
+            self.statusBar().showMessage(
+                f"No replaceable '{find_text}' occurrences found in selected hits."
+            )
+            self._refresh_audit_name_consistency_replace_state()
+            return
+
+        for path in touched_paths:
+            session = self.sessions.get(path)
+            if session is not None:
+                self._refresh_dirty_state(session)
+
+        self._invalidate_audit_caches()
+        self._refresh_audit_sanitize_panel()
+        self._refresh_audit_control_mismatch_panel()
+        if touched_current and self.current_path is not None:
+            current_session = self.sessions.get(self.current_path)
+            if current_session is not None:
+                self._render_session(
+                    current_session,
+                    focus_uid=self.selected_segment_uid,
+                    preserve_scroll=True,
+                )
+        else:
+            self._refresh_translator_detail_panel()
+        self._refresh_audit_name_consistency_panel()
+        self.audit_name_consistency_replace_find_edit.setText("")
+        self.statusBar().showMessage(
+            f"Replaced '{find_text}' -> '{expected_tl}' in {changed_blocks} blocks ({replaced_total} matches)."
+        )
+
     def _refresh_audit_name_consistency_panel(self) -> None:
         if (
             self.audit_name_consistency_dialogue_only_check is None
@@ -477,6 +626,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 "No glossary misses found between misc entries and dialogue translations."
             )
         self._refresh_audit_name_consistency_entries()
+        self._refresh_audit_name_consistency_replace_state()
 
     def _go_to_selected_audit_name_consistency_entry(self) -> None:
         if self.audit_name_consistency_entries_list is None:
