@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 import re
@@ -13,11 +14,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
@@ -72,6 +75,110 @@ class MassTranslateHost(Protocol):
         segment: DialogueSegment,
         default_type: str = "dialogue",
     ) -> str: ...
+
+
+@dataclass(frozen=True)
+class _LineMismatchIssue:
+    entry_id: str
+    relative_path: str
+    expected_lines: int
+    actual_lines: int
+    source_preview: str
+    translation_preview: str
+
+
+class _LineMismatchReviewDialog(QDialog):
+    def __init__(
+        self,
+        parent: QWidget,
+        issues: list[_LineMismatchIssue],
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Review Line-Count Mismatches")
+        self.resize(920, 680)
+        self._checks_by_entry_id: dict[str, QCheckBox] = {}
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        intro = QLabel(
+            "Review entries where output line count differs from source. "
+            "Checked entries will be applied, unchecked entries will be skipped."
+        )
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+
+        action_row = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        reject_all_btn = QPushButton("Reject All")
+        action_row.addWidget(select_all_btn)
+        action_row.addWidget(reject_all_btn)
+        action_row.addStretch(1)
+        root.addLayout(action_row)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(6, 6, 6, 6)
+        scroll_layout.setSpacing(8)
+
+        for issue in issues:
+            card = QWidget()
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(6, 6, 6, 6)
+            card_layout.setSpacing(4)
+
+            line_label = "line" if issue.actual_lines == 1 else "lines"
+            check = QCheckBox(
+                f"{issue.entry_id} @ {issue.relative_path} "
+                f"({issue.actual_lines} {line_label}, expected {issue.expected_lines})"
+            )
+            check.setChecked(True)
+            self._checks_by_entry_id[issue.entry_id] = check
+            card_layout.addWidget(check)
+
+            preview_box = QPlainTextEdit()
+            preview_box.setReadOnly(True)
+            preview_box.setMaximumHeight(168)
+            preview_box.setPlainText(
+                "Source preview:\n"
+                f"{issue.source_preview}\n\n"
+                "Translation preview:\n"
+                f"{issue.translation_preview}"
+            )
+            card_layout.addWidget(preview_box)
+            scroll_layout.addWidget(card)
+
+        scroll_layout.addStretch(1)
+        scroll.setWidget(scroll_content)
+        root.addWidget(scroll, 1)
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_button is not None:
+            ok_button.setText("Apply Selected")
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        root.addWidget(button_box)
+
+        select_all_btn.clicked.connect(lambda: self._set_all_checked(True))
+        reject_all_btn.clicked.connect(lambda: self._set_all_checked(False))
+
+    def _set_all_checked(self, checked: bool) -> None:
+        for checkbox in self._checks_by_entry_id.values():
+            checkbox.setChecked(checked)
+
+    def selected_entry_ids(self) -> set[str]:
+        return {
+            entry_id
+            for entry_id, checkbox in self._checks_by_entry_id.items()
+            if checkbox.isChecked()
+        }
 
 
 class MassTranslateDialog(QDialog):
@@ -263,6 +370,11 @@ class MassTranslateDialog(QDialog):
         self.apply_btn = QPushButton("Apply To Translations")
         self.apply_btn.clicked.connect(self._apply_pasted_chunk)
         apply_row.addWidget(self.apply_btn)
+        self.apply_copy_next_btn = QPushButton("Apply + Copy Next Prompt")
+        self.apply_copy_next_btn.clicked.connect(
+            self._apply_pasted_chunk_and_copy_next_prompt
+        )
+        apply_row.addWidget(self.apply_copy_next_btn)
         apply_row.addStretch(1)
         right_layout.addLayout(apply_row)
 
@@ -1355,6 +1467,7 @@ class MassTranslateDialog(QDialog):
         self.copy_chunk_btn.setEnabled(has_active)
         self.copy_prompt_btn.setEnabled(has_active)
         self.apply_btn.setEnabled(has_active)
+        self.apply_copy_next_btn.setEnabled(has_active)
 
     def _on_chunk_changed(self, index: int) -> None:
         if self._active_chunk_index >= 0 and self._active_chunk_index < len(self.chunk_payloads):
@@ -1522,12 +1635,20 @@ class MassTranslateDialog(QDialog):
 
     def _copy_active_chunk_prompt(self) -> None:
         idx = self.chunk_combo.currentIndex()
-        if idx < 0 or idx >= len(self.chunk_payloads):
+        if not self._copy_prompt_for_chunk_index(idx):
             return
+        self.result_box.setPlainText("Copied prompt + selected chunk JSON to clipboard.")
+
+    def _copy_prompt_for_chunk_index(self, index: int) -> bool:
+        if index < 0 or index >= len(self.chunk_payloads):
+            return False
         QApplication.clipboard().setText(
-            self._build_prompt_for_payload(self.chunk_payloads[idx]))
-        self.result_box.setPlainText(
-            "Copied prompt + selected chunk JSON to clipboard.")
+            self._build_prompt_for_payload(self.chunk_payloads[index])
+        )
+        return True
+
+    def _apply_pasted_chunk_and_copy_next_prompt(self) -> None:
+        self._apply_pasted_chunk_core(copy_next_prompt=True)
 
     def _build_chunks(self) -> None:
         include_dialogue, include_misc, include_speakers = self._content_mode_flags()
@@ -1760,31 +1881,157 @@ class MassTranslateDialog(QDialog):
                 return " ".join(str(item) for item in value if item is not None).strip()
         return None
 
+    @staticmethod
+    def _preview_text_for_lines(lines: list[str], max_chars: int = 460) -> str:
+        text = "\n".join(lines).strip()
+        if not text:
+            return "(empty)"
+        if len(text) <= max_chars:
+            return text
+        return f"{text[: max_chars - 3]}..."
+
+    @staticmethod
+    def _line_mismatch_summary_message(issue: _LineMismatchIssue) -> str:
+        line_label = "line" if issue.actual_lines == 1 else "lines"
+        return (
+            f"{issue.entry_id} @ {issue.relative_path} "
+            f"({issue.actual_lines} {line_label}, expected {issue.expected_lines})"
+        )
+
+    def _entry_primary_target_for_id(
+        self,
+        entry_id: str,
+    ) -> Optional[tuple[Path, DialogueSegment]]:
+        if entry_id.startswith("D:"):
+            return self.dialogue_targets.get(entry_id)
+        if entry_id.startswith("M:"):
+            return self.misc_targets.get(entry_id)
+        if entry_id.startswith("P:"):
+            return self.speaker_segment_targets.get(entry_id)
+        return None
+
+    def _entry_targets_for_id(
+        self,
+        entry_id: str,
+    ) -> list[tuple[Path, DialogueSegment]]:
+        primary_target = self._entry_primary_target_for_id(entry_id)
+        if primary_target is None:
+            return []
+        targets = [primary_target]
+        if entry_id.startswith("D:"):
+            targets.extend(self.dialogue_duplicate_targets.get(entry_id, []))
+        elif entry_id.startswith("M:"):
+            targets.extend(self.misc_duplicate_targets.get(entry_id, []))
+        elif entry_id.startswith("P:"):
+            targets.extend(self.speaker_segment_duplicate_targets.get(entry_id, []))
+        return targets
+
+    def _expected_source_line_count(self, segment: DialogueSegment) -> int:
+        return len(self._segment_source_lines_for_mass_translate(segment))
+
+    def _collect_line_mismatch_issues(
+        self,
+        chunk_entries: list[dict[str, Any]],
+        updates_by_id: dict[str, dict[str, Any]],
+    ) -> list[_LineMismatchIssue]:
+        issues: list[_LineMismatchIssue] = []
+        seen_entry_ids: set[str] = set()
+        for base_entry in chunk_entries:
+            entry_id = base_entry.get("id")
+            if not isinstance(entry_id, str) or not entry_id:
+                continue
+            if entry_id in seen_entry_ids or entry_id.startswith("S:"):
+                continue
+            update = updates_by_id.get(entry_id)
+            if update is None:
+                continue
+            lines = self._extract_dialogue_translation_lines(update)
+            if lines is None:
+                continue
+            primary_target = self._entry_primary_target_for_id(entry_id)
+            if primary_target is None:
+                continue
+            path, segment = primary_target
+            actual_lines = len(lines)
+            expected_lines = self._expected_source_line_count(segment)
+            if actual_lines == expected_lines:
+                continue
+            issues.append(
+                _LineMismatchIssue(
+                    entry_id=entry_id,
+                    relative_path=self.editor._relative_path(path),
+                    expected_lines=expected_lines,
+                    actual_lines=actual_lines,
+                    source_preview=self._preview_text_for_lines(
+                        self._segment_source_lines_for_mass_translate(segment)
+                    ),
+                    translation_preview=self._preview_text_for_lines(lines),
+                )
+            )
+            seen_entry_ids.add(entry_id)
+        issues.sort(key=lambda issue: natural_sort_key(issue.entry_id))
+        return issues
+
+    def _review_line_mismatch_issues(
+        self,
+        issues: list[_LineMismatchIssue],
+    ) -> Optional[set[str]]:
+        if not issues:
+            return set()
+        review_dialog = _LineMismatchReviewDialog(self, issues)
+        if review_dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return None
+        return review_dialog.selected_entry_ids()
+
+    @staticmethod
+    def _next_chunk_index_after_apply(
+        current_index: int,
+        chunk_count: int,
+        *,
+        clear_paste_after_apply: bool,
+        copy_next_prompt: bool,
+    ) -> int:
+        if chunk_count <= 0:
+            return -1
+        if current_index < 0:
+            return 0
+        if current_index >= chunk_count:
+            return chunk_count - 1
+        has_next = (current_index + 1) < chunk_count
+        if copy_next_prompt and has_next:
+            return current_index + 1
+        if clear_paste_after_apply and has_next:
+            return current_index + 1
+        return current_index
+
     def _apply_pasted_chunk(self) -> None:
+        self._apply_pasted_chunk_core(copy_next_prompt=False)
+
+    def _apply_pasted_chunk_core(self, *, copy_next_prompt: bool) -> bool:
         idx = self.chunk_combo.currentIndex()
         if idx < 0 or idx >= len(self.chunk_payloads):
             QMessageBox.warning(self, "No chunk selected",
                                 "Build and select a chunk first.")
-            return
+            return False
 
         raw = self.paste_box.toPlainText().strip()
         if not raw:
             QMessageBox.warning(self, "Missing paste",
                                 "Paste the LLM JSON output first.")
-            return
+            return False
 
         try:
             payload = self._parse_json_payload(raw)
         except Exception as exc:
             self.result_box.setPlainText(str(exc))
-            return
+            return False
 
         parsed_entries = self._entries_from_payload(payload)
         if not parsed_entries:
             self.result_box.setPlainText(
                 "No entries found. Expected `entries`, a list of entry objects, or an `id -> translation` map."
             )
-            return
+            return False
 
         updates_by_id: dict[str, dict[str, Any]] = {}
         duplicate_ids: list[str] = []
@@ -1815,7 +2062,7 @@ class MassTranslateDialog(QDialog):
             if not updates_by_id:
                 self.result_box.setPlainText(
                     "No usable `id` fields found in pasted entries.")
-                return
+                return False
 
         expected_ids = self.chunk_expected_ids[idx] if idx < len(
             self.chunk_expected_ids) else set()
@@ -1828,6 +2075,39 @@ class MassTranslateDialog(QDialog):
             key=natural_sort_key,
         )
 
+        line_mismatch_issues = self._collect_line_mismatch_issues(
+            [
+                entry
+                for entry in chunk_entries
+                if isinstance(entry, dict)
+            ],
+            updates_by_id,
+        )
+        mismatch_entry_ids = {issue.entry_id for issue in line_mismatch_issues}
+        selected_mismatch_ids = set(mismatch_entry_ids)
+        if line_mismatch_issues:
+            reviewed_selection = self._review_line_mismatch_issues(
+                line_mismatch_issues
+            )
+            if reviewed_selection is None:
+                self.result_box.setPlainText(
+                    "Apply canceled while reviewing line-count mismatches."
+                )
+                return False
+            selected_mismatch_ids = reviewed_selection
+        rejected_line_mismatch_ids = sorted(
+            [
+                entry_id
+                for entry_id in mismatch_entry_ids
+                if entry_id not in selected_mismatch_ids
+            ],
+            key=natural_sort_key,
+        )
+        line_count_mismatches = [
+            self._line_mismatch_summary_message(issue)
+            for issue in line_mismatch_issues
+        ]
+
         touched_paths: set[Path] = set()
         dialogue_applied = 0
         misc_applied = 0
@@ -1835,7 +2115,6 @@ class MassTranslateDialog(QDialog):
         speaker_keys_applied = 0
         speaker_blocks_applied = 0
         missing_translation_field_ids: list[str] = []
-        line_count_mismatches: list[str] = []
         for base_entry in chunk_entries:
             if not isinstance(base_entry, dict):
                 continue
@@ -1845,49 +2124,21 @@ class MassTranslateDialog(QDialog):
             update = updates_by_id.get(entry_id)
             if update is None:
                 continue
+            if entry_id in mismatch_entry_ids and entry_id not in selected_mismatch_ids:
+                continue
 
             if entry_id.startswith("D:"):
-                primary_target = self.dialogue_targets.get(entry_id)
-                if primary_target is None:
-                    continue
                 lines = self._extract_dialogue_translation_lines(update)
                 if lines is None:
                     missing_translation_field_ids.append(entry_id)
                     continue
-                targets = [primary_target]
-                targets.extend(self.dialogue_duplicate_targets.get(entry_id, []))
-                source_lines_resolver = getattr(
-                    self.editor, "_segment_source_lines_for_translation", None
-                )
+                targets = self._entry_targets_for_id(entry_id)
+                if not targets:
+                    continue
                 compose_resolver = getattr(
                     self.editor, "_compose_translation_lines_for_segment", None
                 )
                 for path, segment in targets:
-                    if callable(source_lines_resolver):
-                        try:
-                            resolved_source = source_lines_resolver(segment)
-                        except Exception:
-                            resolved_source = self.editor._segment_source_lines_for_display(
-                                segment
-                            )
-                        if isinstance(resolved_source, list):
-                            expected_line_count = len(resolved_source)
-                        else:
-                            expected_line_count = len(
-                                self.editor._segment_source_lines_for_display(segment)
-                            )
-                    else:
-                        expected_line_count = len(
-                            self.editor._segment_source_lines_for_display(segment)
-                        )
-                    if len(lines) != expected_line_count:
-                        line_label = "line" if len(lines) == 1 else "lines"
-                        line_count_mismatches.append(
-                            (
-                                f"{entry_id} @ {self.editor._relative_path(path)} "
-                                f"({len(lines)} {line_label}, expected {expected_line_count})"
-                            )
-                        )
                     stored_lines = list(lines)
                     if callable(compose_resolver) and self._segment_uses_translation_storage(segment):
                         try:
@@ -1906,24 +2157,13 @@ class MassTranslateDialog(QDialog):
                 continue
 
             if entry_id.startswith("M:") or entry_id.startswith("P:"):
-                primary_target: Optional[tuple[Path, DialogueSegment]] = None
-                if entry_id.startswith("M:"):
-                    primary_target = self.misc_targets.get(entry_id)
-                else:
-                    primary_target = self.speaker_segment_targets.get(entry_id)
-                if primary_target is None:
-                    continue
                 lines = self._extract_dialogue_translation_lines(update)
                 if lines is None:
                     missing_translation_field_ids.append(entry_id)
                     continue
-                targets = [primary_target]
-                if entry_id.startswith("M:"):
-                    targets.extend(self.misc_duplicate_targets.get(entry_id, []))
-                else:
-                    targets.extend(
-                        self.speaker_segment_duplicate_targets.get(entry_id, [])
-                    )
+                targets = self._entry_targets_for_id(entry_id)
+                if not targets:
+                    continue
                 for path, segment in targets:
                     current_lines = self._segment_current_target_lines(segment)
                     if current_lines != lines:
@@ -1991,6 +2231,7 @@ class MassTranslateDialog(QDialog):
             or missing_translation_field_ids
             or line_count_mismatches
             or duplicate_ids
+            or rejected_line_mismatch_ids
         )
         clear_paste_after_apply = not has_warnings
         self.chunk_status[idx] = "warning" if has_warnings else "applied"
@@ -1999,12 +2240,19 @@ class MassTranslateDialog(QDialog):
             self.chunk_drafts.pop(idx, None)
             self._set_paste_text("")
 
-        next_chunk_index = idx
-        if clear_paste_after_apply and (idx + 1) < self.chunk_combo.count():
-            next_chunk_index = idx + 1
-        if next_chunk_index < self.chunk_combo.count():
+        next_chunk_index = self._next_chunk_index_after_apply(
+            idx,
+            self.chunk_combo.count(),
+            clear_paste_after_apply=clear_paste_after_apply,
+            copy_next_prompt=copy_next_prompt,
+        )
+        if 0 <= next_chunk_index < self.chunk_combo.count():
             self.chunk_combo.setCurrentIndex(next_chunk_index)
         self._update_chunk_controls()
+
+        copied_next_prompt = False
+        if copy_next_prompt and next_chunk_index != idx:
+            copied_next_prompt = self._copy_prompt_for_chunk_index(next_chunk_index)
 
         summary_lines: list[str] = [
             f"Parsed entries: {len(updates_by_id)}",
@@ -2036,11 +2284,22 @@ class MassTranslateDialog(QDialog):
                 f"Entries missing translation field: {len(missing_translation_field_ids)}"
             )
         if line_count_mismatches:
-            summary_lines.append(
-                f"Line-count mismatches: {len(line_count_mismatches)}")
+            reviewed_count = len(line_count_mismatches)
+            applied_count = reviewed_count - len(rejected_line_mismatch_ids)
+            summary_lines.append(f"Line-count mismatches reviewed: {reviewed_count}")
+            summary_lines.append(f"Mismatches applied: {applied_count}")
+            if rejected_line_mismatch_ids:
+                summary_lines.append(
+                    f"Mismatches skipped: {len(rejected_line_mismatch_ids)}"
+                )
             summary_lines.extend(line_count_mismatches[:8])
             if len(line_count_mismatches) > 8:
                 summary_lines.append("...")
+        if copy_next_prompt:
+            if copied_next_prompt:
+                summary_lines.append("Copied prompt for next chunk.")
+            else:
+                summary_lines.append("No next chunk to copy.")
 
         self.result_box.setPlainText("\n".join(summary_lines))
         self.editor.statusBar().showMessage(
@@ -2062,3 +2321,4 @@ class MassTranslateDialog(QDialog):
                     self.result_box.appendPlainText(
                         f"\nSwitched content scope to '{next_label}' (next incomplete section)."
                     )
+        return True
