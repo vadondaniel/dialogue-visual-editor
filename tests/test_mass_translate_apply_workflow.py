@@ -49,6 +49,11 @@ class _ApplyWorkflowHarness:
     _entry_primary_target_for_id = MassTranslateDialog._entry_primary_target_for_id
     _expected_source_line_count = MassTranslateDialog._expected_source_line_count
     _collect_apply_warning_issues = MassTranslateDialog._collect_apply_warning_issues
+    _set_scope_value = MassTranslateDialog._set_scope_value
+    _scope_has_pending_entries_for_value = (
+        MassTranslateDialog._scope_has_pending_entries_for_value
+    )
+    _next_incomplete_scope_value = MassTranslateDialog._next_incomplete_scope_value
     _next_chunk_index_after_apply = staticmethod(
         MassTranslateDialog._next_chunk_index_after_apply
     )
@@ -59,6 +64,20 @@ class _ApplyWorkflowHarness:
         self.misc_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.speaker_segment_targets: dict[str, tuple[Path, DialogueSegment]] = {}
         self.warning_level_combo = _ComboStub("all_line_and_control_mismatches")
+        self.scope_combo = _ScopeComboStub(
+            [
+                ("All Files", "all"),
+                ("Map001.json", "file:Map001.json"),
+            ],
+            current_index=1,
+        )
+        self._scope_counts: dict[str, tuple[int, int]] = {
+            "all": (0, 1),
+            "file:Map001.json": (0, 1),
+        }
+
+    def _scope_completion_counts(self, scope_value: str) -> tuple[int, int]:
+        return self._scope_counts.get(scope_value, (0, 0))
 
 
 class _ComboStub:
@@ -67,6 +86,31 @@ class _ComboStub:
 
     def currentData(self) -> str:
         return self._value
+
+
+class _ScopeComboStub:
+    def __init__(
+        self,
+        items: list[tuple[str, str]],
+        current_index: int = 0,
+    ) -> None:
+        self._items = list(items)
+        self._current_index = max(0, min(current_index, len(self._items) - 1))
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemData(self, index: int) -> str:
+        return self._items[index][1]
+
+    def itemText(self, index: int) -> str:
+        return self._items[index][0]
+
+    def setCurrentIndex(self, index: int) -> None:
+        self._current_index = index
+
+    def currentData(self) -> str:
+        return self._items[self._current_index][1]
 
 
 def _segment(uid: str, lines: list[str]) -> DialogueSegment:
@@ -197,6 +241,50 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
             copy_next_prompt=False,
         )
         self.assertEqual(next_idx, 2)
+
+    def test_next_incomplete_scope_value_picks_next_pending_scope(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.scope_combo = _ScopeComboStub(
+            [
+                ("All Files", "all"),
+                ("Map001.json", "file:Map001.json"),
+                ("Map002.json", "file:Map002.json"),
+                ("Map003.json", "file:Map003.json"),
+            ],
+            current_index=1,
+        )
+        harness._scope_counts = {
+            "all": (2, 6),
+            "file:Map001.json": (2, 2),
+            "file:Map002.json": (1, 2),
+            "file:Map003.json": (3, 3),
+        }
+
+        next_scope = harness._next_incomplete_scope_value("file:Map001.json")
+
+        self.assertEqual(next_scope, "file:Map002.json")
+
+    def test_next_incomplete_scope_value_wraps_around_scope_list(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.scope_combo = _ScopeComboStub(
+            [
+                ("All Files", "all"),
+                ("Map001.json", "file:Map001.json"),
+                ("Map002.json", "file:Map002.json"),
+                ("Map003.json", "file:Map003.json"),
+            ],
+            current_index=3,
+        )
+        harness._scope_counts = {
+            "all": (2, 6),
+            "file:Map001.json": (1, 2),
+            "file:Map002.json": (2, 2),
+            "file:Map003.json": (2, 2),
+        }
+
+        next_scope = harness._next_incomplete_scope_value("file:Map003.json")
+
+        self.assertEqual(next_scope, "file:Map001.json")
 
 
 if __name__ == "__main__":

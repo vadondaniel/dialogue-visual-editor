@@ -580,6 +580,43 @@ class MassTranslateDialog(QDialog):
             return label
         return None
 
+    def _set_scope_value(self, scope_value: str) -> Optional[str]:
+        for idx in range(self.scope_combo.count()):
+            if str(self.scope_combo.itemData(idx)) != scope_value:
+                continue
+            label = self.scope_combo.itemText(idx)
+            self.scope_combo.setCurrentIndex(idx)
+            return label
+        return None
+
+    def _scope_has_pending_entries_for_value(self, scope_value: str) -> bool:
+        done, total = self._scope_completion_counts(scope_value)
+        if total <= 0:
+            return False
+        return done < total
+
+    def _next_incomplete_scope_value(self, current_scope_value: str) -> Optional[str]:
+        candidate_values: list[str] = []
+        for idx in range(self.scope_combo.count()):
+            scope_value = str(self.scope_combo.itemData(idx))
+            if not scope_value or scope_value == "all":
+                continue
+            candidate_values.append(scope_value)
+
+        if not candidate_values:
+            return None
+
+        start = 0
+        if current_scope_value in candidate_values:
+            start = candidate_values.index(current_scope_value) + 1
+        ordered_candidates = candidate_values[start:] + candidate_values[:start]
+        for scope_value in ordered_candidates:
+            if scope_value == current_scope_value:
+                continue
+            if self._scope_has_pending_entries_for_value(scope_value):
+                return scope_value
+        return None
+
     def _on_scope_or_filters_changed(self) -> None:
         self._refresh_scope_items()
         self._build_chunks()
@@ -2398,6 +2435,7 @@ class MassTranslateDialog(QDialog):
         )
         self._refresh_scope_items()
 
+        switched_content_mode = False
         current_mode = str(self.content_scope_combo.currentData())
         if (
             current_mode in self._WORKFLOW_CONTENT_MODES
@@ -2407,7 +2445,23 @@ class MassTranslateDialog(QDialog):
             if next_mode is not None:
                 next_label = self._set_content_scope_mode(next_mode)
                 if next_label:
+                    switched_content_mode = True
                     self.result_box.appendPlainText(
                         f"\nSwitched content scope to '{next_label}' (next incomplete section)."
                     )
+        if not switched_content_mode:
+            current_scope_value = str(self.scope_combo.currentData())
+            if (
+                current_scope_value.startswith("file:")
+                and not self._scope_has_pending_entries_for_value(current_scope_value)
+            ):
+                next_scope_value = self._next_incomplete_scope_value(
+                    current_scope_value
+                )
+                if next_scope_value is not None:
+                    next_scope_label = self._set_scope_value(next_scope_value)
+                    if next_scope_label:
+                        self.result_box.appendPlainText(
+                            f"\nSwitched scope to '{next_scope_label}' (next incomplete scope)."
+                        )
         return True
