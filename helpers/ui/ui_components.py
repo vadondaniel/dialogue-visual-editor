@@ -2376,7 +2376,7 @@ class DialogueBlockWidget(QFrame):
         return "thin" if self.segment.has_face else "wide"
 
     def _is_standard_dialogue_block(self) -> bool:
-        return self.segment.segment_kind in {"dialogue", "script_message"}
+        return self.segment.segment_kind in {"dialogue", "script_message", "tyrano_dialogue"}
 
     def _is_choice_block(self) -> bool:
         return self.segment.segment_kind == "choice"

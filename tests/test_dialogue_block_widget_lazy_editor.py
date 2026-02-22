@@ -601,6 +601,23 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertIn("あ", selected_texts)
         widget.deleteLater()
 
+    def test_tyrano_dialogue_block_shows_line_problem_on_block(self) -> None:
+        segment = _segment(["JP line A", "JP line B"])
+        segment.segment_kind = "tyrano_dialogue"
+        segment.translation_lines = ["EN line A", "EN line B"]
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            inferred_speaker_name_resolver=None,
+        )
+        widget.max_lines = 1
+        widget.refresh_metadata()
+
+        self.assertTrue(widget._has_warning)
+        self.assertIn("exceeds max lines", widget.status_label.text())
+        widget.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()
