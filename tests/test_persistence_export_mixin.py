@@ -624,6 +624,26 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertIn('text="Choice[r]Line"', rebuilt)
 
+    def test_apply_session_to_json_preserves_tyrano_choice_intentional_spaces(self) -> None:
+        harness = _Harness()
+        source = '[glink text="A B" target="*A"]\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_choice_spaces.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        choice_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
+        )
+        choice_segment.lines = ["  A   B  "]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn('text="\u00A0\u00A0A\u00A0\u00A0\u00A0B\u00A0\u00A0"', rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_config_system_title(self) -> None:
         harness = _Harness()
         source = (

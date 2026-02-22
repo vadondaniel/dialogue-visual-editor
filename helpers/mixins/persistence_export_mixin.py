@@ -952,6 +952,31 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         return escaped
 
     @staticmethod
+    def _encode_tyrano_choice_spacing(value: str) -> str:
+        if not value:
+            return ""
+        pieces: list[str] = []
+        cursor = 0
+        for match in re.finditer(r" +", value):
+            start, end = match.span()
+            if start > cursor:
+                pieces.append(value[cursor:start])
+            run_len = end - start
+            is_interior_single = (
+                run_len == 1
+                and start > 0
+                and end < len(value)
+            )
+            if is_interior_single:
+                pieces.append(" ")
+            else:
+                pieces.append("\u00A0" * run_len)
+            cursor = end
+        if cursor < len(value):
+            pieces.append(value[cursor:])
+        return "".join(pieces)
+
+    @staticmethod
     def _escape_tyrano_config_value(value: str, quote_char: str) -> str:
         escaped = value.replace("\\", "\\\\")
         if quote_char == "'":
@@ -1307,9 +1332,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if value_start < 0 or value_end < value_start or value_end > len(line):
                     updated_items.append(item)
                     continue
-                option_value = "[r]".join(
+                option_value_raw = "[r]".join(
                     split_lines_preserve_empty(incoming_lines[option_index])
                 )
+                option_value = self._encode_tyrano_choice_spacing(option_value_raw)
                 escaped_value = self._escape_tyrano_tag_attribute_value(
                     option_value,
                     quote_char,

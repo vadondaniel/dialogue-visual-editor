@@ -707,6 +707,12 @@ def _is_tyrano_glink_tag_line(line: str) -> bool:
     return lowered.startswith("[glink")
 
 
+def _normalize_tyrano_choice_text_for_editor(text: str) -> str:
+    if not text:
+        return ""
+    return text.replace("\u00A0", " ")
+
+
 def _build_tyrano_choice_segments(
     path: Path,
     data: dict[str, Any],
@@ -751,7 +757,12 @@ def _build_tyrano_choice_segments(
             if attr_payload is None:
                 break
             value_start, value_end, decoded_value, quote_char = attr_payload
-            option_lines.append(_replace_tyrano_inline_line_breaks_with_newlines(decoded_value))
+            normalized_choice_text = _normalize_tyrano_choice_text_for_editor(
+                decoded_value
+            )
+            option_lines.append(
+                _replace_tyrano_inline_line_breaks_with_newlines(normalized_choice_text)
+            )
             option_items.append((scan_index, value_start, value_end, quote_char))
             used_chunk_indexes.add(scan_index)
             scan_index += 1
