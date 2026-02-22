@@ -72,8 +72,13 @@ class _ApplyWorkflowHarness:
     _actor_source_name_map_for_prompt = MassTranslateDialog._actor_source_name_map_for_prompt
     _context_blocks_for_anchor = MassTranslateDialog._context_blocks_for_anchor
     _chunk_entry_runs = MassTranslateDialog._chunk_entry_runs
-    _chunk_context_windows = MassTranslateDialog._chunk_context_windows
+    _chunk_entry_windows = MassTranslateDialog._chunk_entry_windows
     _context_payload_for_chunk = MassTranslateDialog._context_payload_for_chunk
+    _entries_from_entry_windows = staticmethod(
+        MassTranslateDialog._entries_from_entry_windows
+    )
+    _chunk_entries_from_payload = MassTranslateDialog._chunk_entries_from_payload
+    _entries_from_payload = MassTranslateDialog._entries_from_payload
     _extract_dialogue_translation_lines = MassTranslateDialog._extract_dialogue_translation_lines
     _normalize_translation_lines_for_segment = (
         MassTranslateDialog._normalize_translation_lines_for_segment
@@ -247,11 +252,11 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
             1,
         )
 
-        self.assertNotIn("context_windows", payload)
+        self.assertNotIn("entry_windows", payload)
         self.assertEqual(payload["context_before"][0]["ja_text"], "line-0")
         self.assertEqual(payload["context_after"][0]["ja_text"], "line-3")
 
-    def test_context_payload_for_chunk_uses_multiple_windows_for_gapped_runs(self) -> None:
+    def test_context_payload_for_chunk_uses_entry_windows_for_gapped_runs(self) -> None:
         editor = _ApplyWorkflowEditorMeta()
         path = Path("Map001.json")
         segments = [_segment(f"Map001.json:{idx}", [f"line-{idx}"]) for idx in range(7)]
@@ -275,14 +280,65 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
 
         self.assertNotIn("context_before", payload)
         self.assertNotIn("context_after", payload)
-        windows = payload["context_windows"]
+        windows = payload["entry_windows"]
         self.assertEqual(len(windows), 2)
-        self.assertEqual(windows[0]["entry_ids"], ["D:1", "D:2"])
+        self.assertEqual([entry["id"] for entry in windows[0]["entries"]], ["D:1", "D:2"])
         self.assertEqual(windows[0]["context_before"][0]["ja_text"], "line-0")
         self.assertEqual(windows[0]["context_after"][0]["ja_text"], "line-3")
-        self.assertEqual(windows[1]["entry_ids"], ["D:5"])
+        self.assertEqual([entry["id"] for entry in windows[1]["entries"]], ["D:5"])
         self.assertEqual(windows[1]["context_before"][0]["ja_text"], "line-4")
         self.assertEqual(windows[1]["context_after"][0]["ja_text"], "line-6")
+
+    def test_context_payload_keeps_both_sides_when_window_context_matches(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        segments = [_segment(f"Map001.json:{idx}", [f"line-{idx}"]) for idx in range(5)]
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=segments,
+        )
+        harness = _ApplyWorkflowHarness(editor)
+        harness.entry_block_refs = {
+            "D:1": (path, 1),
+            "D:3": (path, 3),
+        }
+
+        payload = harness._context_payload_for_chunk(
+            [{"id": "D:1"}, {"id": "D:3"}],
+            1,
+        )
+
+        windows = payload["entry_windows"]
+        self.assertEqual(windows[0]["context_after"][0]["ja_text"], "line-2")
+        self.assertEqual(windows[1]["context_before"][0]["ja_text"], "line-2")
+
+    def test_entries_from_payload_flattens_entry_windows(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        payload = {
+            "entry_windows": [
+                {"entries": [{"id": "D:1", "translation": "one"}]},
+                {"entries": [{"id": "D:2", "translation": "two"}]},
+            ]
+        }
+
+        parsed = harness._entries_from_payload(payload)
+
+        self.assertEqual([entry["id"] for entry in parsed], ["D:1", "D:2"])
+
+    def test_chunk_entries_from_payload_flattens_entry_windows(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        payload = {
+            "entry_windows": [
+                {"entries": [{"id": "D:1"}]},
+                {"entries": [{"id": "D:2"}]},
+            ]
+        }
+
+        parsed = harness._chunk_entries_from_payload(payload)
+
+        self.assertEqual([entry["id"] for entry in parsed], ["D:1", "D:2"])
 
     def test_collect_apply_warning_issues_includes_line_warning_and_previews(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())

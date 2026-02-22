@@ -1294,7 +1294,7 @@ class MassTranslateDialog(QDialog):
             runs.append(current_run)
         return runs
 
-    def _chunk_context_windows(
+    def _chunk_entry_windows(
         self,
         chunk_entries: list[dict[str, Any]],
         box_limit: int,
@@ -1302,7 +1302,13 @@ class MassTranslateDialog(QDialog):
         if box_limit <= 0:
             return []
 
-        context_windows: list[dict[str, Any]] = []
+        entries_by_id: dict[str, dict[str, Any]] = {}
+        for entry in chunk_entries:
+            entry_id = entry.get("id")
+            if isinstance(entry_id, str) and entry_id and entry_id not in entries_by_id:
+                entries_by_id[entry_id] = entry
+
+        entry_windows: list[dict[str, Any]] = []
         for run in self._chunk_entry_runs(chunk_entries):
             _, first_path, first_index = run[0]
             _, last_path, last_index = run[-1]
@@ -1318,30 +1324,33 @@ class MassTranslateDialog(QDialog):
                 +1,
                 box_limit,
             )
-            if context_before and context_after and context_before == context_after:
-                context_after = []
+
+            window_entries = [
+                entries_by_id[entry_id]
+                for entry_id, _path, _idx in run
+                if entry_id in entries_by_id
+            ]
+            if not window_entries:
+                continue
 
             window: dict[str, Any] = {
-                "entry_ids": [entry_id for entry_id, _path, _idx in run]
+                "context_before": context_before,
+                "entries": window_entries,
+                "context_after": context_after,
             }
-            if context_before:
-                window["context_before"] = context_before
-            if context_after:
-                window["context_after"] = context_after
-            if len(window) > 1:
-                context_windows.append(window)
-        return context_windows
+            entry_windows.append(window)
+        return entry_windows
 
     def _context_payload_for_chunk(
         self,
         chunk_entries: list[dict[str, Any]],
         box_limit: int,
     ) -> dict[str, Any]:
-        context_windows = self._chunk_context_windows(chunk_entries, box_limit)
-        if not context_windows:
+        entry_windows = self._chunk_entry_windows(chunk_entries, box_limit)
+        if not entry_windows:
             return {}
-        if len(context_windows) == 1:
-            window = context_windows[0]
+        if len(entry_windows) == 1:
+            window = entry_windows[0]
             payload: dict[str, Any] = {}
             context_before_raw = window.get("context_before")
             context_after_raw = window.get("context_after")
@@ -1350,7 +1359,24 @@ class MassTranslateDialog(QDialog):
             if isinstance(context_after_raw, list) and context_after_raw:
                 payload["context_after"] = context_after_raw
             return payload
-        return {"context_windows": context_windows}
+        return {"entry_windows": entry_windows}
+
+    @staticmethod
+    def _entries_from_entry_windows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        windows_raw = payload.get("entry_windows")
+        if not isinstance(windows_raw, list):
+            return []
+        flattened: list[dict[str, Any]] = []
+        for window in windows_raw:
+            if not isinstance(window, dict):
+                continue
+            window_entries = window.get("entries")
+            if not isinstance(window_entries, list):
+                continue
+            for entry in window_entries:
+                if isinstance(entry, dict):
+                    flattened.append(entry)
+        return flattened
 
     def _collect_chunk_entries(
         self,
@@ -1692,9 +1718,7 @@ class MassTranslateDialog(QDialog):
         for idx, payload in enumerate(self.chunk_payloads):
             status_raw = self.chunk_status.get(idx, "ready")
             status = status_raw.upper()
-            entries_raw = payload.get("entries")
-            entry_count = len(entries_raw) if isinstance(
-                entries_raw, list) else 0
+            entry_count = len(self._chunk_entries_from_payload(payload))
             char_count = len(json.dumps(payload, ensure_ascii=False, indent=2))
             self.chunk_combo.addItem(
                 f"Chunk {idx + 1}/{total} ({entry_count} entries, {char_count} chars) [{status}]"
@@ -1742,8 +1766,7 @@ class MassTranslateDialog(QDialog):
             payload, ensure_ascii=False, indent=2))
         self._set_paste_text(self.chunk_drafts.get(index, ""))
         self.result_box.setPlainText(self._result_message_for_chunk(index))
-        entries_raw = payload.get("entries")
-        entry_count = len(entries_raw) if isinstance(entries_raw, list) else 0
+        entry_count = len(self._chunk_entries_from_payload(payload))
         self.chunk_summary_label.setText(
             f"Chunk {index + 1}/{len(self.chunk_payloads)} loaded. "
             f"Entries: {entry_count}. Paste output and apply."
@@ -1786,7 +1809,7 @@ class MassTranslateDialog(QDialog):
             "Translate `{source_field}` from {source_language_code} into "
             "{target_language_code} for each entry, writing output to `{target_field}`.\n"
             "Keep JSON structure and IDs unchanged.\n"
-            "Do not change `speaker`, `{source_field}`, `context_before`, `context_after`, or `context_windows`.\n"
+            "Do not change `speaker`, `{source_field}`, `context_before`, `context_after`, `entry_windows`, or `context_windows`.\n"
             "Preserve all control codes and symbols exactly (`\\C[]` `\\V[]` `\\N[]` `\\I[]` `\\{` `♡`).\n"
             "Keep \\n line breaks from `{source_field}`.\n"
             "Use natural game dialogue in {target_language_code}; keep the same tone "
@@ -1959,7 +1982,8 @@ class MassTranslateDialog(QDialog):
         for idx, group in enumerate(groups, start=1):
             payload: dict[str, Any] = {}
             payload.update(self._context_payload_for_chunk(group, context_boxes))
-            payload["entries"] = group
+            if "entry_windows" not in payload:
+                payload["entries"] = group
             self.chunk_payloads.append(payload)
             self.chunk_expected_ids.append(
                 {
@@ -2044,6 +2068,9 @@ class MassTranslateDialog(QDialog):
         entries_raw = payload.get("entries")
         if isinstance(entries_raw, list):
             return [item for item in entries_raw if isinstance(item, dict)]
+        entry_windows_entries = self._entries_from_entry_windows(payload)
+        if entry_windows_entries:
+            return entry_windows_entries
         items_raw = payload.get("items")
         if isinstance(items_raw, list):
             return [item for item in items_raw if isinstance(item, dict)]
@@ -2083,6 +2110,12 @@ class MassTranslateDialog(QDialog):
                 if nested:
                     return nested
         return []
+
+    def _chunk_entries_from_payload(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        entries_raw = payload.get("entries")
+        if isinstance(entries_raw, list):
+            return [item for item in entries_raw if isinstance(item, dict)]
+        return self._entries_from_entry_windows(payload)
 
     def _extract_dialogue_translation_lines(self, entry: dict[str, Any]) -> Optional[list[str]]:
         target_field = self._target_translation_field_name()
@@ -2394,9 +2427,7 @@ class MassTranslateDialog(QDialog):
                 duplicate_ids.append(entry_id)
             updates_by_id[entry_id] = entry
 
-        chunk_entries_raw = self.chunk_payloads[idx].get("entries")
-        chunk_entries = chunk_entries_raw if isinstance(
-            chunk_entries_raw, list) else []
+        chunk_entries = self._chunk_entries_from_payload(self.chunk_payloads[idx])
         positional_fallback_used = False
         if not updates_by_id:
             if len(parsed_entries) == len(chunk_entries):
