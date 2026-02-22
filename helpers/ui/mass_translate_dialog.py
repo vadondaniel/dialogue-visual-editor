@@ -98,6 +98,7 @@ class _ApplyWarningsReviewDialog(QDialog):
         self.setWindowTitle("Review Apply Warnings")
         self.resize(920, 680)
         self._checks_by_entry_id: dict[str, QCheckBox] = {}
+        self._translation_boxes_by_entry_id: dict[str, QPlainTextEdit] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -105,7 +106,8 @@ class _ApplyWarningsReviewDialog(QDialog):
 
         intro = QLabel(
             "Review entries with line-count and/or control-code warnings. "
-            "Checked entries will be applied, unchecked entries will be skipped."
+            "Checked entries will be applied, unchecked entries will be skipped. "
+            "You can edit translation text before applying."
         )
         intro.setWordWrap(True)
         root.addWidget(intro)
@@ -159,9 +161,9 @@ class _ApplyWarningsReviewDialog(QDialog):
             translation_col.setSpacing(2)
             translation_col.addWidget(QLabel("Translation"))
             translation_preview_box = QPlainTextEdit()
-            translation_preview_box.setReadOnly(True)
             translation_preview_box.setMaximumHeight(168)
             translation_preview_box.setPlainText(issue.translation_preview)
+            self._translation_boxes_by_entry_id[issue.entry_id] = translation_preview_box
             translation_col.addWidget(translation_preview_box)
 
             previews_row.addLayout(source_col, 1)
@@ -196,6 +198,12 @@ class _ApplyWarningsReviewDialog(QDialog):
             entry_id
             for entry_id, checkbox in self._checks_by_entry_id.items()
             if checkbox.isChecked()
+        }
+
+    def translation_edits_by_entry_id(self) -> dict[str, str]:
+        return {
+            entry_id: box.toPlainText()
+            for entry_id, box in self._translation_boxes_by_entry_id.items()
         }
 
 
@@ -2375,13 +2383,35 @@ class MassTranslateDialog(QDialog):
     def _review_apply_warning_issues(
         self,
         issues: list[_ApplyWarningIssue],
-    ) -> Optional[set[str]]:
+    ) -> Optional[tuple[set[str], dict[str, str]]]:
         if not issues:
-            return set()
+            return set(), {}
         review_dialog = _ApplyWarningsReviewDialog(self, issues)
         if review_dialog.exec() != int(QDialog.DialogCode.Accepted):
             return None
-        return review_dialog.selected_entry_ids()
+        return (
+            review_dialog.selected_entry_ids(),
+            review_dialog.translation_edits_by_entry_id(),
+        )
+
+    def _apply_warning_translation_overrides(
+        self,
+        updates_by_id: dict[str, dict[str, Any]],
+        warning_entry_ids: set[str],
+        translation_edits_by_entry_id: dict[str, str],
+    ) -> None:
+        if not translation_edits_by_entry_id:
+            return
+        target_field = self._target_translation_field_name()
+        for entry_id, edited_text in translation_edits_by_entry_id.items():
+            if entry_id not in warning_entry_ids:
+                continue
+            update = updates_by_id.get(entry_id)
+            if update is None:
+                continue
+            patched_update = dict(update)
+            patched_update[target_field] = edited_text
+            updates_by_id[entry_id] = patched_update
 
     @staticmethod
     def _next_chunk_index_after_apply(
@@ -2486,6 +2516,7 @@ class MassTranslateDialog(QDialog):
         )
         warning_entry_ids = {issue.entry_id for issue in warning_issues}
         selected_warning_ids = set(warning_entry_ids)
+        warning_translation_edits: dict[str, str] = {}
         if warning_issues:
             reviewed_selection = self._review_apply_warning_issues(
                 warning_issues
@@ -2496,7 +2527,12 @@ class MassTranslateDialog(QDialog):
                     "Apply canceled while reviewing warnings.",
                 )
                 return False
-            selected_warning_ids = reviewed_selection
+            selected_warning_ids, warning_translation_edits = reviewed_selection
+            self._apply_warning_translation_overrides(
+                updates_by_id,
+                warning_entry_ids,
+                warning_translation_edits,
+            )
         rejected_warning_ids = sorted(
             [
                 entry_id

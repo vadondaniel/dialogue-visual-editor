@@ -107,6 +107,9 @@ class _ApplyWorkflowHarness:
     _entry_primary_target_for_id = MassTranslateDialog._entry_primary_target_for_id
     _expected_source_line_count = MassTranslateDialog._expected_source_line_count
     _collect_apply_warning_issues = MassTranslateDialog._collect_apply_warning_issues
+    _apply_warning_translation_overrides = (
+        MassTranslateDialog._apply_warning_translation_overrides
+    )
     _overall_translation_progress_counts = (
         MassTranslateDialog._overall_translation_progress_counts
     )
@@ -431,6 +434,22 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
         issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
 
         self.assertEqual(issues, [])
+
+    def test_apply_warning_translation_overrides_updates_target_field(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        updates_by_id = {
+            "D:1": {"id": "D:1", "translation": "old"},
+            "D:2": {"id": "D:2", "translation": "same"},
+        }
+
+        harness._apply_warning_translation_overrides(
+            updates_by_id,
+            {"D:1"},
+            {"D:1": "edited", "D:2": "should-not-apply"},
+        )
+
+        self.assertEqual(updates_by_id["D:1"]["en_translation"], "edited")
+        self.assertEqual(updates_by_id["D:2"].get("en_translation"), None)
 
     def test_normalize_translation_lines_for_segment_strips_tyrano_p_and_splits_r(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
