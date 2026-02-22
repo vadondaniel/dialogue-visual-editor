@@ -140,16 +140,33 @@ class _ApplyWarningsReviewDialog(QDialog):
             self._checks_by_entry_id[issue.entry_id] = check
             card_layout.addWidget(check)
 
-            preview_box = QPlainTextEdit()
-            preview_box.setReadOnly(True)
-            preview_box.setMaximumHeight(168)
-            preview_box.setPlainText(
-                "Source preview:\n"
-                f"{issue.source_preview}\n\n"
-                "Translation preview:\n"
-                f"{issue.translation_preview}"
-            )
-            card_layout.addWidget(preview_box)
+            previews_row = QHBoxLayout()
+            previews_row.setContentsMargins(0, 0, 0, 0)
+            previews_row.setSpacing(6)
+
+            source_col = QVBoxLayout()
+            source_col.setContentsMargins(0, 0, 0, 0)
+            source_col.setSpacing(2)
+            source_col.addWidget(QLabel("Source"))
+            source_preview_box = QPlainTextEdit()
+            source_preview_box.setReadOnly(True)
+            source_preview_box.setMaximumHeight(168)
+            source_preview_box.setPlainText(issue.source_preview)
+            source_col.addWidget(source_preview_box)
+
+            translation_col = QVBoxLayout()
+            translation_col.setContentsMargins(0, 0, 0, 0)
+            translation_col.setSpacing(2)
+            translation_col.addWidget(QLabel("Translation"))
+            translation_preview_box = QPlainTextEdit()
+            translation_preview_box.setReadOnly(True)
+            translation_preview_box.setMaximumHeight(168)
+            translation_preview_box.setPlainText(issue.translation_preview)
+            translation_col.addWidget(translation_preview_box)
+
+            previews_row.addLayout(source_col, 1)
+            previews_row.addLayout(translation_col, 1)
+            card_layout.addLayout(previews_row)
             scroll_layout.addWidget(card)
 
         scroll_layout.addStretch(1)
