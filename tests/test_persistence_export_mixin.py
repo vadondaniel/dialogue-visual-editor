@@ -925,6 +925,18 @@ class PersistenceExportMixinTests(unittest.TestCase):
             )
         )
 
+    def test_missing_translation_problem_ignores_tyrano_r_p_only_source(self) -> None:
+        harness = _Harness()
+        segment = _dialogue_segment("scene.ks:K:1", "[p][r]")
+        segment.segment_kind = "tyrano_dialogue"
+        segment.translation_lines = [""]
+        self.assertFalse(
+            harness._segment_has_missing_translation_problem(
+                segment,
+                translator_mode=True,
+            )
+        )
+
     def test_layout_problem_detects_control_mismatch_for_misc_segment(self) -> None:
         harness = _Harness()
         harness.problem_control_mismatch_check = _BoolControl(True)
@@ -954,6 +966,28 @@ class PersistenceExportMixinTests(unittest.TestCase):
         segment.translation_lines = ["これはテストです"]
         session = FileSession(
             path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+
+        self.assertTrue(
+            harness._segment_has_layout_problem(
+                session,
+                segment,
+                translator_mode=True,
+            )
+        )
+
+    def test_layout_problem_detects_tyrano_inline_r_as_line_overflow(self) -> None:
+        harness = _Harness()
+        harness.problem_line_limit_check = _BoolControl(True)
+        harness.max_lines_spin = _SpinControl(1)
+        segment = _dialogue_segment("scene.ks:K:2", "JP line")
+        segment.segment_kind = "tyrano_dialogue"
+        segment.translation_lines = ["Line A[r]Line B"]
+        session = FileSession(
+            path=Path("scene.ks"),
             data={},
             bundles=[],
             segments=[segment],

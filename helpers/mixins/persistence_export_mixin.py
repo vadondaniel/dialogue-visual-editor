@@ -91,6 +91,31 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         control = getattr(self, "problem_contains_japanese_check", None)
         return bool(control.isChecked()) if control is not None else False
 
+    def _normalize_problem_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        value: Any,
+    ) -> list[str]:
+        normalized = self._normalize_translation_lines(value)
+        segment_kind_raw = getattr(segment, "segment_kind", "")
+        segment_kind = (
+            segment_kind_raw.strip().lower()
+            if isinstance(segment_kind_raw, str)
+            else ""
+        )
+        if segment_kind not in {"tyrano_dialogue", "choice", "tyrano_tag_text"}:
+            return normalized
+
+        rewritten: list[str] = []
+        for line in normalized:
+            cleaned = re.sub(r"(?i)\[p\]", "", line)
+            split_lines = re.split(r"(?i)\[r\]", cleaned)
+            if split_lines:
+                rewritten.extend(split_lines)
+            else:
+                rewritten.append(cleaned)
+        return rewritten or [""]
+
     def _segment_has_missing_translation_problem(
         self,
         segment: DialogueSegment,
@@ -117,6 +142,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             line if isinstance(line, str) else ("" if line is None else str(line))
             for line in source_lines
         ] or [""]
+        source_lines = self._normalize_problem_lines_for_segment(segment, source_lines)
         if not any(visible_length(line) > 0 for line in source_lines):
             return False
 
@@ -129,12 +155,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             except Exception:
                 resolved_tl = None
             tl_lines = (
-                self._normalize_translation_lines(resolved_tl)
+                self._normalize_problem_lines_for_segment(segment, resolved_tl)
                 if isinstance(resolved_tl, list)
-                else self._normalize_translation_lines(segment.translation_lines)
+                else self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
             )
         else:
-            tl_lines = self._normalize_translation_lines(segment.translation_lines)
+            tl_lines = self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
         return not any(visible_length(line) > 0 for line in tl_lines)
 
     def _segment_has_trailing_color_code_problem(
@@ -162,6 +188,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             line if isinstance(line, str) else ("" if line is None else str(line))
             for line in source_lines
         ] or [""]
+        source_lines = self._normalize_problem_lines_for_segment(segment, source_lines)
 
         translation_lines_resolver = getattr(
             self, "_segment_translation_lines_for_translation", None
@@ -172,12 +199,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             except Exception:
                 resolved_tl = None
             tl_lines = (
-                self._normalize_translation_lines(resolved_tl)
+                self._normalize_problem_lines_for_segment(segment, resolved_tl)
                 if isinstance(resolved_tl, list)
-                else self._normalize_translation_lines(segment.translation_lines)
+                else self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
             )
         else:
-            tl_lines = self._normalize_translation_lines(segment.translation_lines)
+            tl_lines = self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
 
         if not "\n".join(tl_lines).strip():
             return False
@@ -208,12 +235,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             except Exception:
                 resolved_tl = None
             tl_lines = (
-                self._normalize_translation_lines(resolved_tl)
+                self._normalize_problem_lines_for_segment(segment, resolved_tl)
                 if isinstance(resolved_tl, list)
-                else self._normalize_translation_lines(segment.translation_lines)
+                else self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
             )
         else:
-            tl_lines = self._normalize_translation_lines(segment.translation_lines)
+            tl_lines = self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
         if not any(visible_length(line) > 0 for line in tl_lines):
             return False
         tl_text = strip_control_tokens("\n".join(tl_lines))
@@ -244,6 +271,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             line if isinstance(line, str) else ("" if line is None else str(line))
             for line in source_lines
         ] or [""]
+        source_lines = self._normalize_problem_lines_for_segment(segment, source_lines)
 
         translation_lines_resolver = getattr(
             self, "_segment_translation_lines_for_translation", None
@@ -254,12 +282,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             except Exception:
                 resolved_tl = None
             tl_lines = (
-                self._normalize_translation_lines(resolved_tl)
+                self._normalize_problem_lines_for_segment(segment, resolved_tl)
                 if isinstance(resolved_tl, list)
-                else self._normalize_translation_lines(segment.translation_lines)
+                else self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
             )
         else:
-            tl_lines = self._normalize_translation_lines(segment.translation_lines)
+            tl_lines = self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
 
         if not "\n".join(tl_lines).strip():
             return False
@@ -310,9 +338,11 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             return False
 
         lines = (
-            self._normalize_translation_lines(segment.translation_lines)
+            self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
             if translator_mode
-            else list(segment.lines) if segment.lines else [""]
+            else self._normalize_problem_lines_for_segment(segment, segment.lines)
+            if segment.lines
+            else [""]
         )
         if check_char_limit:
             width_chars = (
