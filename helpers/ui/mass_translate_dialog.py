@@ -2005,10 +2005,7 @@ class MassTranslateDialog(QDialog):
         self.chunk_result_messages = {}
 
         for idx, group in enumerate(groups, start=1):
-            payload: dict[str, Any] = {}
-            payload.update(self._context_payload_for_chunk(group, context_boxes))
-            if "entry_windows" not in payload:
-                payload["entries"] = group
+            payload = self._chunk_payload_for_group(group, context_boxes)
             self.chunk_payloads.append(payload)
             self.chunk_expected_ids.append(
                 {
@@ -2046,6 +2043,25 @@ class MassTranslateDialog(QDialog):
                 "Chunks built. Use Copy Prompt, send to your LLM, then paste JSON output and apply."
             )
         self._update_chunk_controls()
+
+    def _chunk_payload_for_group(
+        self,
+        group: list[dict[str, Any]],
+        context_boxes: int,
+    ) -> dict[str, Any]:
+        context_payload = self._context_payload_for_chunk(group, context_boxes)
+        if "entry_windows" in context_payload:
+            return dict(context_payload)
+
+        payload: dict[str, Any] = {}
+        before_raw = context_payload.get("context_before")
+        if isinstance(before_raw, list) and before_raw:
+            payload["context_before"] = before_raw
+        payload["entries"] = group
+        after_raw = context_payload.get("context_after")
+        if isinstance(after_raw, list) and after_raw:
+            payload["context_after"] = after_raw
+        return payload
 
     @classmethod
     def _strip_code_fence(cls, text: str) -> str:

@@ -74,6 +74,7 @@ class _ApplyWorkflowHarness:
     _chunk_entry_runs = MassTranslateDialog._chunk_entry_runs
     _chunk_entry_windows = MassTranslateDialog._chunk_entry_windows
     _context_payload_for_chunk = MassTranslateDialog._context_payload_for_chunk
+    _chunk_payload_for_group = MassTranslateDialog._chunk_payload_for_group
     _entries_from_entry_windows = staticmethod(
         MassTranslateDialog._entries_from_entry_windows
     )
@@ -258,6 +259,28 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
         self.assertNotIn("entry_windows", payload)
         self.assertEqual(payload["context_before"][0]["ja_text"], "line-0")
         self.assertEqual(payload["context_after"][0]["ja_text"], "line-3")
+
+    def test_chunk_payload_for_group_orders_context_and_entries(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        segments = [_segment(f"Map001.json:{idx}", [f"line-{idx}"]) for idx in range(5)]
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=segments,
+        )
+        harness = _ApplyWorkflowHarness(editor)
+        harness.entry_block_refs = {
+            "D:1": (path, 1),
+            "D:2": (path, 2),
+        }
+        group = [{"id": "D:1"}, {"id": "D:2"}]
+
+        payload = harness._chunk_payload_for_group(group, 1)
+
+        self.assertEqual(list(payload.keys()), ["context_before", "entries", "context_after"])
+        self.assertEqual(payload["entries"], group)
 
     def test_context_payload_for_chunk_uses_entry_windows_for_gapped_runs(self) -> None:
         editor = _ApplyWorkflowEditorMeta()
