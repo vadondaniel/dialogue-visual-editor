@@ -458,6 +458,21 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
 
         self.assertEqual(issues, [])
 
+    def test_collect_apply_warning_issues_normalizes_tyrano_source_inline_r(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        harness.warning_level_combo = _ComboStub("all_line_mismatches")
+        segment = _segment("scene.ks:K:2", ["src-a[r]src-b"])
+        segment.segment_kind = "tyrano_dialogue"
+        harness.dialogue_targets["D:TYRANO:2"] = (Path("scene.ks"), segment)
+        chunk_entries = [{"id": "D:TYRANO:2"}]
+        updates_by_id = {
+            "D:TYRANO:2": {"id": "D:TYRANO:2", "translation_lines": ["tl-a", "tl-b"]}
+        }
+
+        issues = harness._collect_apply_warning_issues(chunk_entries, updates_by_id)
+
+        self.assertEqual(issues, [])
+
     def test_apply_warning_translation_overrides_updates_target_field(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
         updates_by_id = {

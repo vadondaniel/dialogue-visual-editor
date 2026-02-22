@@ -2323,7 +2323,12 @@ class MassTranslateDialog(QDialog):
         return targets
 
     def _expected_source_line_count(self, segment: DialogueSegment) -> int:
-        return len(self._segment_source_lines_for_mass_translate(segment))
+        source_lines = self._segment_source_lines_for_mass_translate(segment)
+        normalized_source = self._normalize_translation_lines_for_segment(
+            segment,
+            source_lines,
+        )
+        return len(normalized_source)
 
     def _collect_apply_warning_issues(
         self,
@@ -2350,6 +2355,10 @@ class MassTranslateDialog(QDialog):
             path, segment = primary_target
             lines = self._normalize_translation_lines_for_segment(segment, lines)
             source_lines = self._segment_source_lines_for_mass_translate(segment)
+            source_lines = self._normalize_translation_lines_for_segment(
+                segment,
+                source_lines,
+            )
             actual_lines = len(lines)
             expected_lines = len(source_lines)
 
