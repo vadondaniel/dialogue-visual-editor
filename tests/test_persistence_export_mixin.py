@@ -645,6 +645,64 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual(rendered[1], 'after."[p][r]')
         self.assertEqual(used, ["[r]", "[p][r]"])
 
+    def test_apply_session_to_json_tyrano_splits_embedded_newline_before_suffix_assignment(self) -> None:
+        harness = _Harness()
+        source = (
+            "[tb_start_text mode=3 ]\n"
+            "#NPC\n"
+            "Orig[p][r]\n"
+            "[_tb_end_text]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_dialogue_embedded_newline_suffix.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        )
+        dialogue_segment.lines = [
+            'Besides, there are only a handful of routes where you actually get to live happily ever\nafter."'
+        ]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("happily ever[r]", rebuilt)
+        self.assertIn('after."[p][r]', rebuilt)
+        self.assertNotIn("happily ever[p][r]", rebuilt)
+
+    def test_apply_session_to_json_tyrano_strips_leaked_trailing_markers_from_nonterminal_line_text(self) -> None:
+        harness = _Harness()
+        source = (
+            "[tb_start_text mode=3 ]\n"
+            "#NPC\n"
+            "Orig[p][r]\n"
+            "[_tb_end_text]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_dialogue_marker_leak_nonterminal.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        )
+        dialogue_segment.lines = [
+            'Besides, there are only a handful of routes where you actually get to live happily ever[p][r]\nafter."'
+        ]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("happily ever[r]", rebuilt)
+        self.assertIn('after."[p][r]', rebuilt)
+        self.assertNotIn("happily ever[p][r]", rebuilt)
+
     def test_apply_session_to_json_writes_inline_r_for_tyrano_choice_newlines(self) -> None:
         harness = _Harness()
         source = '[glink text="A[r]B" target="*A"]\n'

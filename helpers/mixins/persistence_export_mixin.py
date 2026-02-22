@@ -1068,6 +1068,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
     @classmethod
     def _fallback_tyrano_suffix_for_new_line(cls, stored_suffixes: list[str]) -> str:
+        if len(stored_suffixes) == 1:
+            only_suffix = stored_suffixes[0]
+            if only_suffix:
+                return only_suffix
         for suffix in reversed(stored_suffixes):
             if not suffix:
                 continue
@@ -1088,19 +1092,29 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         stored_suffixes = cls._segment_tyrano_line_suffixes(segment)
         fallback_suffix = cls._fallback_tyrano_suffix_for_new_line(stored_suffixes)
 
-        rendered_lines: list[str] = []
-        used_suffixes: list[str] = []
+        prepared_lines: list[tuple[str, str]] = []
         for line_index, raw_line in enumerate(normalized_lines):
             line_text, inline_suffix = split_tyrano_dialogue_line_and_suffix(raw_line)
-            suffix = ""
             if line_index < len(stored_suffixes):
                 suffix = stored_suffixes[line_index] or inline_suffix
             else:
                 suffix = inline_suffix or fallback_suffix
+            split_lines = split_lines_preserve_empty(line_text)
+            if len(split_lines) <= 1:
+                prepared_lines.append((line_text, suffix))
+                continue
+            for split_line in split_lines[:-1]:
+                prepared_lines.append((split_line, "[r]"))
+            prepared_lines.append((split_lines[-1], suffix))
 
+        rendered_lines: list[str] = []
+        used_suffixes: list[str] = []
+        for line_index, (raw_line_text, raw_suffix) in enumerate(prepared_lines):
+            line_text, inline_suffix = split_tyrano_dialogue_line_and_suffix(raw_line_text)
+            suffix = raw_suffix or inline_suffix
             # Keep page-break markers only on terminal lines; intermediate
             # lines should carry line-break semantics only.
-            if line_index < (len(normalized_lines) - 1):
+            if line_index < (len(prepared_lines) - 1):
                 suffix_without_page = cls._TYRANO_PAGE_BREAK_TAG_RE.sub("", suffix)
                 if cls._TYRANO_INLINE_BREAK_TAG_RE.search(suffix_without_page):
                     suffix = "[r]"
@@ -1109,7 +1123,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             rendered_lines.append(f"{line_text}{suffix}")
             used_suffixes.append(suffix)
 
-        if rendered_lines and stored_suffixes and len(normalized_lines) < len(stored_suffixes):
+        if rendered_lines and stored_suffixes and len(prepared_lines) < len(stored_suffixes):
             terminal_suffix = stored_suffixes[-1]
             if terminal_suffix:
                 last_text, _ = split_tyrano_dialogue_line_and_suffix(rendered_lines[-1])
