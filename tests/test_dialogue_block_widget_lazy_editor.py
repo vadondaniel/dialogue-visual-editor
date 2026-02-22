@@ -393,6 +393,44 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertIn("Type: Thought", widget.meta_label.text())
         widget.deleteLater()
 
+    def test_tyrano_dialogue_meta_is_minimal_and_not_rpgm_style(self) -> None:
+        segment = _segment(["こんにちは"])
+        segment.segment_kind = "tyrano_dialogue"
+        setattr(segment, "tyrano_line_suffixes", ("[p][r]",))
+        params = segment.params
+        while len(params) <= 4:
+            params.append("")
+        params[4] = "NPC"
+        segment.code101["parameters"] = params
+        widget = _widget(segment)
+
+        meta = widget.meta_label.text()
+
+        self.assertIn("Speaker:", meta)
+        self.assertIn("View: JP dialogue", meta)
+        self.assertNotIn("Type: Tyrano Dialogue", meta)
+        self.assertNotIn("Page break:", meta)
+        self.assertNotIn("line", meta.casefold())
+        self.assertNotIn("Face:", meta)
+        self.assertNotIn("BG:", meta)
+        self.assertNotIn("Pos:", meta)
+        widget.deleteLater()
+
+    def test_tyrano_tag_text_meta_is_minimal_and_not_rpgm_style(self) -> None:
+        segment = _segment(["ラベル"])
+        segment.segment_kind = "tyrano_tag_text"
+        widget = _widget(segment)
+
+        meta = widget.meta_label.text()
+
+        self.assertIn("Tag text | View: JP tag text", meta)
+        self.assertNotIn("Type: Tyrano Tag Text", meta)
+        self.assertNotIn("line", meta.casefold())
+        self.assertNotIn("Face:", meta)
+        self.assertNotIn("BG:", meta)
+        self.assertNotIn("Pos:", meta)
+        widget.deleteLater()
+
     def test_translator_mode_inferred_speaker_uses_translation_map(self) -> None:
         segment = _segment(["Hero", "こんにちは"])
         segment.translation_lines = [""]

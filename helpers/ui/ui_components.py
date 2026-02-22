@@ -2382,6 +2382,12 @@ class DialogueBlockWidget(QFrame):
     def _is_map_display_name_block(self) -> bool:
         return self.segment.segment_kind == "map_display_name"
 
+    def _is_tyrano_dialogue_block(self) -> bool:
+        return self.segment.segment_kind == "tyrano_dialogue"
+
+    def _is_tyrano_tag_text_block(self) -> bool:
+        return self.segment.segment_kind == "tyrano_tag_text"
+
     def _segment_entry_type(self, default_type: str = "dialogue") -> str:
         resolver = self.segment_prompt_type_resolver
         if callable(resolver):
@@ -3425,6 +3431,24 @@ class DialogueBlockWidget(QFrame):
             meta_html = (
                 f"Type: Choice | "
                 f"{option_count} {option_label} | "
+                f"View: {html.escape(view_text)}"
+            )
+            self.meta_label.setTextFormat(Qt.TextFormat.RichText)
+            self.meta_label.setText(meta_html)
+            return
+
+        if self._is_tyrano_tag_text_block():
+            view_text = "EN tag text" if self.translator_mode else "JP tag text"
+            meta_html = f"Tag text | View: {html.escape(view_text)}"
+            self.meta_label.setTextFormat(Qt.TextFormat.RichText)
+            self.meta_label.setText(meta_html)
+            return
+
+        if self._is_tyrano_dialogue_block():
+            view_text = "EN dialogue" if self.translator_mode else "JP dialogue"
+            speaker_html = self._speaker_display_name_html()
+            meta_html = (
+                f"Speaker: {speaker_html} | "
                 f"View: {html.escape(view_text)}"
             )
             self.meta_label.setTextFormat(Qt.TextFormat.RichText)
