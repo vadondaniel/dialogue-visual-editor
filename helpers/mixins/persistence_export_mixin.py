@@ -1097,6 +1097,15 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 suffix = stored_suffixes[line_index] or inline_suffix
             else:
                 suffix = inline_suffix or fallback_suffix
+
+            # Keep page-break markers only on terminal lines; intermediate
+            # lines should carry line-break semantics only.
+            if line_index < (len(normalized_lines) - 1):
+                suffix_without_page = cls._TYRANO_PAGE_BREAK_TAG_RE.sub("", suffix)
+                if cls._TYRANO_INLINE_BREAK_TAG_RE.search(suffix_without_page):
+                    suffix = "[r]"
+                else:
+                    suffix = "[r]"
             rendered_lines.append(f"{line_text}{suffix}")
             used_suffixes.append(suffix)
 

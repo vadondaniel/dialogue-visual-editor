@@ -541,7 +541,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
         rebuilt = tyrano_script_source_from_data(session.data)
 
         self.assertIn("#Narrator", rebuilt)
-        self.assertIn("Hello[p]", rebuilt)
+        self.assertIn("Hello[r]", rebuilt)
         self.assertIn("World[p]", rebuilt)
         self.assertIn('text="Choice A"', rebuilt)
         self.assertIn('text="Label B"', rebuilt)
@@ -630,6 +630,20 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertIn("Third line[r]", rebuilt)
         self.assertNotIn("Third line[p][r]", rebuilt)
+
+    def test_render_tyrano_dialogue_lines_strips_page_break_from_nonterminal_suffix(self) -> None:
+        segment = _dialogue_segment("scene.ks:K:99", "unused")
+        segment.segment_kind = "tyrano_dialogue"
+        setattr(segment, "tyrano_line_suffixes", ("[p][r]", "[p][r]"))
+
+        rendered, used = _Harness._render_tyrano_segment_lines_for_save(
+            segment,
+            ["Besides, there are only a handful of routes where you actually get to live happily ever", 'after."'],
+        )
+
+        self.assertEqual(rendered[0], "Besides, there are only a handful of routes where you actually get to live happily ever[r]")
+        self.assertEqual(rendered[1], 'after."[p][r]')
+        self.assertEqual(used, ["[r]", "[p][r]"])
 
     def test_apply_session_to_json_writes_inline_r_for_tyrano_choice_newlines(self) -> None:
         harness = _Harness()
