@@ -5,6 +5,7 @@ import unittest
 from dialogue_visual_editor.helpers.mixins.structural_editing_mixin import (
     StructuralEditingMixin,
 )
+from dialogue_visual_editor.helpers.core.models import DialogueSegment
 
 
 class _Harness(StructuralEditingMixin):
@@ -12,6 +13,20 @@ class _Harness(StructuralEditingMixin):
 
 
 class SplitOverflowColorContinuityTests(unittest.TestCase):
+    def test_smart_collapse_eligibility_includes_tyrano_dialogue(self) -> None:
+        harness = _Harness()
+        segment = DialogueSegment(
+            uid="scene.ks:K:1",
+            context="ctx",
+            code101={},
+            lines=["A", "B"],
+            original_lines=["A", "B"],
+            source_lines=["A", "B"],
+            segment_kind="tyrano_dialogue",
+        )
+
+        self.assertTrue(harness._is_smart_collapse_eligible_segment(segment))
+
     def test_applies_continuity_when_no_inferred_marker(self) -> None:
         harness = _Harness()
 

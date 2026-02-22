@@ -200,7 +200,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     def _is_smart_collapse_eligible_segment(self, segment: DialogueSegment) -> bool:
         if not segment.is_structural_dialogue:
             return False
-        return segment.segment_kind in {"dialogue", "script_message"}
+        return segment.segment_kind in {"dialogue", "script_message", "tyrano_dialogue"}
 
     def _collapsed_source_lines_for_segment(
         self,
