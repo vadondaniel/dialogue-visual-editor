@@ -604,6 +604,33 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertIn("First line[r]", rebuilt)
         self.assertIn("Second line[p][r]", rebuilt)
 
+    def test_apply_session_to_json_tyrano_extra_lines_use_r_not_page_break_fallback(self) -> None:
+        harness = _Harness()
+        source = (
+            "[tb_start_text mode=3 ]\n"
+            "#NPC\n"
+            "A[r]\n"
+            "B[p][r]\n"
+            "[_tb_end_text]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_dialogue_page_suffix_fallback.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        )
+        dialogue_segment.lines = ["First line", "Second line", "Third line"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("Third line[r]", rebuilt)
+        self.assertNotIn("Third line[p][r]", rebuilt)
+
     def test_apply_session_to_json_writes_inline_r_for_tyrano_choice_newlines(self) -> None:
         harness = _Harness()
         source = '[glink text="A[r]B" target="*A"]\n'

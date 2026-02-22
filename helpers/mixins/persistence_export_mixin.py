@@ -62,6 +62,8 @@ class _EditorHostTypingFallback:
 
 class PersistenceExportMixin(_EditorHostTypingFallback):
     _TRAILING_COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]\s*$")
+    _TYRANO_PAGE_BREAK_TAG_RE = re.compile(r"\[\s*p(?:\s+[^\]]*)?\s*\]", re.IGNORECASE)
+    _TYRANO_INLINE_BREAK_TAG_RE = re.compile(r"\[\s*r\s*\]", re.IGNORECASE)
     _JAPANESE_CHAR_RE = re.compile(
         r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
         r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF66-\uFF9F]"
@@ -1065,17 +1067,26 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         ]
 
     @classmethod
+    def _fallback_tyrano_suffix_for_new_line(cls, stored_suffixes: list[str]) -> str:
+        for suffix in reversed(stored_suffixes):
+            if not suffix:
+                continue
+            has_page = cls._TYRANO_PAGE_BREAK_TAG_RE.search(suffix) is not None
+            without_page = cls._TYRANO_PAGE_BREAK_TAG_RE.sub("", suffix)
+            if cls._TYRANO_INLINE_BREAK_TAG_RE.search(without_page):
+                return "[r]"
+            if has_page:
+                return suffix
+        return ""
+
+    @classmethod
     def _render_tyrano_segment_lines_for_save(
         cls,
         segment: DialogueSegment,
         normalized_lines: list[str],
     ) -> tuple[list[str], list[str]]:
         stored_suffixes = cls._segment_tyrano_line_suffixes(segment)
-        fallback_suffix = ""
-        for suffix in reversed(stored_suffixes):
-            if suffix:
-                fallback_suffix = suffix
-                break
+        fallback_suffix = cls._fallback_tyrano_suffix_for_new_line(stored_suffixes)
 
         rendered_lines: list[str] = []
         used_suffixes: list[str] = []
