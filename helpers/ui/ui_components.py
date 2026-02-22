@@ -1300,6 +1300,7 @@ class ItemNameDescriptionWidget(QFrame):
 
         self.context_label = QLabel(self.segment.context)
         self.context_label.setObjectName("MetaDim")
+        self.context_label.setVisible(False)
         root.addWidget(self.context_label)
 
         self.meta_label = QLabel("")
@@ -1953,6 +1954,7 @@ class DialogueBlockWidget(QFrame):
 
         self.context_label = QLabel(self.segment.context)
         self.context_label.setObjectName("MetaDim")
+        self.context_label.setVisible(False)
         root.addWidget(self.context_label)
 
         self.meta_label = QLabel("")
@@ -2736,6 +2738,21 @@ class DialogueBlockWidget(QFrame):
             block_border = "#38bdf8" if self._dark_theme else "#0369a1"
             meta_color = "#bae6fd" if self._dark_theme else "#075985"
         title_suffix = f" ({', '.join(tags)})" if tags else ""
+        context_text = self.segment.context.strip()
+        self.context_label.setVisible(False)
+
+        def set_title_text(base_text: str) -> None:
+            escaped_base = html.escape(base_text)
+            if self._selected and context_text:
+                escaped_context = html.escape(context_text)
+                self.title_label.setTextFormat(Qt.TextFormat.RichText)
+                self.title_label.setText(
+                    f"<b>{escaped_base}</b>"
+                    f"<span style=\"font-weight:400;\"> | {escaped_context}</span>"
+                )
+                return
+            self.title_label.setTextFormat(Qt.TextFormat.RichText)
+            self.title_label.setText(f"<b>{escaped_base}</b>")
 
         if self.actor_mode:
             label = (
@@ -2743,7 +2760,7 @@ class DialogueBlockWidget(QFrame):
                 if self._actor_id is not None
                 else f"{self.name_index_label} Entry {self.block_number}"
             )
-            self.title_label.setText(f"{label}{title_suffix}")
+            set_title_text(f"{label}{title_suffix}")
         else:
             block_prefix = "Block"
             if self._is_choice_block():
@@ -2753,10 +2770,9 @@ class DialogueBlockWidget(QFrame):
             elif self._is_thought_block():
                 block_prefix = "Thought"
             if self._is_map_display_name_block():
-                self.title_label.setText(f"{block_prefix}{title_suffix}")
+                set_title_text(f"{block_prefix}{title_suffix}")
             else:
-                self.title_label.setText(
-                    f"{block_prefix} {self.block_number}{title_suffix}")
+                set_title_text(f"{block_prefix} {self.block_number}{title_suffix}")
         self.setStyleSheet(
             f"""
             QFrame#DialogueBlock {{

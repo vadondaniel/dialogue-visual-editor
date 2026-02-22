@@ -389,7 +389,7 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
             segment_prompt_type_resolver=resolve_type,
         )
 
-        self.assertTrue(widget.title_label.text().startswith("Thought 1"))
+        self.assertIn("Thought 1", widget.title_label.text())
         self.assertIn("Type: Thought", widget.meta_label.text())
         widget.deleteLater()
 
@@ -429,6 +429,21 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertNotIn("Face:", meta)
         self.assertNotIn("BG:", meta)
         self.assertNotIn("Pos:", meta)
+        widget.deleteLater()
+
+    def test_context_is_inline_in_title_when_selected_and_context_row_hidden(self) -> None:
+        segment = _segment(["Hello"])
+        segment.context = "scene.ks > dialogue line 42"
+        widget = _widget(segment)
+
+        self.assertTrue(widget.context_label.isHidden())
+        self.assertNotIn("scene.ks > dialogue line 42", widget.title_label.text())
+
+        widget.set_selected_state(True)
+
+        self.assertTrue(widget.context_label.isHidden())
+        self.assertIn("scene.ks &gt; dialogue line 42", widget.title_label.text())
+        self.assertIn("font-weight:400", widget.title_label.text())
         widget.deleteLater()
 
     def test_translator_mode_inferred_speaker_uses_translation_map(self) -> None:
