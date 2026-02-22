@@ -297,6 +297,13 @@ def _replace_tyrano_inline_line_breaks_with_newlines(text: str) -> str:
     return _TYRANO_INLINE_LINE_BREAK_TAG_RE.sub("\n", text)
 
 
+def _replace_tyrano_attribute_line_breaks_with_newlines(text: str) -> str:
+    if not text:
+        return ""
+    inline_normalized = _replace_tyrano_inline_line_breaks_with_newlines(text)
+    return inline_normalized.replace("\\n", "\n")
+
+
 def _group_tyrano_text_items_by_page_break(
     text_items: list[tuple[int, str]],
 ) -> list[list[tuple[int, str]]]:
@@ -761,7 +768,9 @@ def _build_tyrano_choice_segments(
                 decoded_value
             )
             option_lines.append(
-                _replace_tyrano_inline_line_breaks_with_newlines(normalized_choice_text)
+                _replace_tyrano_attribute_line_breaks_with_newlines(
+                    normalized_choice_text
+                )
             )
             option_items.append((scan_index, value_start, value_end, quote_char))
             used_chunk_indexes.add(scan_index)
@@ -817,7 +826,9 @@ def _build_tyrano_tag_text_segments(
         if attr_payload is None:
             continue
         value_start, value_end, decoded_value, quote_char = attr_payload
-        normalized_text = _replace_tyrano_inline_line_breaks_with_newlines(decoded_value)
+        normalized_text = _replace_tyrano_attribute_line_breaks_with_newlines(
+            decoded_value
+        )
         lines = split_lines_preserve_empty(normalized_text)
         uid = f"{path.name}:KT:{tag_index}"
         segment = DialogueSegment(

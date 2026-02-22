@@ -977,6 +977,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         return "".join(pieces)
 
     @staticmethod
+    def _join_tyrano_text_lines_for_attribute(lines: list[str]) -> str:
+        flattened: list[str] = []
+        for line in lines:
+            flattened.extend(split_lines_preserve_empty(line))
+        return "[r]".join(flattened)
+
+    @staticmethod
     def _escape_tyrano_config_value(value: str, quote_char: str) -> str:
         escaped = value.replace("\\", "\\\\")
         if quote_char == "'":
@@ -1332,8 +1339,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if value_start < 0 or value_end < value_start or value_end > len(line):
                     updated_items.append(item)
                     continue
-                option_value_raw = "[r]".join(
-                    split_lines_preserve_empty(incoming_lines[option_index])
+                option_value_raw = self._join_tyrano_text_lines_for_attribute(
+                    [incoming_lines[option_index]]
                 )
                 option_value = self._encode_tyrano_choice_spacing(option_value_raw)
                 escaped_value = self._escape_tyrano_tag_attribute_value(
@@ -1383,7 +1390,11 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             quote_char = (
                 quote_raw if isinstance(quote_raw, str) and quote_raw in {'"', "'"} else '"'
             )
-            joined_value = "[r]".join(segment.lines) if segment.lines else ""
+            joined_value = (
+                self._join_tyrano_text_lines_for_attribute(segment.lines)
+                if segment.lines
+                else ""
+            )
             escaped_value = self._escape_tyrano_tag_attribute_value(
                 joined_value,
                 quote_char,

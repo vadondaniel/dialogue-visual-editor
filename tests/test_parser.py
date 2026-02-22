@@ -484,10 +484,38 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(choice_segment.lines, ["A  B"])
 
+    def test_parse_tyrano_choice_escaped_newline_becomes_newline_in_editor(self) -> None:
+        source = '[glink text="A\\nB" target="*A"]\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_choice_escaped_newline.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        choice_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
+        )
+        self.assertEqual(choice_segment.lines, ["A\nB"])
+
     def test_parse_tyrano_tag_text_inline_r_becomes_newline(self) -> None:
         source = '[button text="補助[r]ラベル" target="*A"]\n'
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "scene_tag_inline_r.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        tag_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+        )
+        self.assertEqual(tag_segment.lines, ["補助", "ラベル"])
+
+    def test_parse_tyrano_tag_text_escaped_newline_becomes_newline(self) -> None:
+        source = '[button text="補助\\nラベル" target="*A"]\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_tag_escaped_newline.ks"
             path.write_text(source, encoding="utf-8")
             session = parse_dialogue_file(path)
 

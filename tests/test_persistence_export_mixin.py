@@ -644,6 +644,26 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertIn('text="\u00A0\u00A0A\u00A0\u00A0\u00A0B\u00A0\u00A0"', rebuilt)
 
+    def test_apply_session_to_json_writes_inline_r_for_tyrano_tag_text_newlines(self) -> None:
+        harness = _Harness()
+        source = '[button text="A" target="*A"]\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_tag_text_newlines.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        tag_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+        )
+        tag_segment.lines = ["Line A\nLine B"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn('text="Line A[r]Line B"', rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_config_system_title(self) -> None:
         harness = _Harness()
         source = (
