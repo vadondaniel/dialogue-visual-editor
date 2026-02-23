@@ -1332,6 +1332,246 @@ class PersistenceExportMixinTests(unittest.TestCase):
             "Hinata",
         )
 
+    def test_save_session_updates_translated_actor_alias_targets_when_target_path_is_relative(
+        self,
+    ) -> None:
+        harness = _ActorAliasSaveHarness()
+        actor_path = Path("Actors.json").resolve()
+        map_path = Path("Map001.json").resolve()
+        actor_segment = _dialogue_segment("Actors.json:A:1", "Harold")
+        alias_segment = _dialogue_segment("Actors.json:A:1:alt_1", "ヒナタ")
+        alias_segment.lines = ["ヒナタ"]
+        alias_segment.original_lines = ["ヒナタ"]
+        alias_segment.translation_lines = ["Hinata"]
+        alias_segment.original_translation_lines = [""]
+        alias_segment.segment_kind = "actor_name_alias"
+        setattr(alias_segment, "is_actor_name_alias", True)
+        setattr(
+            alias_segment,
+            "actor_alias_target_refs",
+            [(Path("Map001.json"), ("events", 0, "pages", 0, "list", 0, "parameters", 1))],
+        )
+        actor_session = FileSession(
+            path=actor_path,
+            data=[{"id": 1, "name": "Harold"}],
+            bundles=[],
+            segments=[actor_segment, alias_segment],
+        )
+        setattr(actor_session, "is_name_index_session", True)
+        setattr(actor_session, "name_index_uid_prefix", "A")
+
+        map_session = FileSession(
+            path=map_path,
+            data={
+                "events": [
+                    {
+                        "pages": [
+                            {
+                                "list": [
+                                    {"code": 320, "indent": 0, "parameters": [1, "ヒナタ"]},
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            bundles=[],
+            segments=[],
+        )
+
+        harness.sessions = {actor_path: actor_session, map_path: map_session}
+
+        ok = harness._save_session(actor_session, refresh_current_view=False)
+
+        self.assertTrue(ok)
+        translated_by_path = {
+            rel_path: data
+            for rel_path, data, _profile_id in harness.version_db.translated_calls
+        }
+        self.assertIn("Map001.json", translated_by_path)
+        self.assertEqual(
+            translated_by_path["Map001.json"]["events"][0]["pages"][0]["list"][0]["parameters"][1],
+            "Hinata",
+        )
+
+    def test_refresh_translated_snapshots_from_loaded_sessions_applies_actor_name_and_alias(
+        self,
+    ) -> None:
+        harness = _ActorAliasSaveHarness()
+        actor_path = Path("Actors.json")
+        map_path = Path("Map001.json")
+        actor_segment = _dialogue_segment("Actors.json:A:1", "ヒナタ")
+        actor_segment.translation_lines = ["Hinata"]
+        actor_segment.original_translation_lines = [""]
+
+        alias_main_segment = _dialogue_segment("Actors.json:A:1:alt_1", "ヒナタ")
+        alias_main_segment.lines = ["ヒナタ"]
+        alias_main_segment.original_lines = ["ヒナタ"]
+        alias_main_segment.translation_lines = [""]
+        alias_main_segment.original_translation_lines = [""]
+        alias_main_segment.segment_kind = "actor_name_alias"
+        setattr(alias_main_segment, "is_actor_name_alias", True)
+        setattr(alias_main_segment, "actor_alias_actor_id", 1)
+        setattr(
+            alias_main_segment,
+            "actor_alias_target_refs",
+            [(map_path, ("events", 0, "pages", 0, "list", 0, "parameters", 1))],
+        )
+
+        alias_nickname_segment = _dialogue_segment("Actors.json:A:1:alt_2", "ひな")
+        alias_nickname_segment.lines = ["ひな"]
+        alias_nickname_segment.original_lines = ["ひな"]
+        alias_nickname_segment.translation_lines = ["Hina"]
+        alias_nickname_segment.original_translation_lines = [""]
+        alias_nickname_segment.segment_kind = "actor_name_alias"
+        setattr(alias_nickname_segment, "is_actor_name_alias", True)
+        setattr(alias_nickname_segment, "actor_alias_actor_id", 1)
+        setattr(
+            alias_nickname_segment,
+            "actor_alias_target_refs",
+            [(map_path, ("events", 0, "pages", 0, "list", 1, "parameters", 1))],
+        )
+
+        actor_session = FileSession(
+            path=actor_path,
+            data=[{"id": 1, "name": "ヒナタ"}],
+            bundles=[],
+            segments=[actor_segment, alias_main_segment, alias_nickname_segment],
+        )
+        setattr(actor_session, "is_name_index_session", True)
+        setattr(actor_session, "name_index_uid_prefix", "A")
+
+        map_session = FileSession(
+            path=map_path,
+            data={
+                "events": [
+                    {
+                        "pages": [
+                            {
+                                "list": [
+                                    {"code": 320, "indent": 0, "parameters": [1, "ヒナタ"]},
+                                    {"code": 320, "indent": 0, "parameters": [1, "ひな"]},
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            bundles=[],
+            segments=[],
+        )
+
+        harness.sessions = {actor_path: actor_session, map_path: map_session}
+
+        saved_count = harness._refresh_translated_snapshots_from_loaded_sessions(
+            profile_id="default"
+        )
+
+        self.assertEqual(saved_count, 2)
+        translated_by_path = {
+            rel_path: data
+            for rel_path, data, _profile_id in harness.version_db.translated_calls
+        }
+        self.assertIn("Map001.json", translated_by_path)
+        self.assertEqual(
+            translated_by_path["Map001.json"]["events"][0]["pages"][0]["list"][0]["parameters"][1],
+            "Hinata",
+        )
+        self.assertEqual(
+            translated_by_path["Map001.json"]["events"][0]["pages"][0]["list"][1]["parameters"][1],
+            "Hina",
+        )
+
+    def test_refresh_translated_snapshots_updates_map_commands_without_target_refs(
+        self,
+    ) -> None:
+        harness = _ActorAliasSaveHarness()
+        actor_path = Path("Actors.json")
+        common_path = Path("CommonEvents.json")
+        map_path = Path("Map002.json")
+
+        actor_segment = _dialogue_segment("Actors.json:A:1", "ヒナタ")
+        actor_segment.translation_lines = ["Hinata"]
+        actor_segment.original_translation_lines = [""]
+
+        alias_segment = _dialogue_segment("Actors.json:A:1:alt_1", "ひな")
+        alias_segment.lines = ["ひな"]
+        alias_segment.original_lines = ["ひな"]
+        alias_segment.translation_lines = ["Hina"]
+        alias_segment.original_translation_lines = [""]
+        alias_segment.segment_kind = "actor_name_alias"
+        setattr(alias_segment, "is_actor_name_alias", True)
+        setattr(alias_segment, "actor_alias_actor_id", 1)
+        # Intentionally omit actor_alias_target_refs to verify global code320 mapping path.
+        setattr(alias_segment, "actor_alias_target_refs", [])
+
+        actor_session = FileSession(
+            path=actor_path,
+            data=[{"id": 1, "name": "ヒナタ"}],
+            bundles=[],
+            segments=[actor_segment, alias_segment],
+        )
+        setattr(actor_session, "is_name_index_session", True)
+        setattr(actor_session, "name_index_uid_prefix", "A")
+
+        common_session = FileSession(
+            path=common_path,
+            data={
+                "list": [
+                    {"code": 320, "indent": 0, "parameters": [1, "ヒナタ"]},
+                ]
+            },
+            bundles=[],
+            segments=[],
+        )
+        map_session = FileSession(
+            path=map_path,
+            data={
+                "events": [
+                    {
+                        "pages": [
+                            {
+                                "list": [
+                                    {"code": 320, "indent": 0, "parameters": [1, "ヒナタ"]},
+                                    {"code": 320, "indent": 0, "parameters": [1, "ひな"]},
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            bundles=[],
+            segments=[],
+        )
+
+        harness.sessions = {
+            actor_path: actor_session,
+            common_path: common_session,
+            map_path: map_session,
+        }
+
+        saved_count = harness._refresh_translated_snapshots_from_loaded_sessions(
+            profile_id="default"
+        )
+
+        self.assertEqual(saved_count, 3)
+        translated_by_path = {
+            rel_path: data
+            for rel_path, data, _profile_id in harness.version_db.translated_calls
+        }
+        self.assertEqual(
+            translated_by_path["CommonEvents.json"]["list"][0]["parameters"][1],
+            "Hinata",
+        )
+        self.assertEqual(
+            translated_by_path["Map002.json"]["events"][0]["pages"][0]["list"][0]["parameters"][1],
+            "Hinata",
+        )
+        self.assertEqual(
+            translated_by_path["Map002.json"]["events"][0]["pages"][0]["list"][1]["parameters"][1],
+            "Hina",
+        )
+
     def test_reset_current_file_in_translator_mode_avoids_full_rerender(self) -> None:
         harness = _ResetCurrentFileHarness()
         segment = _dialogue_segment("A:1", "line")

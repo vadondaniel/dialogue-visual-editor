@@ -898,6 +898,33 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             targets.append((target_path, path_tokens))
         return targets
 
+    def _resolve_session_for_target_path(
+        self,
+        sessions_by_path: dict[Path, FileSession],
+        target_path: Path,
+    ) -> Optional[FileSession]:
+        direct = sessions_by_path.get(target_path)
+        if isinstance(direct, FileSession):
+            return direct
+        try:
+            target_resolved = target_path.resolve()
+        except Exception:
+            target_resolved = target_path
+        for candidate_path, candidate_session in sessions_by_path.items():
+            if not isinstance(candidate_path, Path):
+                continue
+            if not isinstance(candidate_session, FileSession):
+                continue
+            if candidate_path == target_path:
+                return candidate_session
+            try:
+                candidate_resolved = candidate_path.resolve()
+            except Exception:
+                candidate_resolved = candidate_path
+            if candidate_resolved == target_resolved:
+                return candidate_session
+        return None
+
     def _sync_actor_alias_targets_for_session(self, session: FileSession) -> list[FileSession]:
         alias_segments = [
             segment
@@ -914,7 +941,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         for alias_segment in alias_segments:
             alias_value = "\n".join(alias_segment.lines) if alias_segment.lines else ""
             for target_path, path_tokens in self._actor_alias_targets_for_segment(alias_segment):
-                target_session = sessions_by_path.get(target_path)
+                target_session = self._resolve_session_for_target_path(
+                    sessions_by_path,
+                    target_path,
+                )
                 if not isinstance(target_session, FileSession):
                     continue
                 if target_session.path == session.path:
@@ -962,6 +992,152 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
         return list(segment.lines or [""])
 
+    def _actor_id_from_segment_uid_for_alias(self, uid: str) -> Optional[int]:
+        resolver = getattr(self, "_actor_id_from_uid", None)
+        if callable(resolver):
+            try:
+                actor_id_raw = resolver(uid)
+            except Exception:
+                actor_id_raw = None
+            if isinstance(actor_id_raw, int) and actor_id_raw > 0:
+                return actor_id_raw
+        match = re.search(r":[A-Za-z]:(\d+)(?::[A-Za-z0-9_]+)?$", uid)
+        if match is None:
+            return None
+        try:
+            actor_id = int(match.group(1))
+        except Exception:
+            return None
+        return actor_id if actor_id > 0 else None
+
+    def _actor_name_translation_maps_for_session(
+        self,
+        session: FileSession,
+    ) -> tuple[dict[int, str], dict[int, str]]:
+        source_by_actor_id: dict[int, str] = {}
+        translated_by_actor_id: dict[int, str] = {}
+        for segment in session.segments:
+            if bool(getattr(segment, "is_actor_name_alias", False)):
+                continue
+            actor_id = self._actor_id_from_segment_uid_for_alias(segment.uid)
+            if actor_id is None:
+                continue
+            source_value = "\n".join(segment.lines) if segment.lines else ""
+            translated_lines = self._translated_export_lines_for_segment(segment)
+            translated_value = "\n".join(translated_lines) if translated_lines else ""
+            source_by_actor_id.setdefault(actor_id, source_value)
+            translated_by_actor_id.setdefault(actor_id, translated_value)
+        return source_by_actor_id, translated_by_actor_id
+
+    def _translated_actor_alias_value_for_segment(
+        self,
+        alias_segment: DialogueSegment,
+        actor_source_by_id: dict[int, str],
+        actor_translated_by_id: dict[int, str],
+    ) -> str:
+        alias_lines = self._translated_export_lines_for_segment(alias_segment)
+        alias_value = "\n".join(alias_lines) if alias_lines else ""
+        visible_tl_lines = self._normalize_translation_lines(alias_segment.translation_lines)
+        has_explicit_alias_tl = any(line.strip() for line in visible_tl_lines)
+        if has_explicit_alias_tl:
+            return alias_value
+
+        actor_id_raw = getattr(alias_segment, "actor_alias_actor_id", None)
+        actor_id = (
+            actor_id_raw
+            if isinstance(actor_id_raw, int) and actor_id_raw > 0
+            else self._actor_id_from_segment_uid_for_alias(alias_segment.uid)
+        )
+        if actor_id is None:
+            return alias_value
+        actor_source = actor_source_by_id.get(actor_id, "")
+        actor_translated = actor_translated_by_id.get(actor_id, "")
+        alias_source = "\n".join(alias_segment.lines) if alias_segment.lines else ""
+        if (
+            actor_source
+            and actor_translated
+            and actor_translated != actor_source
+            and alias_source == actor_source
+        ):
+            return actor_translated
+        return alias_value
+
+    def _is_actor_index_session_for_alias_map(self, session: FileSession) -> bool:
+        if bool(getattr(session, "is_actor_index_session", False)):
+            return True
+        if not bool(getattr(session, "is_name_index_session", False)):
+            return False
+        uid_prefix_raw = getattr(session, "name_index_uid_prefix", "")
+        uid_prefix = uid_prefix_raw.strip().upper() if isinstance(uid_prefix_raw, str) else ""
+        return uid_prefix == "A"
+
+    def _actor_command_translation_map_for_session(
+        self,
+        session: FileSession,
+    ) -> dict[int, dict[str, str]]:
+        actor_source_by_id, actor_translated_by_id = self._actor_name_translation_maps_for_session(
+            session
+        )
+        mapping: dict[int, dict[str, str]] = {}
+        for segment in session.segments:
+            actor_id = self._actor_id_from_segment_uid_for_alias(segment.uid)
+            if actor_id is None:
+                continue
+            source_value = "\n".join(segment.lines) if segment.lines else ""
+            if not source_value:
+                continue
+            if bool(getattr(segment, "is_actor_name_alias", False)):
+                translated_value = self._translated_actor_alias_value_for_segment(
+                    segment,
+                    actor_source_by_id,
+                    actor_translated_by_id,
+                )
+            else:
+                translated_lines = self._translated_export_lines_for_segment(segment)
+                translated_value = "\n".join(translated_lines) if translated_lines else ""
+            if not translated_value or translated_value == source_value:
+                continue
+            entry_map = mapping.setdefault(actor_id, {})
+            entry_map.setdefault(source_value, translated_value)
+        return mapping
+
+    def _apply_actor_command_translation_map_to_data(
+        self,
+        data: Any,
+        actor_name_map: dict[int, dict[str, str]],
+    ) -> bool:
+        if not actor_name_map:
+            return False
+        updated = False
+
+        def walk(node: Any) -> None:
+            nonlocal updated
+            if isinstance(node, dict):
+                code_raw = node.get("code")
+                parameters = node.get("parameters")
+                if code_raw == 320 and isinstance(parameters, list) and len(parameters) >= 2:
+                    actor_id_raw = parameters[0]
+                    source_name_raw = parameters[1]
+                    if (
+                        isinstance(actor_id_raw, int)
+                        and actor_id_raw > 0
+                        and isinstance(source_name_raw, str)
+                    ):
+                        per_actor_map = actor_name_map.get(actor_id_raw, {})
+                        translated_value = per_actor_map.get(source_name_raw, "")
+                        if translated_value and translated_value != source_name_raw:
+                            parameters[1] = translated_value
+                            updated = True
+                for value in node.values():
+                    walk(value)
+                return
+            if isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(data)
+        return updated
+
     def _save_translated_actor_alias_target_snapshots_for_session(
         self,
         session: FileSession,
@@ -983,19 +1159,34 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         if not alias_segments:
             return 0
 
+        actor_source_by_id, actor_translated_by_id = self._actor_name_translation_maps_for_session(
+            session
+        )
         overrides_by_target: dict[Path, dict[tuple[Any, ...], str]] = {}
         for alias_segment in alias_segments:
-            alias_lines = self._translated_export_lines_for_segment(alias_segment)
-            alias_value = "\n".join(alias_lines) if alias_lines else ""
+            alias_value = self._translated_actor_alias_value_for_segment(
+                alias_segment,
+                actor_source_by_id,
+                actor_translated_by_id,
+            )
             for target_path, path_tokens in self._actor_alias_targets_for_segment(alias_segment):
-                if target_path == session.path:
+                target_session = self._resolve_session_for_target_path(
+                    sessions_by_path,
+                    target_path,
+                )
+                if not isinstance(target_session, FileSession):
                     continue
-                target_overrides = overrides_by_target.setdefault(target_path, {})
+                if target_session.path == session.path:
+                    continue
+                target_overrides = overrides_by_target.setdefault(target_session.path, {})
                 target_overrides[path_tokens] = alias_value
 
         saved_count = 0
         for target_path, target_overrides in overrides_by_target.items():
-            target_session = sessions_by_path.get(target_path)
+            target_session = self._resolve_session_for_target_path(
+                sessions_by_path,
+                target_path,
+            )
             if not isinstance(target_session, FileSession):
                 continue
 
@@ -1019,6 +1210,81 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             )
             saved_count += 1
 
+        return saved_count
+
+    def _refresh_translated_snapshots_from_loaded_sessions(
+        self,
+        *,
+        profile_id: str,
+    ) -> int:
+        version_db = getattr(self, "version_db", None)
+        if version_db is None:
+            return 0
+        sessions_by_path = getattr(self, "sessions", None)
+        if not isinstance(sessions_by_path, dict):
+            return 0
+
+        payload_by_path: dict[Path, Any] = {}
+        for path, session in sessions_by_path.items():
+            if not isinstance(path, Path):
+                continue
+            if not isinstance(session, FileSession):
+                continue
+            payload_by_path[session.path] = self._export_translated_data_for_session(session)
+
+        actor_name_map: dict[int, dict[str, str]] = {}
+        for session in sessions_by_path.values():
+            if not isinstance(session, FileSession):
+                continue
+            if not self._is_actor_index_session_for_alias_map(session):
+                continue
+            session_map = self._actor_command_translation_map_for_session(session)
+            for actor_id, per_actor_map in session_map.items():
+                combined = actor_name_map.setdefault(actor_id, {})
+                for source_name, translated_name in per_actor_map.items():
+                    combined.setdefault(source_name, translated_name)
+
+        for source_session in sessions_by_path.values():
+            if not isinstance(source_session, FileSession):
+                continue
+            alias_segments = [
+                segment
+                for segment in source_session.segments
+                if bool(getattr(segment, "is_actor_name_alias", False))
+            ]
+            if not alias_segments:
+                continue
+            actor_source_by_id, actor_translated_by_id = (
+                self._actor_name_translation_maps_for_session(source_session)
+            )
+            for alias_segment in alias_segments:
+                alias_value = self._translated_actor_alias_value_for_segment(
+                    alias_segment,
+                    actor_source_by_id,
+                    actor_translated_by_id,
+                )
+                for target_path, path_tokens in self._actor_alias_targets_for_segment(alias_segment):
+                    target_session = self._resolve_session_for_target_path(
+                        sessions_by_path,
+                        target_path,
+                    )
+                    if not isinstance(target_session, FileSession):
+                        continue
+                    target_data = payload_by_path.get(target_session.path)
+                    if target_data is None:
+                        continue
+                    self._set_json_value_by_path(target_data, path_tokens, alias_value)
+
+        saved_count = 0
+        for path, translated_data in payload_by_path.items():
+            self._apply_actor_command_translation_map_to_data(translated_data, actor_name_map)
+            rel_path = self._relative_path(path)
+            version_db.save_translated_snapshot(
+                rel_path,
+                translated_data,
+                profile_id=profile_id,
+            )
+            saved_count += 1
         return saved_count
 
     @staticmethod
@@ -2245,6 +2511,14 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         )
         if button != QMessageBox.StandardButton.Yes:
             return
+
+        if version == "translated":
+            try:
+                self._refresh_translated_snapshots_from_loaded_sessions(
+                    profile_id=translated_profile_id,
+                )
+            except Exception:
+                logger.exception("Failed to refresh translated snapshots from loaded sessions.")
 
         applied = 0
         missing: list[str] = []
