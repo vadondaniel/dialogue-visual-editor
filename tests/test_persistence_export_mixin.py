@@ -294,7 +294,17 @@ class _ActorAliasSaveHarness(PersistenceExportMixin):
         return {"working": session.path.name}
 
     def _export_translated_data_for_session(self, session: FileSession) -> Any:
-        return {"translated": session.path.name}
+        return super()._export_translated_data_for_session(session)
+
+    def _normalize_translation_lines(self, value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [
+                item if isinstance(item, str) else ("" if item is None else str(item))
+                for item in value
+            ] or [""]
+        if isinstance(value, str):
+            return value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        return [""]
 
     def _relative_path(self, path: Path) -> str:
         return path.name
@@ -1251,6 +1261,75 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual(
             [rel_path for rel_path, _data in harness.version_db.working_calls],
             ["Actors.json", "Map001.json"],
+        )
+
+    def test_save_session_updates_translated_actor_alias_targets_for_apply(self) -> None:
+        harness = _ActorAliasSaveHarness()
+        actor_path = Path("Actors.json")
+        map_path = Path("Map001.json")
+        actor_segment = _dialogue_segment("Actors.json:A:1", "Harold")
+        alias_segment = _dialogue_segment("Actors.json:A:1:alt_1", "ヒナタ")
+        alias_segment.lines = ["ヒナタ"]
+        alias_segment.original_lines = ["ヒナタ"]
+        alias_segment.translation_lines = ["Hinata"]
+        alias_segment.original_translation_lines = [""]
+        alias_segment.segment_kind = "actor_name_alias"
+        setattr(alias_segment, "is_actor_name_alias", True)
+        setattr(
+            alias_segment,
+            "actor_alias_target_refs",
+            [(map_path, ("events", 0, "pages", 0, "list", 0, "parameters", 1))],
+        )
+        actor_session = FileSession(
+            path=actor_path,
+            data=[{"id": 1, "name": "Harold"}],
+            bundles=[],
+            segments=[actor_segment, alias_segment],
+        )
+        setattr(actor_session, "is_name_index_session", True)
+        setattr(actor_session, "name_index_uid_prefix", "A")
+
+        map_session = FileSession(
+            path=map_path,
+            data={
+                "events": [
+                    {
+                        "pages": [
+                            {
+                                "list": [
+                                    {"code": 320, "indent": 0, "parameters": [1, "ヒナタ"]},
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            },
+            bundles=[],
+            segments=[],
+        )
+
+        harness.sessions = {actor_path: actor_session, map_path: map_session}
+
+        ok = harness._save_session(actor_session, refresh_current_view=False)
+
+        self.assertTrue(ok)
+        # Translation-only alias edits should not mutate in-memory source JSON.
+        self.assertEqual(
+            map_session.data["events"][0]["pages"][0]["list"][0]["parameters"][1],
+            "ヒナタ",
+        )
+        self.assertEqual(
+            [rel_path for rel_path, _data in harness.version_db.working_calls],
+            [],
+        )
+        translated_by_path = {
+            rel_path: data
+            for rel_path, data, _profile_id in harness.version_db.translated_calls
+        }
+        self.assertIn("Map001.json", translated_by_path)
+        self.assertEqual(
+            translated_by_path["Map001.json"]["events"][0]["pages"][0]["list"][0]["parameters"][1],
+            "Hinata",
         )
 
     def test_reset_current_file_in_translator_mode_avoids_full_rerender(self) -> None:

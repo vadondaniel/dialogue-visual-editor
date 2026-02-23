@@ -934,6 +934,93 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
 
         return list(changed_sessions.values())
 
+    def _translated_export_lines_for_segment(self, segment: DialogueSegment) -> list[str]:
+        visible_tl_lines = self._normalize_translation_lines(segment.translation_lines)
+        visible_lines_resolver = getattr(
+            self, "_segment_translation_lines_for_translation", None
+        )
+        if callable(visible_lines_resolver):
+            try:
+                resolved_lines = visible_lines_resolver(segment)
+                if isinstance(resolved_lines, list):
+                    visible_tl_lines = self._normalize_translation_lines(resolved_lines)
+            except Exception:
+                pass
+
+        has_tl = any(line.strip() for line in visible_tl_lines)
+        if has_tl:
+            compose_lines_resolver = getattr(
+                self, "_compose_translation_lines_for_segment", None
+            )
+            if callable(compose_lines_resolver):
+                try:
+                    composed_lines = compose_lines_resolver(segment, visible_tl_lines)
+                    return self._normalize_translation_lines(composed_lines)
+                except Exception:
+                    return list(visible_tl_lines)
+            return list(visible_tl_lines)
+
+        return list(segment.lines or [""])
+
+    def _save_translated_actor_alias_target_snapshots_for_session(
+        self,
+        session: FileSession,
+        *,
+        profile_id: str,
+    ) -> int:
+        version_db = getattr(self, "version_db", None)
+        if version_db is None:
+            return 0
+        sessions_by_path = getattr(self, "sessions", None)
+        if not isinstance(sessions_by_path, dict):
+            return 0
+
+        alias_segments = [
+            segment
+            for segment in session.segments
+            if bool(getattr(segment, "is_actor_name_alias", False))
+        ]
+        if not alias_segments:
+            return 0
+
+        overrides_by_target: dict[Path, dict[tuple[Any, ...], str]] = {}
+        for alias_segment in alias_segments:
+            alias_lines = self._translated_export_lines_for_segment(alias_segment)
+            alias_value = "\n".join(alias_lines) if alias_lines else ""
+            for target_path, path_tokens in self._actor_alias_targets_for_segment(alias_segment):
+                if target_path == session.path:
+                    continue
+                target_overrides = overrides_by_target.setdefault(target_path, {})
+                target_overrides[path_tokens] = alias_value
+
+        saved_count = 0
+        for target_path, target_overrides in overrides_by_target.items():
+            target_session = sessions_by_path.get(target_path)
+            if not isinstance(target_session, FileSession):
+                continue
+
+            translated_data = self._export_translated_data_for_session(target_session)
+            updated = False
+            for path_tokens, alias_value in target_overrides.items():
+                current_value = self._string_json_value_by_path(translated_data, path_tokens)
+                if current_value is None:
+                    continue
+                if current_value == alias_value:
+                    continue
+                if self._set_json_value_by_path(translated_data, path_tokens, alias_value):
+                    updated = True
+            if not updated:
+                continue
+            rel_path = self._relative_path(target_session.path)
+            version_db.save_translated_snapshot(
+                rel_path,
+                translated_data,
+                profile_id=profile_id,
+            )
+            saved_count += 1
+
+        return saved_count
+
     @staticmethod
     def _tyrano_body_item_kind_for_line(line: str) -> str:
         stripped = line.strip()
@@ -1685,6 +1772,17 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 session,
                 save_working_snapshot=save_working_snapshot,
             )
+            if translator_mode:
+                active_profile_raw = getattr(self, "active_translation_profile_id", "")
+                active_profile_id = (
+                    active_profile_raw.strip()
+                    if isinstance(active_profile_raw, str) and active_profile_raw.strip()
+                    else DEFAULT_TRANSLATION_PROFILE_ID
+                )
+                self._save_translated_actor_alias_target_snapshots_for_session(
+                    session,
+                    profile_id=active_profile_id,
+                )
             if self.index_db is not None:
                 try:
                     rel_path = self._relative_path(session.path)
@@ -2280,39 +2378,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             source_segment = source_lookup.get(export_segment.uid)
             if source_segment is None:
                 continue
-            visible_tl_lines = self._normalize_translation_lines(
-                source_segment.translation_lines)
-            visible_lines_resolver = getattr(
-                self, "_segment_translation_lines_for_translation", None
-            )
-            if callable(visible_lines_resolver):
-                try:
-                    resolved_lines = visible_lines_resolver(source_segment)
-                    if isinstance(resolved_lines, list):
-                        visible_tl_lines = self._normalize_translation_lines(
-                            resolved_lines
-                        )
-                except Exception:
-                    pass
-            has_tl = any(line.strip() for line in visible_tl_lines)
-            if has_tl:
-                compose_lines_resolver = getattr(
-                    self, "_compose_translation_lines_for_segment", None
-                )
-                if callable(compose_lines_resolver):
-                    try:
-                        composed_lines = compose_lines_resolver(
-                            source_segment, visible_tl_lines
-                        )
-                        export_segment.lines = self._normalize_translation_lines(
-                            composed_lines
-                        )
-                    except Exception:
-                        export_segment.lines = list(visible_tl_lines)
-                else:
-                    export_segment.lines = list(visible_tl_lines)
-            else:
-                export_segment.lines = list(source_segment.lines or [""])
+            export_segment.lines = self._translated_export_lines_for_segment(source_segment)
 
             speaker_en = source_segment.translation_speaker.strip()
             if speaker_en and source_segment.speaker_name != NO_SPEAKER_KEY:
