@@ -484,6 +484,20 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(choice_segment.lines, ["A  B"])
 
+    def test_parse_tyrano_choice_converts_narrow_nbsp_to_spaces_for_editor(self) -> None:
+        source = '[glink text="A\u202F\u202FB" target="*A"]\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_choice_nnbsp.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        choice_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
+        )
+        self.assertEqual(choice_segment.lines, ["A  B"])
+
     def test_parse_tyrano_choice_escaped_newline_becomes_newline_in_editor(self) -> None:
         source = '[glink text="A\\nB" target="*A"]\n'
         with tempfile.TemporaryDirectory() as tmpdir:

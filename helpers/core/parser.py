@@ -717,7 +717,8 @@ def _is_tyrano_glink_tag_line(line: str) -> bool:
 def _normalize_tyrano_choice_text_for_editor(text: str) -> str:
     if not text:
         return ""
-    return text.replace("\u00A0", " ")
+    # Treat both classic NBSP and narrow NBSP as regular spaces in editor view.
+    return text.replace("\u00A0", " ").replace("\u202F", " ")
 
 
 def _build_tyrano_choice_segments(

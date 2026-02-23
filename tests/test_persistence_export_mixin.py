@@ -543,7 +543,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertIn("#Narrator", rebuilt)
         self.assertIn("Hello[r]", rebuilt)
         self.assertIn("World[p]", rebuilt)
-        self.assertIn('text="Choice A"', rebuilt)
+        self.assertIn('text="Choice\u202FA"', rebuilt)
         self.assertIn('text="Label B"', rebuilt)
 
     def test_apply_session_to_json_updates_tyrano_multi_page_chunk(self) -> None:
@@ -741,7 +741,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
         harness._apply_session_to_json(session)
         rebuilt = tyrano_script_source_from_data(session.data)
 
-        self.assertIn('text="\u00A0\u00A0A\u00A0\u00A0\u00A0B\u00A0\u00A0"', rebuilt)
+        self.assertIn('text="\u202F\u202FA\u202F\u202F\u202FB\u202F\u202F"', rebuilt)
 
     def test_apply_session_to_json_writes_inline_r_for_tyrano_tag_text_newlines(self) -> None:
         harness = _Harness()

@@ -957,26 +957,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
     def _encode_tyrano_choice_spacing(value: str) -> str:
         if not value:
             return ""
-        pieces: list[str] = []
-        cursor = 0
-        for match in re.finditer(r" +", value):
-            start, end = match.span()
-            if start > cursor:
-                pieces.append(value[cursor:start])
-            run_len = end - start
-            is_interior_single = (
-                run_len == 1
-                and start > 0
-                and end < len(value)
-            )
-            if is_interior_single:
-                pieces.append(" ")
-            else:
-                pieces.append("\u00A0" * run_len)
-            cursor = end
-        if cursor < len(value):
-            pieces.append(value[cursor:])
-        return "".join(pieces)
+        # Tyrano collapses regular ASCII spaces in choice labels; use narrow NBSP
+        # so spacing remains visible without the width of ideographic space.
+        return value.replace(" ", "\u202F")
 
     @staticmethod
     def _join_tyrano_text_lines_for_attribute(lines: list[str]) -> str:
