@@ -1894,7 +1894,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                         continue
                     for field_name, entry_value in field_values.items():
                         row[field_name] = entry_value
-            return
+            # Mixed files (e.g. Troops.json) can have both name-index rows and
+            # command bundles that must also be rebuilt.
+            if is_name_index_session and not session.bundles:
+                return
 
         for bundle in session.bundles:
             rebuilt: list[Any] = []

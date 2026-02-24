@@ -436,6 +436,46 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertEqual(session.data[0]["name"], "Troop Updated")
 
+    def test_apply_session_to_json_rebuilds_dialogue_in_mixed_name_index_session(self) -> None:
+        harness = _Harness()
+        commands_ref: list[Any] = [
+            {"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            {"code": 401, "indent": 0, "parameters": ["Old troop line"]},
+            {"code": 0, "indent": 0, "parameters": []},
+        ]
+        dialogue_segment = _dialogue_segment("Troops.json:L0:0", "New troop line")
+        name_segment = _dialogue_segment("Troops.json:P:1", "Troop Updated")
+        name_segment.segment_kind = "name_index"
+        bundle = CommandBundle(
+            context="ctx",
+            commands_ref=commands_ref,
+            tokens=[
+                CommandToken(kind="dialogue", segment=dialogue_segment),
+                CommandToken(kind="raw", raw_entry={"code": 0, "indent": 0, "parameters": []}),
+            ],
+        )
+        session = FileSession(
+            path=Path("Troops.json"),
+            data=[
+                {
+                    "id": 1,
+                    "name": "Troop Old",
+                    "pages": [{"list": commands_ref}],
+                }
+            ],
+            bundles=[bundle],
+            segments=[dialogue_segment, name_segment],
+        )
+        setattr(session, "name_index_uid_prefix", "P")
+
+        harness._apply_session_to_json(session)
+
+        self.assertEqual(session.data[0]["name"], "Troop Updated")
+        rebuilt_list = session.data[0]["pages"][0]["list"]
+        rebuilt_codes = [entry.get("code") for entry in rebuilt_list]
+        self.assertEqual(rebuilt_codes, [101, 401, 0])
+        self.assertEqual(rebuilt_list[1]["parameters"][0], "New troop line")
+
     def test_apply_session_to_json_updates_plugin_command_argument_path(self) -> None:
         harness = _Harness()
         segment = _dialogue_segment("Map001.json:L0:G:0:text", "old")
