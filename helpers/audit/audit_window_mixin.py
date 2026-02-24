@@ -985,7 +985,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             lambda _item: self._go_to_selected_audit_consistency_entry()
         )
         consistency_entries_list.itemActivated.connect(
-            lambda _item: self._confirm_and_apply_audit_consistency_target_to_group()
+            lambda _item: self._go_to_selected_audit_consistency_entry()
         )
         consistency_goto_btn.clicked.connect(
             self._go_to_selected_audit_consistency_entry

@@ -28,6 +28,7 @@ class _AuditConsistencyHostTypingFallback:
 
 class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     _BLOCK_ENTRY_RE = re.compile(r"^Block\s+(\d+)$", re.IGNORECASE)
+    _NAME_INDEX_ALIAS_FIELD_RE = re.compile(r"^alt_\d+$", re.IGNORECASE)
 
     def _consistency_entry_file_stem(self, path_raw: str) -> str:
         relative_path = self._relative_path(Path(path_raw))
@@ -121,6 +122,133 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         tl_lines = self._normalize_translation_lines(tl_lines_raw)
         translation_text = "\n".join(tl_lines).strip()
         return source_text, translation_text
+
+    def _consistency_actor_id_for_segment(
+        self,
+        segment: DialogueSegment,
+    ) -> Optional[int]:
+        actor_id_raw = getattr(segment, "actor_alias_actor_id", None)
+        if isinstance(actor_id_raw, int):
+            return actor_id_raw
+        actor_id_resolver = getattr(self, "_actor_id_from_uid", None)
+        if callable(actor_id_resolver):
+            try:
+                resolved = actor_id_resolver(segment.uid)
+            except Exception:
+                resolved = None
+            if isinstance(resolved, int):
+                return resolved
+        return None
+
+    def _consistency_effective_translation_text(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> str:
+        normalize_for_segment = getattr(
+            self, "_normalize_audit_translation_lines_for_segment", None
+        )
+        if callable(normalize_for_segment):
+            try:
+                tl_lines_raw = normalize_for_segment(
+                    segment,
+                    segment.translation_lines,
+                )
+            except Exception:
+                tl_lines_raw = self._normalize_translation_lines(
+                    segment.translation_lines
+                )
+        else:
+            tl_lines_raw = self._normalize_translation_lines(
+                segment.translation_lines
+            )
+        tl_text = "\n".join(self._normalize_translation_lines(tl_lines_raw)).strip()
+        if tl_text:
+            return tl_text
+        if not bool(getattr(segment, "is_actor_name_alias", False)):
+            return tl_text
+
+        is_actor_session_resolver = getattr(self, "_is_actor_index_session", None)
+        is_actor_session = False
+        if callable(is_actor_session_resolver):
+            try:
+                is_actor_session = bool(is_actor_session_resolver(session))
+            except Exception:
+                is_actor_session = False
+        if not is_actor_session:
+            kind = str(getattr(session, "name_index_kind", "")).strip().lower()
+            is_actor_session = kind == "actor"
+        if not is_actor_session:
+            return tl_text
+
+        actor_id = self._consistency_actor_id_for_segment(segment)
+        source_text = "\n".join(self._segment_source_lines_for_display(segment)).strip()
+        if actor_id is not None and source_text:
+            peer_translations: list[str] = []
+            for candidate in session.segments:
+                if not bool(getattr(candidate, "is_actor_name_alias", False)):
+                    continue
+                if self._consistency_actor_id_for_segment(candidate) != actor_id:
+                    continue
+                candidate_source = "\n".join(
+                    self._segment_source_lines_for_display(candidate)
+                ).strip()
+                if candidate_source != source_text:
+                    continue
+                normalize_candidate = getattr(
+                    self, "_normalize_audit_translation_lines_for_segment", None
+                )
+                if callable(normalize_candidate):
+                    try:
+                        candidate_lines_raw = normalize_candidate(
+                            candidate,
+                            candidate.translation_lines,
+                        )
+                    except Exception:
+                        candidate_lines_raw = self._normalize_translation_lines(
+                            candidate.translation_lines
+                        )
+                else:
+                    candidate_lines_raw = self._normalize_translation_lines(
+                        candidate.translation_lines
+                    )
+                candidate_tl = "\n".join(
+                    self._normalize_translation_lines(candidate_lines_raw)
+                ).strip()
+                if candidate_tl:
+                    peer_translations.append(candidate_tl)
+            if peer_translations:
+                return Counter(peer_translations).most_common(1)[0][0]
+
+        actor_maps_resolver = getattr(self, "_actor_name_maps", None)
+        if not callable(actor_maps_resolver):
+            return tl_text
+        try:
+            actor_maps = actor_maps_resolver()
+        except Exception:
+            actor_maps = None
+        if not (
+            isinstance(actor_maps, tuple)
+            and len(actor_maps) >= 2
+            and isinstance(actor_maps[0], dict)
+            and isinstance(actor_maps[1], dict)
+        ):
+            return tl_text
+        jp_by_id = cast(dict[int, str], actor_maps[0])
+        en_by_id = cast(dict[int, str], actor_maps[1])
+        if actor_id is None:
+            return tl_text
+        actor_source = str(jp_by_id.get(actor_id, "")).strip()
+        actor_translated = str(en_by_id.get(actor_id, "")).strip()
+        if (
+            source_text
+            and actor_source
+            and actor_translated
+            and actor_translated != actor_source
+            and source_text == actor_source
+        ):
+            return actor_translated
+        return tl_text
 
     def _find_consistency_entry_segment(
         self,
@@ -413,6 +541,51 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             return None
         return payload
 
+    def _consistency_name_index_field_name(
+        self,
+        segment: DialogueSegment,
+    ) -> str:
+        combined_fields_raw = getattr(segment, "name_index_combined_fields", None)
+        if isinstance(combined_fields_raw, tuple):
+            combined_fields: list[str] = []
+            for raw_field in combined_fields_raw:
+                if not isinstance(raw_field, str):
+                    continue
+                cleaned = raw_field.strip().lower()
+                if cleaned:
+                    combined_fields.append(cleaned)
+            if combined_fields:
+                return " + ".join(combined_fields)
+
+        field_from_uid = getattr(self, "_name_index_field_from_uid", None)
+        if callable(field_from_uid):
+            try:
+                resolved_field = field_from_uid(segment.uid)
+            except Exception:
+                resolved_field = "name"
+            if isinstance(resolved_field, str) and resolved_field.strip():
+                cleaned_field = resolved_field.strip().lower()
+                if self._NAME_INDEX_ALIAS_FIELD_RE.fullmatch(cleaned_field):
+                    return "alias"
+                return cleaned_field
+        return "name"
+
+    def _consistency_group_label_for_session(self, session: FileSession) -> str:
+        if not self._is_name_index_session(session):
+            return ""
+        label_resolver = getattr(self, "_name_index_label", None)
+        if callable(label_resolver):
+            try:
+                resolved = label_resolver(session)
+            except Exception:
+                resolved = ""
+            if isinstance(resolved, str) and resolved.strip():
+                return resolved.strip()
+        raw_label = getattr(session, "name_index_label", "")
+        if isinstance(raw_label, str):
+            return raw_label.strip()
+        return ""
+
     def _consistency_entry_label(
         self,
         session: FileSession,
@@ -421,14 +594,26 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     ) -> str:
         entry_resolver = getattr(self, "_audit_entry_text_for_segment", None)
         if callable(entry_resolver):
-            return str(entry_resolver(session, segment, block_index))
+            entry_label = str(entry_resolver(session, segment, block_index))
+        elif not self._is_name_index_session(session):
+            entry_label = f"Block {block_index}"
+        else:
+            name_index_label = self._name_index_label(session)
+            actor_id = self._actor_id_from_uid(segment.uid)
+            if actor_id is not None:
+                entry_label = f"{name_index_label} ID {actor_id}"
+            else:
+                entry_label = f"{name_index_label} {block_index}"
+
         if not self._is_name_index_session(session):
-            return f"Block {block_index}"
-        name_index_label = self._name_index_label(session)
-        actor_id = self._actor_id_from_uid(segment.uid)
-        if actor_id is not None:
-            return f"{name_index_label} ID {actor_id}"
-        return f"{name_index_label} {block_index}"
+            return entry_label
+        field_name = self._consistency_name_index_field_name(segment)
+        if not field_name or field_name == "name":
+            return entry_label
+        decorated = f"{entry_label} ({field_name})"
+        if decorated == entry_label:
+            return entry_label
+        return decorated
 
     def _consistency_entry_locator(
         self,
@@ -611,6 +796,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     ) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
         first_seen_order: dict[str, int] = {}
+        group_labels: dict[str, set[str]] = {}
         source_order = 0
         for path in self.file_paths:
             session = self.sessions.get(path)
@@ -626,23 +812,13 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 if source_text not in first_seen_order:
                     first_seen_order[source_text] = source_order
                     source_order += 1
-                normalize_for_segment = getattr(
-                    self, "_normalize_audit_translation_lines_for_segment", None
+                group_label = self._consistency_group_label_for_session(session)
+                if group_label:
+                    group_labels.setdefault(source_text, set()).add(group_label)
+                tl_text = self._consistency_effective_translation_text(
+                    session,
+                    segment,
                 )
-                if callable(normalize_for_segment):
-                    try:
-                        tl_lines_raw = normalize_for_segment(
-                            segment, segment.translation_lines
-                        )
-                    except Exception:
-                        tl_lines_raw = self._normalize_translation_lines(
-                            segment.translation_lines
-                        )
-                else:
-                    tl_lines_raw = self._normalize_translation_lines(
-                        segment.translation_lines
-                    )
-                tl_text = "\n".join(self._normalize_translation_lines(tl_lines_raw))
                 entry = {
                     "path": str(path),
                     "uid": segment.uid,
@@ -671,6 +847,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             groups.append(
                 {
                     "source_text": source_text,
+                    "label_hint": " / ".join(
+                        sorted(group_labels.get(source_text, set()))
+                    ),
                     "entries": entries,
                     "entry_count": len(entries),
                     "variant_count": unique_count,
@@ -828,15 +1007,15 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             first_payload = self._audit_consistency_entry_payload(
                 self.audit_consistency_entries_list.currentItem()
             )
+            target_value = ""
             if first_payload is not None:
                 first_translation = first_payload.get("translation")
                 if isinstance(first_translation, str):
-                    self.audit_consistency_target_edit.setPlainText(first_translation)
-                else:
-                    self.audit_consistency_target_edit.setPlainText("")
-                self._refresh_audit_consistency_target_overflow_status()
-                self._refresh_audit_consistency_neighbors_preview()
-                return
+                    target_value = first_translation
+            self.audit_consistency_target_edit.setPlainText(target_value)
+            self._refresh_audit_consistency_target_overflow_status()
+            self._refresh_audit_consistency_neighbors_preview()
+            return
         self.audit_consistency_target_edit.setPlainText("")
         self._refresh_audit_consistency_target_overflow_status()
         self._refresh_audit_consistency_neighbors_preview()
@@ -854,7 +1033,10 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             return
         translation = payload.get("translation")
         if isinstance(translation, str):
-            self.audit_consistency_target_edit.setPlainText(translation)
+            current_target = self.audit_consistency_target_edit.toPlainText()
+            # Keep a non-empty draft target while browsing empty entries.
+            if translation.strip() or not current_target.strip():
+                self.audit_consistency_target_edit.setPlainText(translation)
         self._refresh_audit_consistency_target_overflow_status()
         self._refresh_audit_consistency_neighbors_preview()
 
@@ -885,18 +1067,26 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         total_entries = 0
         for idx, group in enumerate(groups):
             source_text = str(group.get("source_text", ""))
+            label_hint = str(group.get("label_hint", "")).strip()
             count = int(group.get("entry_count", 0))
             variants = int(group.get("variant_count", 0))
             total_entries += count
-            label = (
-                f"x{count} | variants: {variants} | "
-                f"{preview_text(source_text, 96)}"
-            )
+            if label_hint:
+                label = (
+                    f"x{count} | variants: {variants} | {label_hint} | "
+                    f"{preview_text(source_text, 96)}"
+                )
+            else:
+                label = (
+                    f"x{count} | variants: {variants} | "
+                    f"{preview_text(source_text, 96)}"
+                )
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, group)
             self.audit_consistency_groups_list.addItem(item)
             if preferred_source and source_text == preferred_source:
-                selected_row = idx
+                if selected_row < 0:
+                    selected_row = idx
 
         if groups:
             if selected_row < 0:
@@ -938,10 +1128,18 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             self.statusBar().showMessage("Select a duplicate group first.")
             return
         source_text = str(payload.get("source_text", "")).strip()
-        prompt = (
-            "Apply current target translation to this duplicate group?\n\n"
-            f"{preview_text(source_text, 120)}"
-        )
+        label_hint = str(payload.get("label_hint", "")).strip()
+        target_preview = "(empty)"
+        if self.audit_consistency_target_edit is not None:
+            raw_target = self.audit_consistency_target_edit.toPlainText()
+            if raw_target.strip():
+                target_preview = preview_text(raw_target, 120)
+        prompt_lines = ["Apply current target translation to this duplicate group?", ""]
+        if label_hint:
+            prompt_lines.append(f"Labels: {label_hint}")
+        prompt_lines.append(f"Target: {target_preview}")
+        prompt_lines.append(preview_text(source_text, 120))
+        prompt = "\n".join(prompt_lines)
         parent_widget = cast(
             Optional[QWidget],
             getattr(self, "audit_window", None),
@@ -1108,7 +1306,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 )
         else:
             self._refresh_translator_detail_panel()
-        preferred_source = next_source_key if advance_to_next and next_source_key else source_key
+        preferred_source = (
+            next_source_key if advance_to_next and next_source_key else source_key
+        )
         preferred_row = next_row if advance_to_next else None
         self._refresh_audit_consistency_panel(
             preferred_source=preferred_source,
@@ -1119,6 +1319,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         self.statusBar().showMessage(
             f"Synchronized translation across {changed_entries} duplicate entries."
         )
+
     def _focus_audit_consistency_groups_list(self) -> None:
         if self.audit_consistency_groups_list is None:
             return
