@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFocusEvent, QKeyEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea, QVBoxLayout, QWidget
 
 from dialogue_visual_editor.helpers.core.models import DialogueSegment
 from dialogue_visual_editor.helpers.ui.ui_components import DialogueBlockWidget
@@ -292,6 +292,34 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         shrunk_width = editor.maximumWidth()
         self.assertEqual(shrunk_width, base_width)
         widget.deleteLater()
+
+    def test_editor_width_is_capped_by_scroll_area_viewport(self) -> None:
+        segment = _segment(["Short line"])
+        widget = _widget(segment)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(8, 8, 8, 8)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(widget)
+        container_layout.addStretch(1)
+        scroll_area.setWidget(container)
+        scroll_area.resize(620, 320)
+        scroll_area.show()
+        self._app.processEvents()
+
+        widget.set_editor_active(True)
+        widget._set_editor_lines(["W" * 300])
+        self._app.processEvents()
+        editor = widget.editor
+        assert editor is not None
+        width_cap = widget._max_editor_target_width()
+        self.assertIsNotNone(width_cap)
+        assert width_cap is not None
+        self.assertEqual(editor.maximumWidth(), width_cap)
+
+        scroll_area.deleteLater()
 
     def test_raw_editor_applies_font_scale_for_brace_tokens(self) -> None:
         segment = _segment([r"\{BIG text"])

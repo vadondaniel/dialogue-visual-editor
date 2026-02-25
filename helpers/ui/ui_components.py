@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QTreeWidget,
     QTreeWidgetItem,
     QToolTip,
@@ -2558,17 +2559,51 @@ class DialogueBlockWidget(QFrame):
             or line1_override_changed
         )
 
+    def _max_editor_target_width(self) -> Optional[int]:
+        parent = self.parentWidget()
+        scroll_area: Optional[QScrollArea] = None
+        while parent is not None:
+            if isinstance(parent, QScrollArea):
+                scroll_area = parent
+                break
+            parent = parent.parentWidget()
+        if scroll_area is None:
+            return None
+        viewport_width = int(scroll_area.viewport().width())
+        if viewport_width <= 0:
+            return None
+
+        available = viewport_width
+        container = self.parentWidget()
+        if container is not None:
+            container_layout = container.layout()
+            if container_layout is not None:
+                margins = container_layout.contentsMargins()
+                available -= margins.left() + margins.right()
+        root_layout = self.layout()
+        if root_layout is not None:
+            root_margins = root_layout.contentsMargins()
+            available -= root_margins.left() + root_margins.right()
+        row_margins = self._editor_row.contentsMargins()
+        available -= row_margins.left() + row_margins.right()
+        available -= max(0, int(self._editor_row.spacing()))
+        available -= max(0, int(self.frameWidth()) * 2)
+        return max(1, available)
+
     def _apply_editor_width(self) -> None:
         editor = self.editor
         target_widgets: list[QWidget] = [self._editor_container]
         if editor is not None:
             target_widgets.append(editor)
+        width_cap = self._max_editor_target_width()
         if self.actor_mode:
             metrics = QFontMetrics(self._editor_font)
             min_width = max(420, metrics.horizontalAdvance("M") * 24)
+            if width_cap is not None:
+                min_width = min(min_width, width_cap)
             for widget in target_widgets:
                 widget.setMinimumWidth(min_width)
-                widget.setMaximumWidth(16777215)
+                widget.setMaximumWidth(width_cap if width_cap is not None else 16777215)
             if self.name_index_kind == "item" and self._name_index_field == "description":
                 target_height = max(164, metrics.lineSpacing() * 8)
             else:
@@ -2582,6 +2617,8 @@ class DialogueBlockWidget(QFrame):
         char_pixel = metrics.horizontalAdvance("M")
         expand_chars = self._dynamic_expand_width_chars(char_width)
         target_width = pixel_width + (char_pixel * expand_chars)
+        if width_cap is not None:
+            target_width = min(target_width, width_cap)
         target_height = max(130, metrics.lineSpacing() * (self.max_lines + 2))
         for widget in target_widgets:
             widget.setMinimumWidth(target_width)
