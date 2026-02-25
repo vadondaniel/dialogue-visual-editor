@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future
 import copy
 import re
 from pathlib import Path
@@ -125,12 +126,42 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         collapse_if_no_punctuation: bool,
         min_soft_ratio: float,
         apply_all_files: bool,
+        infer_speaker_enabled: Optional[bool] = None,
+        thin_width_limit: Optional[int] = None,
+        wide_width_limit: Optional[int] = None,
     ) -> tuple[int, int]:
         target_sessions = self._smart_collapse_target_sessions(apply_all_files)
         if not target_sessions:
             return 0, 0
 
         translator_mode = self._is_translator_mode()
+        use_infer_speaker = (
+            bool(self.infer_speaker_check.isChecked())
+            if infer_speaker_enabled is None
+            else bool(infer_speaker_enabled)
+        )
+        thin_spin = getattr(self, "thin_width_spin", None)
+        wide_spin = getattr(self, "wide_width_spin", None)
+        thin_default = (
+            int(thin_spin.value())
+            if thin_spin is not None and hasattr(thin_spin, "value")
+            else 42
+        )
+        wide_default = (
+            int(wide_spin.value())
+            if wide_spin is not None and hasattr(wide_spin, "value")
+            else 48
+        )
+        thin_limit = (
+            thin_default
+            if thin_width_limit is None
+            else int(thin_width_limit)
+        )
+        wide_limit = (
+            wide_default
+            if wide_width_limit is None
+            else int(wide_width_limit)
+        )
         projected_blocks = 0
         projected_files = 0
         for session in target_sessions:
@@ -140,6 +171,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             for segment in session.segments:
                 if not self._is_smart_collapse_eligible_segment(segment):
                     continue
+                line_width = thin_limit if segment.has_face else wide_limit
                 if translator_mode:
                     current_lines = self._normalize_translation_lines(
                         segment.translation_lines
@@ -151,6 +183,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                         ellipsis_lowercase_rule=ellipsis_lowercase_rule,
                         collapse_if_no_punctuation=collapse_if_no_punctuation,
                         min_soft_ratio=min_soft_ratio,
+                        infer_speaker_enabled=use_infer_speaker,
+                        line_width=line_width,
                     )
                 else:
                     current_lines = list(segment.lines) if segment.lines else [""]
@@ -161,6 +195,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                         ellipsis_lowercase_rule=ellipsis_lowercase_rule,
                         collapse_if_no_punctuation=collapse_if_no_punctuation,
                         min_soft_ratio=min_soft_ratio,
+                        infer_speaker_enabled=use_infer_speaker,
+                        line_width=line_width,
                     )
                 if collapsed_lines == current_lines:
                     continue
@@ -241,36 +277,143 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         projection_timer = QTimer(dialog)
         projection_timer.setSingleShot(True)
         projection_timer.setInterval(80)
+        projection_poll_timer = QTimer(dialog)
+        projection_poll_timer.setSingleShot(True)
+        projection_poll_timer.setInterval(24)
+        projection_executor = getattr(self, "audit_worker_executor", None)
+        projection_future: Optional[Future[tuple[int, int]]] = None
+        projection_future_request_id = 0
+        pending_projection_request: Optional[dict[str, Any]] = None
+        pending_projection_request_id = 0
+        latest_projection_request_id = 0
 
         def _current_min_soft_ratio() -> float:
             if not bool(soft_rule_check.isChecked()):
                 return 0.0
             return max(0.0, min(1.0, float(int(threshold_spin.value())) / 100.0))
 
-        def _refresh_projected_count_label() -> None:
-            projected_blocks, projected_files = (
-                self._count_projected_smart_collapse_changes(
-                    allow_comma_endings=bool(allow_comma_check.isChecked()),
-                    allow_colon_triplet_endings=bool(
-                        allow_colon_triplet_check.isChecked()
-                    ),
-                    ellipsis_lowercase_rule=bool(
-                        ellipsis_lowercase_rule_check.isChecked()
-                    ),
-                    collapse_if_no_punctuation=bool(no_punctuation_check.isChecked()),
-                    min_soft_ratio=_current_min_soft_ratio(),
-                    apply_all_files=bool(scope_all_files_check.isChecked()),
-                )
-            )
+        def _set_projected_count_label_result(
+            projected_blocks: int,
+            projected_files: int,
+        ) -> None:
             block_label = "block" if projected_blocks == 1 else "blocks"
             file_label = "file" if projected_files == 1 else "files"
             projected_count_label.setText(
                 f"{projected_blocks} {block_label} in {projected_files} {file_label}"
             )
 
-        projection_timer.timeout.connect(_refresh_projected_count_label)
+        def _set_projected_count_label_calculating() -> None:
+            projected_count_label.setText("calculating...")
+
+        def _build_projection_request() -> dict[str, Any]:
+            return {
+                "allow_comma_endings": bool(allow_comma_check.isChecked()),
+                "allow_colon_triplet_endings": bool(
+                    allow_colon_triplet_check.isChecked()
+                ),
+                "ellipsis_lowercase_rule": bool(
+                    ellipsis_lowercase_rule_check.isChecked()
+                ),
+                "collapse_if_no_punctuation": bool(no_punctuation_check.isChecked()),
+                "min_soft_ratio": _current_min_soft_ratio(),
+                "apply_all_files": bool(scope_all_files_check.isChecked()),
+                "infer_speaker_enabled": bool(self.infer_speaker_check.isChecked()),
+                "thin_width_limit": int(self.thin_width_spin.value()),
+                "wide_width_limit": int(self.wide_width_spin.value()),
+            }
+
+        def _compute_projection_request(
+            request: dict[str, Any],
+        ) -> tuple[int, int]:
+            return self._count_projected_smart_collapse_changes(
+                allow_comma_endings=bool(request["allow_comma_endings"]),
+                allow_colon_triplet_endings=bool(
+                    request["allow_colon_triplet_endings"]
+                ),
+                ellipsis_lowercase_rule=bool(request["ellipsis_lowercase_rule"]),
+                collapse_if_no_punctuation=bool(
+                    request["collapse_if_no_punctuation"]
+                ),
+                min_soft_ratio=float(request["min_soft_ratio"]),
+                apply_all_files=bool(request["apply_all_files"]),
+                infer_speaker_enabled=bool(request["infer_speaker_enabled"]),
+                thin_width_limit=int(request["thin_width_limit"]),
+                wide_width_limit=int(request["wide_width_limit"]),
+            )
+
+        def _start_projection_request(
+            request: dict[str, Any],
+            request_id: int,
+        ) -> None:
+            nonlocal projection_future, projection_future_request_id
+            projection_submit = getattr(projection_executor, "submit", None)
+            if callable(projection_submit):
+                try:
+                    projection_future = cast(
+                        Future[tuple[int, int]],
+                        projection_submit(
+                            _compute_projection_request,
+                            request,
+                        ),
+                    )
+                except Exception:
+                    projection_future = None
+                else:
+                    projection_future_request_id = request_id
+                    projection_poll_timer.start()
+                    return
+            projected_blocks, projected_files = _compute_projection_request(request)
+            if request_id == latest_projection_request_id:
+                _set_projected_count_label_result(
+                    projected_blocks,
+                    projected_files,
+                )
+
+        def _poll_projection_future() -> None:
+            nonlocal projection_future, pending_projection_request, pending_projection_request_id
+            current_future = projection_future
+            if current_future is None:
+                return
+            if not current_future.done():
+                projection_poll_timer.start()
+                return
+            projection_future = None
+            completed_request_id = projection_future_request_id
+            try:
+                projected_blocks, projected_files = current_future.result()
+            except Exception:
+                projected_blocks, projected_files = 0, 0
+            if completed_request_id == latest_projection_request_id:
+                _set_projected_count_label_result(
+                    projected_blocks,
+                    projected_files,
+                )
+            if pending_projection_request is None:
+                return
+            next_request = pending_projection_request
+            next_request_id = pending_projection_request_id
+            pending_projection_request = None
+            pending_projection_request_id = 0
+            _start_projection_request(next_request, next_request_id)
+
+        projection_poll_timer.timeout.connect(_poll_projection_future)
+
+        def _dispatch_projected_count_refresh() -> None:
+            nonlocal latest_projection_request_id, pending_projection_request, pending_projection_request_id
+            latest_projection_request_id += 1
+            request_id = latest_projection_request_id
+            request = _build_projection_request()
+            _set_projected_count_label_calculating()
+            if projection_future is not None:
+                pending_projection_request = request
+                pending_projection_request_id = request_id
+                return
+            _start_projection_request(request, request_id)
+
+        projection_timer.timeout.connect(_dispatch_projected_count_refresh)
 
         def _schedule_projected_count_refresh() -> None:
+            _set_projected_count_label_calculating()
             projection_timer.start()
 
         soft_rule_check.toggled.connect(_schedule_projected_count_refresh)
@@ -282,7 +425,17 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         no_punctuation_check.toggled.connect(_schedule_projected_count_refresh)
         scope_all_files_check.toggled.connect(_schedule_projected_count_refresh)
         threshold_spin.valueChanged.connect(_schedule_projected_count_refresh)
-        _refresh_projected_count_label()
+
+        def _cancel_projection_refresh() -> None:
+            nonlocal latest_projection_request_id, pending_projection_request, pending_projection_request_id
+            latest_projection_request_id += 1
+            pending_projection_request = None
+            pending_projection_request_id = 0
+            projection_timer.stop()
+            projection_poll_timer.stop()
+
+        dialog.finished.connect(lambda _result: _cancel_projection_refresh())
+        _schedule_projected_count_refresh()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -328,19 +481,39 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         ellipsis_lowercase_rule: bool,
         collapse_if_no_punctuation: bool,
         min_soft_ratio: float,
+        infer_speaker_enabled: Optional[bool] = None,
+        line_width: Optional[int] = None,
     ) -> list[str]:
         current_lines = list(segment.lines) if segment.lines else [""]
-        has_inferred_speaker = self._segment_has_inferred_line1_speaker(segment)
+        infer_enabled = (
+            bool(self.infer_speaker_check.isChecked())
+            if infer_speaker_enabled is None
+            else bool(infer_speaker_enabled)
+        )
+        line_width_limit = (
+            self._segment_line_width(segment)
+            if line_width is None
+            else int(line_width)
+        )
+        try:
+            has_inferred_speaker = bool(
+                self._segment_has_inferred_line1_speaker(
+                    segment,
+                    infer_speaker_enabled=infer_enabled,
+                )
+            )
+        except TypeError:
+            has_inferred_speaker = bool(
+                self._segment_has_inferred_line1_speaker(segment)
+            )
         if has_inferred_speaker:
             editable_lines = list(current_lines[1:]) if len(current_lines) > 1 else [""]
         else:
             editable_lines = list(current_lines)
         collapsed = smart_collapse_lines(
             editable_lines,
-            self._segment_line_width(segment),
-            infer_name_from_first_line=(
-                self.infer_speaker_check.isChecked() and (not has_inferred_speaker)
-            ),
+            line_width_limit,
+            infer_name_from_first_line=(infer_enabled and (not has_inferred_speaker)),
             allow_comma_endings=allow_comma_endings,
             allow_colon_triplet_endings=allow_colon_triplet_endings,
             allow_ellipsis_lowercase_continuation=ellipsis_lowercase_rule,
@@ -361,22 +534,55 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         ellipsis_lowercase_rule: bool,
         collapse_if_no_punctuation: bool,
         min_soft_ratio: float,
+        infer_speaker_enabled: Optional[bool] = None,
+        line_width: Optional[int] = None,
     ) -> list[str]:
-        editable_lines = self._segment_translation_lines_for_translation(segment)
+        infer_enabled = (
+            bool(self.infer_speaker_check.isChecked())
+            if infer_speaker_enabled is None
+            else bool(infer_speaker_enabled)
+        )
+        line_width_limit = (
+            self._segment_line_width(segment)
+            if line_width is None
+            else int(line_width)
+        )
+        try:
+            editable_lines = self._segment_translation_lines_for_translation(
+                segment,
+                infer_speaker_enabled=infer_enabled,
+            )
+        except TypeError:
+            editable_lines = self._segment_translation_lines_for_translation(segment)
+        try:
+            has_inferred_speaker = bool(
+                self._segment_has_inferred_line1_speaker(
+                    segment,
+                    infer_speaker_enabled=infer_enabled,
+                )
+            )
+        except TypeError:
+            has_inferred_speaker = bool(
+                self._segment_has_inferred_line1_speaker(segment)
+            )
         collapsed = smart_collapse_lines(
             editable_lines,
-            self._segment_line_width(segment),
-            infer_name_from_first_line=(
-                self.infer_speaker_check.isChecked()
-                and (not self._segment_has_inferred_line1_speaker(segment))
-            ),
+            line_width_limit,
+            infer_name_from_first_line=(infer_enabled and (not has_inferred_speaker)),
             allow_comma_endings=allow_comma_endings,
             allow_colon_triplet_endings=allow_colon_triplet_endings,
             allow_ellipsis_lowercase_continuation=ellipsis_lowercase_rule,
             collapse_if_no_punctuation=collapse_if_no_punctuation,
             min_soft_ratio=max(0.0, min(1.0, float(min_soft_ratio))),
         )
-        return self._compose_translation_lines_for_segment(segment, collapsed)
+        try:
+            return self._compose_translation_lines_for_segment(
+                segment,
+                collapsed,
+                infer_speaker_enabled=infer_enabled,
+            )
+        except TypeError:
+            return self._compose_translation_lines_for_segment(segment, collapsed)
 
     def _smart_collapse_all_dialogue_blocks(self) -> None:
         if not self.sessions:

@@ -3902,8 +3902,18 @@ class DialogueVisualEditor(
         normalized = normalized.strip()
         return normalized if normalized else NO_SPEAKER_KEY
 
-    def _inferred_speaker_from_segment_line1(self, segment: DialogueSegment) -> str:
-        if not self.infer_speaker_check.isChecked():
+    def _inferred_speaker_from_segment_line1(
+        self,
+        segment: DialogueSegment,
+        *,
+        infer_speaker_enabled: Optional[bool] = None,
+    ) -> str:
+        infer_enabled = (
+            bool(self.infer_speaker_check.isChecked())
+            if infer_speaker_enabled is None
+            else bool(infer_speaker_enabled)
+        )
+        if not infer_enabled:
             return ""
         if not segment.is_structural_dialogue:
             return ""
@@ -3936,20 +3946,46 @@ class DialogueVisualEditor(
             return resolved_first or first_line
         return ""
 
-    def _segment_has_inferred_line1_speaker(self, segment: DialogueSegment) -> bool:
-        return bool(self._inferred_speaker_from_segment_line1(segment))
+    def _segment_has_inferred_line1_speaker(
+        self,
+        segment: DialogueSegment,
+        *,
+        infer_speaker_enabled: Optional[bool] = None,
+    ) -> bool:
+        return bool(
+            self._inferred_speaker_from_segment_line1(
+                segment,
+                infer_speaker_enabled=infer_speaker_enabled,
+            )
+        )
 
-    def _segment_source_lines_for_translation(self, segment: DialogueSegment) -> list[str]:
+    def _segment_source_lines_for_translation(
+        self,
+        segment: DialogueSegment,
+        *,
+        infer_speaker_enabled: Optional[bool] = None,
+    ) -> list[str]:
         lines = self._segment_source_lines_for_display(segment)
-        if self._segment_has_inferred_line1_speaker(segment):
+        if self._segment_has_inferred_line1_speaker(
+            segment,
+            infer_speaker_enabled=infer_speaker_enabled,
+        ):
             if len(lines) > 1:
                 return list(lines[1:])
             return [""]
         return list(lines) if lines else [""]
 
-    def _segment_translation_lines_for_translation(self, segment: DialogueSegment) -> list[str]:
+    def _segment_translation_lines_for_translation(
+        self,
+        segment: DialogueSegment,
+        *,
+        infer_speaker_enabled: Optional[bool] = None,
+    ) -> list[str]:
         lines = self._normalize_translation_lines(segment.translation_lines)
-        if self._segment_has_inferred_line1_speaker(segment):
+        if self._segment_has_inferred_line1_speaker(
+            segment,
+            infer_speaker_enabled=infer_speaker_enabled,
+        ):
             if len(lines) > 1:
                 return list(lines[1:])
             return [""]
@@ -3959,9 +3995,14 @@ class DialogueVisualEditor(
         self,
         segment: DialogueSegment,
         visible_lines: list[str],
+        *,
+        infer_speaker_enabled: Optional[bool] = None,
     ) -> list[str]:
         normalized_visible = list(visible_lines) if visible_lines else [""]
-        if not self._segment_has_inferred_line1_speaker(segment):
+        if not self._segment_has_inferred_line1_speaker(
+            segment,
+            infer_speaker_enabled=infer_speaker_enabled,
+        ):
             return normalized_visible
         source_lines = self._segment_source_lines_for_display(segment)
         speaker_line = source_lines[0] if source_lines else ""
