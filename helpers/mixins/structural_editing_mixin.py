@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -266,11 +265,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     ) -> Optional[tuple[bool, bool, bool, bool, float, bool]]:
         dialog = QDialog(cast(QWidget, self))
         dialog.setWindowTitle("Smart Collapse All")
-        dialog.resize(420, 220)
+        dialog.resize(460, 300)
 
         layout = QVBoxLayout(dialog)
-        form = QFormLayout()
-        layout.addLayout(form)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         soft_rule_base_text = "Collapse if previous line is shorter than threshold"
         comma_rule_base_text = "Collapse if previous line ends with comma (, 、 ，)"
@@ -284,31 +283,26 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         soft_rule_check.setChecked(
             bool(getattr(self, "smart_collapse_soft_ratio_rule_enabled", True))
         )
-        form.addRow(soft_rule_check)
 
         allow_comma_check = QCheckBox(comma_rule_base_text)
         allow_comma_check.setChecked(
             bool(getattr(self, "smart_collapse_allow_comma_endings", False))
         )
-        form.addRow(allow_comma_check)
 
         allow_colon_triplet_check = QCheckBox(colon_rule_base_text)
         allow_colon_triplet_check.setChecked(
             bool(getattr(self, "smart_collapse_allow_colon_triplet_endings", False))
         )
-        form.addRow(allow_colon_triplet_check)
 
         ellipsis_lowercase_rule_check = QCheckBox(ellipsis_rule_base_text)
         ellipsis_lowercase_rule_check.setChecked(
             bool(getattr(self, "smart_collapse_ellipsis_lowercase_rule", False))
         )
-        form.addRow(ellipsis_lowercase_rule_check)
 
         no_punctuation_check = QCheckBox(no_punct_rule_base_text)
         no_punctuation_check.setChecked(
             bool(getattr(self, "smart_collapse_collapse_if_no_punctuation", True))
         )
-        form.addRow(no_punctuation_check)
 
         threshold_spin = QSpinBox(dialog)
         threshold_spin.setRange(0, 100)
@@ -318,14 +312,67 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         )
         threshold_spin.setEnabled(soft_rule_check.isChecked())
         soft_rule_check.toggled.connect(threshold_spin.setEnabled)
-        form.addRow("Length threshold for collapse-if-short", threshold_spin)
 
         scope_all_files_check = QCheckBox("Apply to all dialogue files")
         scope_all_files_check.setChecked(False)
-        form.addRow(scope_all_files_check)
-        projected_count_label = QLabel("")
+
+        def _build_section_title(text: str) -> QLabel:
+            title = QLabel(text, dialog)
+            title.setStyleSheet("font-weight: 600; color: #4b5563;")
+            return title
+
+        def _build_section_divider() -> QFrame:
+            divider = QFrame(dialog)
+            divider.setFrameShape(QFrame.Shape.HLine)
+            divider.setFrameShadow(QFrame.Shadow.Sunken)
+            return divider
+
+        layout.addWidget(_build_section_title("Rules"))
+
+        rules_container = QWidget(dialog)
+        rules_layout = QVBoxLayout(rules_container)
+        rules_layout.setContentsMargins(0, 0, 0, 0)
+        rules_layout.setSpacing(6)
+        rules_layout.addWidget(soft_rule_check)
+
+        threshold_row = QWidget(rules_container)
+        threshold_row_layout = QHBoxLayout(threshold_row)
+        threshold_row_layout.setContentsMargins(22, 0, 0, 0)
+        threshold_row_layout.setSpacing(8)
+        threshold_label = QLabel("Short-line threshold", threshold_row)
+        threshold_label.setEnabled(soft_rule_check.isChecked())
+        soft_rule_check.toggled.connect(threshold_label.setEnabled)
+        threshold_row_layout.addWidget(threshold_label)
+        threshold_row_layout.addWidget(threshold_spin, 0, Qt.AlignmentFlag.AlignLeft)
+        threshold_row_layout.addStretch(1)
+        rules_layout.addWidget(threshold_row)
+        rules_layout.addWidget(allow_comma_check)
+        rules_layout.addWidget(allow_colon_triplet_check)
+        rules_layout.addWidget(ellipsis_lowercase_rule_check)
+        rules_layout.addWidget(no_punctuation_check)
+        layout.addWidget(rules_container)
+
+        layout.addWidget(_build_section_divider())
+
+        layout.addWidget(_build_section_title("Scope"))
+        layout.addWidget(scope_all_files_check)
+
+        layout.addWidget(_build_section_divider())
+
+        layout.addWidget(_build_section_title("Projected"))
+        projected_row = QWidget(dialog)
+        projected_row_layout = QHBoxLayout(projected_row)
+        projected_row_layout.setContentsMargins(0, 0, 0, 0)
+        projected_row_layout.setSpacing(8)
+        projected_label = QLabel("Projected fixes", projected_row)
+        projected_count_label = QLabel("", projected_row)
         projected_count_label.setWordWrap(True)
-        form.addRow("Projected fixes", projected_count_label)
+        projected_count_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        projected_row_layout.addWidget(projected_label, 0)
+        projected_row_layout.addWidget(projected_count_label, 1)
+        layout.addWidget(projected_row)
 
         projection_timer = QTimer(dialog)
         projection_timer.setSingleShot(True)
