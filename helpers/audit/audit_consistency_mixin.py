@@ -1214,6 +1214,10 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         touched_paths: set[Path] = set()
         touched_current = False
         changed_entries = 0
+        segment_lookup_by_path: dict[Path, dict[str, DialogueSegment]] = {}
+        normalize_for_segment = getattr(
+            self, "_normalize_audit_translation_lines_for_segment", None
+        )
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
@@ -1227,16 +1231,13 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             session = self.sessions.get(path)
             if session is None:
                 continue
-            target_segment = None
-            for segment in session.segments:
-                if segment.uid == uid_raw:
-                    target_segment = segment
-                    break
+            lookup = segment_lookup_by_path.get(path)
+            if lookup is None:
+                lookup = {segment.uid: segment for segment in session.segments}
+                segment_lookup_by_path[path] = lookup
+            target_segment = lookup.get(uid_raw)
             if target_segment is None:
                 continue
-            normalize_for_segment = getattr(
-                self, "_normalize_audit_translation_lines_for_segment", None
-            )
             if callable(normalize_for_segment):
                 try:
                     current_lines_raw = normalize_for_segment(
@@ -1293,19 +1294,17 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             self._refresh_dirty_state(session)
 
         self._invalidate_audit_caches()
-        self._refresh_audit_sanitize_panel()
-        self._refresh_audit_control_mismatch_panel()
-        self._refresh_audit_name_consistency_panel()
+        self._refresh_active_non_consistency_audit_panel()
         if touched_current and self.current_path is not None:
-            current_session = self.sessions.get(self.current_path)
-            if current_session is not None:
-                self._render_session(
-                    current_session,
-                    focus_uid=self.selected_segment_uid,
-                    preserve_scroll=True,
-                )
-        else:
-            self._refresh_translator_detail_panel()
+            rerender_near_viewport = getattr(
+                self, "_rerender_blocks_near_viewport", None
+            )
+            if callable(rerender_near_viewport):
+                try:
+                    rerender_near_viewport(overscan_px=240)
+                except TypeError:
+                    rerender_near_viewport()
+        self._refresh_translator_detail_panel()
         preferred_source = (
             next_source_key if advance_to_next and next_source_key else source_key
         )
@@ -1346,3 +1345,28 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         app = QApplication.instance()
         if app is not None:
             app.processEvents()
+
+    def _refresh_active_non_consistency_audit_panel(self) -> None:
+        tab_index_resolver = getattr(self, "_current_audit_tab_index", None)
+        if not callable(tab_index_resolver):
+            return
+        try:
+            active_tab = tab_index_resolver()
+        except Exception:
+            return
+        if not isinstance(active_tab, int):
+            return
+
+        sanitize_tab = getattr(self, "_AUDIT_TAB_SANITIZE", None)
+        if isinstance(sanitize_tab, int) and active_tab == sanitize_tab:
+            self._refresh_audit_sanitize_panel()
+            return
+
+        control_tab = getattr(self, "_AUDIT_TAB_CONTROL_MISMATCH", None)
+        if isinstance(control_tab, int) and active_tab == control_tab:
+            self._refresh_audit_control_mismatch_panel()
+            return
+
+        name_tab = getattr(self, "_AUDIT_TAB_NAME_CONSISTENCY", None)
+        if isinstance(name_tab, int) and active_tab == name_tab:
+            self._refresh_audit_name_consistency_panel()

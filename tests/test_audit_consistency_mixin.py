@@ -36,20 +36,35 @@ def _segment(
 
 class _Harness(AuditConsistencyMixin):
     _NAME_INDEX_UID_RE = re.compile(r":[A-Za-z]:(\d+)(?::([A-Za-z0-9_]+))?$")
+    _AUDIT_TAB_SANITIZE = 1
+    _AUDIT_TAB_CONTROL_MISMATCH = 2
+    _AUDIT_TAB_CONSISTENCY = 3
+    _AUDIT_TAB_NAME_CONSISTENCY = 5
     _normalize_audit_translation_lines_for_segment = (
         AuditCoreMixin._normalize_audit_translation_lines_for_segment
     )
 
     def __init__(self) -> None:
+        class _StatusBarStub:
+            def __init__(self) -> None:
+                self.messages: list[str] = []
+
+            def showMessage(self, text: str) -> None:
+                self.messages.append(str(text))
+
         self.file_paths: list[Path] = []
         self.sessions: dict[Path, FileSession] = {}
         self._speaker_map: dict[str, str] = {}
         self.audit_consistency_entries_list: Any = None
         self.audit_consistency_neighbors_check: Any = None
         self.audit_consistency_neighbors_edit: Any = None
+        self.audit_consistency_groups_list: Any = None
         self.audit_consistency_target_edit: Any = None
         self._source_label = "JA"
         self._target_label = "EN-US"
+        self.current_path: Path | None = None
+        self.selected_segment_uid: str | None = None
+        self._status_bar = _StatusBarStub()
 
     @staticmethod
     def _segment_source_lines_for_display(segment: DialogueSegment) -> list[str]:
@@ -170,6 +185,9 @@ class _Harness(AuditConsistencyMixin):
 
     def _translation_profile_target_language_label(self) -> str:
         return self._target_label
+
+    def statusBar(self) -> Any:
+        return self._status_bar
 
 
 class AuditConsistencyMixinTests(unittest.TestCase):
@@ -621,6 +639,117 @@ class AuditConsistencyMixinTests(unittest.TestCase):
 
         self.assertIn("ThisIsAnAbsurdlyLongFilenameForMap003:9 |", label)
         self.assertNotIn("..", label.split(":")[0])
+
+    def test_apply_target_avoids_unrelated_panel_refresh_and_full_render(self) -> None:
+        harness = _Harness()
+        path = Path("Map001.json")
+        session = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[_segment("Map001:0", "Hello", "Old TL")],
+        )
+        harness.file_paths = [path]
+        harness.sessions[path] = session
+        harness.current_path = path
+
+        class _FakeItem:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._payload = payload
+
+            def data(self, _role: object) -> object:
+                return self._payload
+
+        class _FakeList:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._item = _FakeItem(payload)
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+            def currentRow(self) -> int:
+                return 0
+
+            def count(self) -> int:
+                return 1
+
+            def item(self, _row: int) -> _FakeItem:
+                return self._item
+
+        class _FakeTextEdit:
+            def __init__(self, value: str) -> None:
+                self._value = value
+
+            def toPlainText(self) -> str:
+                return self._value
+
+            def setPlainText(self, value: str) -> None:
+                self._value = value
+
+        harness.audit_consistency_groups_list = _FakeList(
+            {
+                "source_text": "Hello",
+                "entries": [{"path": str(path), "uid": "Map001:0"}],
+            }
+        )
+        harness.audit_consistency_target_edit = _FakeTextEdit("New TL")
+
+        calls: dict[str, int] = {
+            "dirty": 0,
+            "invalidate": 0,
+            "sanitize": 0,
+            "control": 0,
+            "name": 0,
+            "render": 0,
+            "rerender": 0,
+            "detail": 0,
+            "consistency": 0,
+        }
+
+        harness._refresh_dirty_state = lambda _session: calls.__setitem__(  # type: ignore[method-assign]
+            "dirty", calls["dirty"] + 1
+        )
+        harness._invalidate_audit_caches = lambda: calls.__setitem__(  # type: ignore[method-assign]
+            "invalidate", calls["invalidate"] + 1
+        )
+        harness._refresh_audit_sanitize_panel = lambda: calls.__setitem__(  # type: ignore[method-assign]
+            "sanitize", calls["sanitize"] + 1
+        )
+        harness._refresh_audit_control_mismatch_panel = lambda: calls.__setitem__(  # type: ignore[method-assign]
+            "control", calls["control"] + 1
+        )
+        harness._refresh_audit_name_consistency_panel = lambda: calls.__setitem__(  # type: ignore[method-assign]
+            "name", calls["name"] + 1
+        )
+        harness._render_session = lambda *_args, **_kwargs: calls.__setitem__(  # type: ignore[method-assign]
+            "render", calls["render"] + 1
+        )
+        harness._rerender_blocks_near_viewport = (  # type: ignore[method-assign]
+            lambda overscan_px=800: calls.__setitem__("rerender", calls["rerender"] + 1)
+        )
+        harness._refresh_translator_detail_panel = lambda: calls.__setitem__(  # type: ignore[method-assign]
+            "detail", calls["detail"] + 1
+        )
+        harness._focus_audit_consistency_groups_list = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_consistency_panel = (  # type: ignore[method-assign]
+            lambda preferred_source=None, preferred_row=None: calls.__setitem__(
+                "consistency", calls["consistency"] + 1
+            )
+        )
+        harness._current_audit_tab_index = lambda: harness._AUDIT_TAB_CONSISTENCY  # type: ignore[method-assign]
+
+        harness._apply_audit_consistency_target_to_group(advance_to_next=False)
+
+        self.assertEqual(session.segments[0].translation_lines, ["New TL"])
+        self.assertEqual(calls["dirty"], 1)
+        self.assertEqual(calls["invalidate"], 1)
+        self.assertEqual(calls["sanitize"], 0)
+        self.assertEqual(calls["control"], 0)
+        self.assertEqual(calls["name"], 0)
+        self.assertEqual(calls["render"], 0)
+        self.assertEqual(calls["rerender"], 1)
+        self.assertEqual(calls["detail"], 1)
+        self.assertEqual(calls["consistency"], 1)
 
 
 if __name__ == "__main__":
