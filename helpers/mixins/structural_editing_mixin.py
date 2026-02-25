@@ -286,6 +286,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         pending_projection_request: Optional[dict[str, Any]] = None
         pending_projection_request_id = 0
         latest_projection_request_id = 0
+        latest_projected_count_text = "0 blocks in 0 files"
 
         def _current_min_soft_ratio() -> float:
             if not bool(soft_rule_check.isChecked()):
@@ -296,14 +297,21 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             projected_blocks: int,
             projected_files: int,
         ) -> None:
+            nonlocal latest_projected_count_text
             block_label = "block" if projected_blocks == 1 else "blocks"
             file_label = "file" if projected_files == 1 else "files"
-            projected_count_label.setText(
+            latest_projected_count_text = (
                 f"{projected_blocks} {block_label} in {projected_files} {file_label}"
             )
+            projected_count_label.setStyleSheet("")
+            projected_count_label.setText(latest_projected_count_text)
 
         def _set_projected_count_label_calculating() -> None:
-            projected_count_label.setText("calculating...")
+            base_text = latest_projected_count_text.strip()
+            if not base_text:
+                base_text = "0 blocks in 0 files"
+            projected_count_label.setStyleSheet("color: #9ca3af;")
+            projected_count_label.setText(f"{base_text}...")
 
         def _build_projection_request() -> dict[str, Any]:
             return {
