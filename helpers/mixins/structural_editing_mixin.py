@@ -48,6 +48,61 @@ class _EditorHostTypingFallback:
         def __getattr__(self, name: str) -> Any: ...
 
 
+_SMART_COLLAPSE_RULE_COUNTER_KEYS = (
+    "soft_rule",
+    "comma",
+    "colon_triplet",
+    "ellipsis_lowercase",
+    "no_punctuation",
+)
+
+_SMART_COLLAPSE_PROJECTION_MODE_PRIORITY = {
+    "none": 0,
+    "soft_only": 1,
+    "all": 2,
+}
+
+
+def _normalize_smart_collapse_projection_mode(value: Any) -> str:
+    mode = str(value).strip().lower()
+    if mode in _SMART_COLLAPSE_PROJECTION_MODE_PRIORITY:
+        return mode
+    return "none"
+
+
+def _merge_smart_collapse_projection_modes(current: str, incoming: str) -> str:
+    current_mode = _normalize_smart_collapse_projection_mode(current)
+    incoming_mode = _normalize_smart_collapse_projection_mode(incoming)
+    if (
+        _SMART_COLLAPSE_PROJECTION_MODE_PRIORITY[incoming_mode]
+        > _SMART_COLLAPSE_PROJECTION_MODE_PRIORITY[current_mode]
+    ):
+        return incoming_mode
+    return current_mode
+
+
+def _coerce_smart_collapse_rule_counts(
+    raw_rule_counts: dict[str, Any],
+    *,
+    fallback_counts: Optional[dict[str, int]] = None,
+) -> dict[str, int]:
+    normalized: dict[str, int] = {}
+    for key in _SMART_COLLAPSE_RULE_COUNTER_KEYS:
+        raw_value: Any
+        if key in raw_rule_counts:
+            raw_value = raw_rule_counts.get(key)
+        elif fallback_counts is not None:
+            raw_value = fallback_counts.get(key, 0)
+        else:
+            raw_value = 0
+        try:
+            parsed_value = int(raw_value)
+        except (TypeError, ValueError):
+            parsed_value = 0
+        normalized[key] = max(0, parsed_value)
+    return normalized
+
+
 class StructuralEditingMixin(_EditorHostTypingFallback):
     _COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]")
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
@@ -217,41 +272,39 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         form = QFormLayout()
         layout.addLayout(form)
 
-        soft_rule_check = QCheckBox(
-            "Collapse if previous line is shorter than threshold"
+        soft_rule_base_text = "Collapse if previous line is shorter than threshold"
+        comma_rule_base_text = "Collapse if previous line ends with comma (, 、 ，)"
+        colon_rule_base_text = "Collapse if previous line ends with ..."
+        ellipsis_rule_base_text = (
+            "Collapse if previous line ends with ... and next starts lowercase"
         )
+        no_punct_rule_base_text = "Collapse if previous line ends without punctuation"
+
+        soft_rule_check = QCheckBox(soft_rule_base_text)
         soft_rule_check.setChecked(
             bool(getattr(self, "smart_collapse_soft_ratio_rule_enabled", True))
         )
         form.addRow(soft_rule_check)
 
-        allow_comma_check = QCheckBox(
-            "Collapse if previous line ends with comma (, 、 ，)"
-        )
+        allow_comma_check = QCheckBox(comma_rule_base_text)
         allow_comma_check.setChecked(
             bool(getattr(self, "smart_collapse_allow_comma_endings", False))
         )
         form.addRow(allow_comma_check)
 
-        allow_colon_triplet_check = QCheckBox(
-            "Collapse if previous line ends with ..."
-        )
+        allow_colon_triplet_check = QCheckBox(colon_rule_base_text)
         allow_colon_triplet_check.setChecked(
             bool(getattr(self, "smart_collapse_allow_colon_triplet_endings", False))
         )
         form.addRow(allow_colon_triplet_check)
 
-        ellipsis_lowercase_rule_check = QCheckBox(
-            "Collapse if previous line ends with ... and next starts lowercase"
-        )
+        ellipsis_lowercase_rule_check = QCheckBox(ellipsis_rule_base_text)
         ellipsis_lowercase_rule_check.setChecked(
             bool(getattr(self, "smart_collapse_ellipsis_lowercase_rule", False))
         )
         form.addRow(ellipsis_lowercase_rule_check)
 
-        no_punctuation_check = QCheckBox(
-            "Collapse if previous line ends without punctuation"
-        )
+        no_punctuation_check = QCheckBox(no_punct_rule_base_text)
         no_punctuation_check.setChecked(
             bool(getattr(self, "smart_collapse_collapse_if_no_punctuation", True))
         )
@@ -281,17 +334,57 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         projection_poll_timer.setSingleShot(True)
         projection_poll_timer.setInterval(24)
         projection_executor = getattr(self, "audit_worker_executor", None)
-        projection_future: Optional[Future[tuple[int, int]]] = None
+        projection_future: Optional[Future[dict[str, Any]]] = None
         projection_future_request_id = 0
         pending_projection_request: Optional[dict[str, Any]] = None
         pending_projection_request_id = 0
         latest_projection_request_id = 0
         latest_projected_count_text = "0 blocks in 0 files"
+        cached_rule_counts: dict[str, int] = {}
+        rule_counter_cache: dict[tuple[bool, int], dict[str, int]] = {}
+        pending_recompute_rule_counts_mode = "none"
 
-        def _current_min_soft_ratio() -> float:
-            if not bool(soft_rule_check.isChecked()):
-                return 0.0
-            return max(0.0, min(1.0, float(int(threshold_spin.value())) / 100.0))
+        def _counter_suffix(value: int) -> str:
+            safe_value = max(0, int(value))
+            return f"({safe_value})"
+
+        def _projection_cache_key(
+            *,
+            apply_all_files: bool,
+            soft_ratio_percent: int,
+        ) -> tuple[bool, int]:
+            normalized_percent = max(0, min(100, int(soft_ratio_percent)))
+            return bool(apply_all_files), normalized_percent
+
+        def _current_projection_cache_key() -> tuple[bool, int]:
+            return _projection_cache_key(
+                apply_all_files=bool(scope_all_files_check.isChecked()),
+                soft_ratio_percent=int(threshold_spin.value()),
+            )
+
+        def _set_rule_counter_texts(rule_counts: dict[str, int]) -> None:
+            soft_count = int(rule_counts.get("soft_rule", 0))
+            comma_count = int(rule_counts.get("comma", 0))
+            colon_count = int(rule_counts.get("colon_triplet", 0))
+            ellipsis_count = int(rule_counts.get("ellipsis_lowercase", 0))
+            no_punctuation_count = int(rule_counts.get("no_punctuation", 0))
+            soft_rule_check.setText(
+                f"{soft_rule_base_text} {_counter_suffix(soft_count)}"
+            )
+            allow_comma_check.setText(
+                f"{comma_rule_base_text} {_counter_suffix(comma_count)}"
+            )
+            allow_colon_triplet_check.setText(
+                f"{colon_rule_base_text} {_counter_suffix(colon_count)}"
+            )
+            ellipsis_lowercase_rule_check.setText(
+                f"{ellipsis_rule_base_text} {_counter_suffix(ellipsis_count)}"
+            )
+            no_punctuation_check.setText(
+                f"{no_punct_rule_base_text} {_counter_suffix(no_punctuation_count)}"
+            )
+
+        _set_rule_counter_texts(cached_rule_counts)
 
         def _set_projected_count_label_result(
             projected_blocks: int,
@@ -313,8 +406,17 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             projected_count_label.setStyleSheet("color: #9ca3af;")
             projected_count_label.setText(f"{base_text}...")
 
-        def _build_projection_request() -> dict[str, Any]:
+        def _build_projection_request(
+            *,
+            recompute_rule_counts_mode: str,
+        ) -> dict[str, Any]:
+            normalized_mode = _normalize_smart_collapse_projection_mode(
+                recompute_rule_counts_mode
+            )
             return {
+                "recompute_rule_counts_mode": normalized_mode,
+                "soft_rule_enabled": bool(soft_rule_check.isChecked()),
+                "soft_ratio_percent": int(threshold_spin.value()),
                 "allow_comma_endings": bool(allow_comma_check.isChecked()),
                 "allow_colon_triplet_endings": bool(
                     allow_colon_triplet_check.isChecked()
@@ -323,7 +425,6 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                     ellipsis_lowercase_rule_check.isChecked()
                 ),
                 "collapse_if_no_punctuation": bool(no_punctuation_check.isChecked()),
-                "min_soft_ratio": _current_min_soft_ratio(),
                 "apply_all_files": bool(scope_all_files_check.isChecked()),
                 "infer_speaker_enabled": bool(self.infer_speaker_check.isChecked()),
                 "thin_width_limit": int(self.thin_width_spin.value()),
@@ -332,22 +433,141 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         def _compute_projection_request(
             request: dict[str, Any],
-        ) -> tuple[int, int]:
-            return self._count_projected_smart_collapse_changes(
-                allow_comma_endings=bool(request["allow_comma_endings"]),
-                allow_colon_triplet_endings=bool(
-                    request["allow_colon_triplet_endings"]
-                ),
-                ellipsis_lowercase_rule=bool(request["ellipsis_lowercase_rule"]),
-                collapse_if_no_punctuation=bool(
-                    request["collapse_if_no_punctuation"]
-                ),
-                min_soft_ratio=float(request["min_soft_ratio"]),
-                apply_all_files=bool(request["apply_all_files"]),
-                infer_speaker_enabled=bool(request["infer_speaker_enabled"]),
-                thin_width_limit=int(request["thin_width_limit"]),
-                wide_width_limit=int(request["wide_width_limit"]),
+        ) -> dict[str, Any]:
+            soft_ratio_percent = max(0, min(100, int(request["soft_ratio_percent"])))
+            infer_speaker_enabled = bool(request["infer_speaker_enabled"])
+            thin_width_limit = int(request["thin_width_limit"])
+            wide_width_limit = int(request["wide_width_limit"])
+            apply_all_files = bool(request["apply_all_files"])
+            recompute_rule_counts_mode = _normalize_smart_collapse_projection_mode(
+                request.get("recompute_rule_counts_mode", "none")
             )
+
+            def _count_for_options(
+                *,
+                soft_rule_enabled: bool,
+                allow_comma_endings: bool,
+                allow_colon_triplet_endings: bool,
+                ellipsis_lowercase_rule: bool,
+                collapse_if_no_punctuation: bool,
+            ) -> tuple[int, int]:
+                min_soft_ratio = (
+                    float(soft_ratio_percent) / 100.0 if soft_rule_enabled else 0.0
+                )
+                return self._count_projected_smart_collapse_changes(
+                    allow_comma_endings=allow_comma_endings,
+                    allow_colon_triplet_endings=allow_colon_triplet_endings,
+                    ellipsis_lowercase_rule=ellipsis_lowercase_rule,
+                    collapse_if_no_punctuation=collapse_if_no_punctuation,
+                    min_soft_ratio=min_soft_ratio,
+                    apply_all_files=apply_all_files,
+                    infer_speaker_enabled=infer_speaker_enabled,
+                    thin_width_limit=thin_width_limit,
+                    wide_width_limit=wide_width_limit,
+                )
+
+            soft_rule_enabled = bool(request["soft_rule_enabled"])
+            allow_comma_endings = bool(request["allow_comma_endings"])
+            allow_colon_triplet_endings = bool(request["allow_colon_triplet_endings"])
+            ellipsis_lowercase_rule = bool(request["ellipsis_lowercase_rule"])
+            collapse_if_no_punctuation = bool(request["collapse_if_no_punctuation"])
+
+            base_blocks, base_files = _count_for_options(
+                soft_rule_enabled=soft_rule_enabled,
+                allow_comma_endings=allow_comma_endings,
+                allow_colon_triplet_endings=allow_colon_triplet_endings,
+                ellipsis_lowercase_rule=ellipsis_lowercase_rule,
+                collapse_if_no_punctuation=collapse_if_no_punctuation,
+            )
+            payload: dict[str, Any] = {
+                "base_blocks": base_blocks,
+                "base_files": base_files,
+                "recompute_rule_counts_mode": recompute_rule_counts_mode,
+                "scope_all_files": apply_all_files,
+                "soft_ratio_percent": soft_ratio_percent,
+            }
+            if recompute_rule_counts_mode == "none":
+                return payload
+
+            soft_only_blocks, _soft_only_files = _count_for_options(
+                soft_rule_enabled=True,
+                allow_comma_endings=False,
+                allow_colon_triplet_endings=False,
+                ellipsis_lowercase_rule=False,
+                collapse_if_no_punctuation=False,
+            )
+            rule_counts: dict[str, int] = {"soft_rule": max(0, soft_only_blocks)}
+
+            if recompute_rule_counts_mode == "all":
+                comma_only_blocks, _comma_only_files = _count_for_options(
+                    soft_rule_enabled=False,
+                    allow_comma_endings=True,
+                    allow_colon_triplet_endings=False,
+                    ellipsis_lowercase_rule=False,
+                    collapse_if_no_punctuation=False,
+                )
+                colon_only_blocks, _colon_only_files = _count_for_options(
+                    soft_rule_enabled=False,
+                    allow_comma_endings=False,
+                    allow_colon_triplet_endings=True,
+                    ellipsis_lowercase_rule=False,
+                    collapse_if_no_punctuation=False,
+                )
+                ellipsis_only_blocks, _ellipsis_only_files = _count_for_options(
+                    soft_rule_enabled=False,
+                    allow_comma_endings=False,
+                    allow_colon_triplet_endings=False,
+                    ellipsis_lowercase_rule=True,
+                    collapse_if_no_punctuation=False,
+                )
+                no_punctuation_only_blocks, _no_punctuation_only_files = _count_for_options(
+                    soft_rule_enabled=False,
+                    allow_comma_endings=False,
+                    allow_colon_triplet_endings=False,
+                    ellipsis_lowercase_rule=False,
+                    collapse_if_no_punctuation=True,
+                )
+                rule_counts["comma"] = max(0, comma_only_blocks)
+                rule_counts["colon_triplet"] = max(0, colon_only_blocks)
+                rule_counts["ellipsis_lowercase"] = max(0, ellipsis_only_blocks)
+                rule_counts["no_punctuation"] = max(0, no_punctuation_only_blocks)
+
+            payload["rule_counts"] = rule_counts
+            return payload
+
+        def _apply_projection_payload(payload: dict[str, Any]) -> None:
+            nonlocal cached_rule_counts
+            base_blocks = int(payload.get("base_blocks", 0))
+            base_files = int(payload.get("base_files", 0))
+            _set_projected_count_label_result(base_blocks, base_files)
+            recompute_rule_counts_mode = _normalize_smart_collapse_projection_mode(
+                payload.get("recompute_rule_counts_mode", "none")
+            )
+            if recompute_rule_counts_mode == "none":
+                return
+            raw_rule_counts = payload.get("rule_counts")
+            if isinstance(raw_rule_counts, dict):
+                cache_key = _projection_cache_key(
+                    apply_all_files=bool(payload.get("scope_all_files", False)),
+                    soft_ratio_percent=int(payload.get("soft_ratio_percent", 0)),
+                )
+                if recompute_rule_counts_mode == "all":
+                    parsed_rule_counts = _coerce_smart_collapse_rule_counts(
+                        raw_rule_counts
+                    )
+                else:
+                    cached_for_key = rule_counter_cache.get(cache_key)
+                    if isinstance(cached_for_key, dict):
+                        fallback_counts = cached_for_key
+                    else:
+                        fallback_counts = cached_rule_counts
+                    parsed_rule_counts = _coerce_smart_collapse_rule_counts(
+                        raw_rule_counts,
+                        fallback_counts=fallback_counts,
+                    )
+                cached_rule_counts = dict(parsed_rule_counts)
+                rule_counter_cache[cache_key] = dict(parsed_rule_counts)
+                _set_rule_counter_texts(cached_rule_counts)
 
         def _start_projection_request(
             request: dict[str, Any],
@@ -358,7 +578,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             if callable(projection_submit):
                 try:
                     projection_future = cast(
-                        Future[tuple[int, int]],
+                        Future[dict[str, Any]],
                         projection_submit(
                             _compute_projection_request,
                             request,
@@ -370,12 +590,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                     projection_future_request_id = request_id
                     projection_poll_timer.start()
                     return
-            projected_blocks, projected_files = _compute_projection_request(request)
+            projection_payload = _compute_projection_request(request)
             if request_id == latest_projection_request_id:
-                _set_projected_count_label_result(
-                    projected_blocks,
-                    projected_files,
-                )
+                _apply_projection_payload(projection_payload)
 
         def _poll_projection_future() -> None:
             nonlocal projection_future, pending_projection_request, pending_projection_request_id
@@ -388,14 +605,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             projection_future = None
             completed_request_id = projection_future_request_id
             try:
-                projected_blocks, projected_files = current_future.result()
+                projection_payload = current_future.result()
             except Exception:
-                projected_blocks, projected_files = 0, 0
+                projection_payload = {
+                    "base_blocks": 0,
+                    "base_files": 0,
+                    "recompute_rule_counts_mode": "none",
+                }
             if completed_request_id == latest_projection_request_id:
-                _set_projected_count_label_result(
-                    projected_blocks,
-                    projected_files,
-                )
+                _apply_projection_payload(projection_payload)
             if pending_projection_request is None:
                 return
             next_request = pending_projection_request
@@ -407,10 +625,14 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         projection_poll_timer.timeout.connect(_poll_projection_future)
 
         def _dispatch_projected_count_refresh() -> None:
-            nonlocal latest_projection_request_id, pending_projection_request, pending_projection_request_id
+            nonlocal latest_projection_request_id, pending_projection_request, pending_projection_request_id, pending_recompute_rule_counts_mode
             latest_projection_request_id += 1
             request_id = latest_projection_request_id
-            request = _build_projection_request()
+            recompute_mode = pending_recompute_rule_counts_mode
+            pending_recompute_rule_counts_mode = "none"
+            request = _build_projection_request(
+                recompute_rule_counts_mode=recompute_mode
+            )
             _set_projected_count_label_calculating()
             if projection_future is not None:
                 pending_projection_request = request
@@ -420,30 +642,69 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         projection_timer.timeout.connect(_dispatch_projected_count_refresh)
 
-        def _schedule_projected_count_refresh() -> None:
+        def _schedule_projected_count_refresh(
+            *,
+            recompute_rule_counts_mode: str = "none",
+        ) -> None:
+            nonlocal pending_recompute_rule_counts_mode
+            pending_recompute_rule_counts_mode = _merge_smart_collapse_projection_modes(
+                pending_recompute_rule_counts_mode,
+                recompute_rule_counts_mode,
+            )
             _set_projected_count_label_calculating()
             projection_timer.start()
 
-        soft_rule_check.toggled.connect(_schedule_projected_count_refresh)
-        allow_comma_check.toggled.connect(_schedule_projected_count_refresh)
-        allow_colon_triplet_check.toggled.connect(_schedule_projected_count_refresh)
-        ellipsis_lowercase_rule_check.toggled.connect(
-            _schedule_projected_count_refresh
+        def _restore_cached_rule_counts_for_current_scope_threshold() -> bool:
+            nonlocal cached_rule_counts
+            cache_key = _current_projection_cache_key()
+            cached_for_scope = rule_counter_cache.get(cache_key)
+            if not isinstance(cached_for_scope, dict):
+                return False
+            cached_rule_counts = _coerce_smart_collapse_rule_counts(cached_for_scope)
+            _set_rule_counter_texts(cached_rule_counts)
+            return True
+
+        def _on_scope_toggled(_checked: bool) -> None:
+            if _restore_cached_rule_counts_for_current_scope_threshold():
+                _schedule_projected_count_refresh(recompute_rule_counts_mode="none")
+                return
+            _schedule_projected_count_refresh(recompute_rule_counts_mode="all")
+
+        def _on_threshold_changed(_value: int) -> None:
+            if _restore_cached_rule_counts_for_current_scope_threshold():
+                _schedule_projected_count_refresh(recompute_rule_counts_mode="none")
+                return
+            _schedule_projected_count_refresh(recompute_rule_counts_mode="soft_only")
+
+        soft_rule_check.toggled.connect(
+            lambda _checked: _schedule_projected_count_refresh()
         )
-        no_punctuation_check.toggled.connect(_schedule_projected_count_refresh)
-        scope_all_files_check.toggled.connect(_schedule_projected_count_refresh)
-        threshold_spin.valueChanged.connect(_schedule_projected_count_refresh)
+        allow_comma_check.toggled.connect(
+            lambda _checked: _schedule_projected_count_refresh()
+        )
+        allow_colon_triplet_check.toggled.connect(
+            lambda _checked: _schedule_projected_count_refresh()
+        )
+        ellipsis_lowercase_rule_check.toggled.connect(
+            lambda _checked: _schedule_projected_count_refresh()
+        )
+        no_punctuation_check.toggled.connect(
+            lambda _checked: _schedule_projected_count_refresh()
+        )
+        scope_all_files_check.toggled.connect(_on_scope_toggled)
+        threshold_spin.valueChanged.connect(_on_threshold_changed)
 
         def _cancel_projection_refresh() -> None:
-            nonlocal latest_projection_request_id, pending_projection_request, pending_projection_request_id
+            nonlocal latest_projection_request_id, pending_projection_request, pending_projection_request_id, pending_recompute_rule_counts_mode
             latest_projection_request_id += 1
             pending_projection_request = None
             pending_projection_request_id = 0
+            pending_recompute_rule_counts_mode = "none"
             projection_timer.stop()
             projection_poll_timer.stop()
 
         dialog.finished.connect(lambda _result: _cancel_projection_refresh())
-        _schedule_projected_count_refresh()
+        _schedule_projected_count_refresh(recompute_rule_counts_mode="all")
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
