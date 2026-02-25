@@ -27,7 +27,8 @@ class NormalizationsDialogTests(unittest.TestCase):
         counts = {
             "normalize": 6,
             "trim": 3,
-            "collapse": 2,
+            "collapse_current": 2,
+            "collapse_all": 9,
         }
 
         dialog = NormalizationsDialog(
@@ -45,12 +46,16 @@ class NormalizationsDialogTests(unittest.TestCase):
             ),
             count_normalize_codes=lambda: counts["normalize"],
             count_trim_extra_ellipses=lambda: counts["trim"],
-            count_smart_collapse_all=lambda: counts["collapse"],
+            count_smart_collapse_current_file=lambda: counts["collapse_current"],
+            count_smart_collapse_all_files=lambda: counts["collapse_all"],
         )
 
         self.assertEqual(dialog.normalize_codes_btn.text(), "Normalize Codes... (6)")
         self.assertEqual(dialog.trim_ellipses_btn.text(), "Trim Extra Ellipses... (3)")
-        self.assertEqual(dialog.smart_collapse_btn.text(), "Smart Collapse All... (2)")
+        self.assertEqual(
+            dialog.smart_collapse_btn.text(),
+            "Smart Collapse All... (2 | 9)",
+        )
         self.assertEqual(dialog.variable_lengths_btn.text(), "Variable Lengths...")
 
         dialog.normalize_codes_btn.click()
@@ -68,7 +73,8 @@ class NormalizationsDialogTests(unittest.TestCase):
         counts = {
             "normalize": 2,
             "trim": 1,
-            "collapse": 4,
+            "collapse_current": 4,
+            "collapse_all": 12,
         }
 
         def _normalize() -> None:
@@ -81,7 +87,8 @@ class NormalizationsDialogTests(unittest.TestCase):
             on_variable_lengths=lambda: None,
             count_normalize_codes=lambda: counts["normalize"],
             count_trim_extra_ellipses=lambda: counts["trim"],
-            count_smart_collapse_all=lambda: counts["collapse"],
+            count_smart_collapse_current_file=lambda: counts["collapse_current"],
+            count_smart_collapse_all_files=lambda: counts["collapse_all"],
         )
 
         dialog.normalize_codes_btn.click()

@@ -24,7 +24,8 @@ class NormalizationsDialog(QDialog):
         on_variable_lengths: Callable[[], None],
         count_normalize_codes: Callable[[], int],
         count_trim_extra_ellipses: Callable[[], int],
-        count_smart_collapse_all: Callable[[], int],
+        count_smart_collapse_current_file: Callable[[], int],
+        count_smart_collapse_all_files: Callable[[], int],
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Normalizations")
@@ -36,7 +37,8 @@ class NormalizationsDialog(QDialog):
         self._on_variable_lengths = on_variable_lengths
         self._count_normalize_codes = count_normalize_codes
         self._count_trim_extra_ellipses = count_trim_extra_ellipses
-        self._count_smart_collapse_all = count_smart_collapse_all
+        self._count_smart_collapse_current_file = count_smart_collapse_current_file
+        self._count_smart_collapse_all_files = count_smart_collapse_all_files
         self._normalize_codes_base_text = "Normalize Codes..."
         self._trim_ellipses_base_text = "Trim Extra Ellipses..."
         self._smart_collapse_base_text = "Smart Collapse All..."
@@ -88,6 +90,11 @@ class NormalizationsDialog(QDialog):
         safe_count = max(0, int(count))
         return f"{base_text} ({safe_count})"
 
+    def _smart_collapse_button_text(self, current_file_count: int, all_files_count: int) -> str:
+        safe_current = max(0, int(current_file_count))
+        safe_all = max(0, int(all_files_count))
+        return f"{self._smart_collapse_base_text} ({safe_current} | {safe_all})"
+
     def _refresh_counts(self) -> None:
         try:
             normalize_count = int(self._count_normalize_codes())
@@ -98,9 +105,17 @@ class NormalizationsDialog(QDialog):
         except Exception:
             trim_count = 0
         try:
-            smart_collapse_count = int(self._count_smart_collapse_all())
+            smart_collapse_current_file_count = int(
+                self._count_smart_collapse_current_file()
+            )
         except Exception:
-            smart_collapse_count = 0
+            smart_collapse_current_file_count = 0
+        try:
+            smart_collapse_all_files_count = int(
+                self._count_smart_collapse_all_files()
+            )
+        except Exception:
+            smart_collapse_all_files_count = 0
 
         self.normalize_codes_btn.setText(
             self._button_text_with_fix_count(
@@ -115,9 +130,9 @@ class NormalizationsDialog(QDialog):
             )
         )
         self.smart_collapse_btn.setText(
-            self._button_text_with_fix_count(
-                self._smart_collapse_base_text,
-                smart_collapse_count,
+            self._smart_collapse_button_text(
+                smart_collapse_current_file_count,
+                smart_collapse_all_files_count,
             )
         )
         self.variable_lengths_btn.setText(self._variable_lengths_base_text)

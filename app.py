@@ -4353,7 +4353,11 @@ class DialogueVisualEditor(
             return 0
         return max(0, int(self._count_possible_extra_ellipsis_trims()))
 
-    def _normalizations_count_possible_smart_collapse_changes(self) -> int:
+    def _normalizations_count_possible_smart_collapse_changes_for_scope(
+        self,
+        *,
+        apply_all_files: bool,
+    ) -> int:
         if not self.sessions:
             return 0
         min_soft_ratio = (
@@ -4371,9 +4375,19 @@ class DialogueVisualEditor(
                 self.smart_collapse_collapse_if_no_punctuation
             ),
             min_soft_ratio=min_soft_ratio,
-            apply_all_files=False,
+            apply_all_files=bool(apply_all_files),
         )
         return max(0, int(projected_blocks))
+
+    def _normalizations_count_possible_smart_collapse_changes(self) -> int:
+        return self._normalizations_count_possible_smart_collapse_changes_for_scope(
+            apply_all_files=False
+        )
+
+    def _normalizations_count_possible_smart_collapse_changes_all_files(self) -> int:
+        return self._normalizations_count_possible_smart_collapse_changes_for_scope(
+            apply_all_files=True
+        )
 
     def _open_normalizations_dialog(self) -> None:
         if not self.sessions:
@@ -4399,7 +4413,8 @@ class DialogueVisualEditor(
             on_variable_lengths=self._open_variable_length_manager,
             count_normalize_codes=self._normalizations_count_possible_code_normalizations,
             count_trim_extra_ellipses=self._normalizations_count_possible_ellipsis_trims,
-            count_smart_collapse_all=self._normalizations_count_possible_smart_collapse_changes,
+            count_smart_collapse_current_file=self._normalizations_count_possible_smart_collapse_changes,
+            count_smart_collapse_all_files=self._normalizations_count_possible_smart_collapse_changes_all_files,
         )
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dialog.destroyed.connect(self._on_normalizations_dialog_destroyed)
