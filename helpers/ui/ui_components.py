@@ -2902,8 +2902,102 @@ class DialogueBlockWidget(QFrame):
             and self.speaker_display_html_resolver is not None
         )
 
+    @staticmethod
+    def _escape_chunk_for_masked_html(chunk: str, *, at_line_start: bool) -> str:
+        if not chunk:
+            return ""
+        if not at_line_start:
+            return html.escape(chunk)
+        idx = 0
+        indent_parts: list[str] = []
+        while idx < len(chunk):
+            ch = chunk[idx]
+            if ch == " ":
+                indent_parts.append("&nbsp;")
+                idx += 1
+                continue
+            if ch == "\t":
+                indent_parts.append("&nbsp;&nbsp;&nbsp;&nbsp;")
+                idx += 1
+                continue
+            break
+        return "".join(indent_parts) + html.escape(chunk[idx:])
+
+    def _masked_lines_with_spans_html(
+        self,
+        lines: list[str],
+        spans_per_line: list[list[tuple[int, int, str, float]]],
+    ) -> str:
+        if not lines:
+            return ""
+        base_point_size = self._editor_font.pointSizeF()
+        if base_point_size <= 0:
+            fallback_point_size = self._editor_font.pointSize()
+            base_point_size = float(fallback_point_size if fallback_point_size > 0 else 10)
+        rows: list[str] = []
+        for line_idx, line in enumerate(lines):
+            line_len = len(line)
+            spans = (
+                spans_per_line[line_idx]
+                if line_idx < len(spans_per_line)
+                else []
+            )
+            safe_spans = sorted(
+                (
+                    max(0, min(line_len, int(start))),
+                    max(0, min(line_len, int(end))),
+                    color_hex,
+                    float(font_scale) if isinstance(font_scale, (int, float)) else 1.0,
+                )
+                for start, end, color_hex, font_scale in spans
+            )
+            parts: list[str] = []
+            cursor = 0
+            at_line_start = True
+
+            def append_span(
+                chunk: str,
+                color_hex: str,
+                font_scale: float,
+            ) -> None:
+                nonlocal at_line_start
+                if not chunk:
+                    return
+                escaped = self._escape_chunk_for_masked_html(
+                    chunk,
+                    at_line_start=at_line_start,
+                )
+                at_line_start = False
+                style_parts: list[str] = []
+                color = QColor(color_hex)
+                if color.isValid():
+                    style_parts.append(f"color: {color.name()};")
+                if abs(font_scale - 1.0) > 0.01:
+                    point_size = max(1.0, base_point_size * font_scale)
+                    style_parts.append(f"font-size: {point_size:.1f}pt;")
+                if style_parts:
+                    parts.append(f"<span style=\"{' '.join(style_parts)}\">{escaped}</span>")
+                    return
+                parts.append(escaped)
+
+            for start, end, color_hex, font_scale in safe_spans:
+                if end <= start:
+                    continue
+                if start > cursor:
+                    append_span(line[cursor:start], "", 1.0)
+                if end > cursor:
+                    append_span(line[start:end], color_hex, font_scale)
+                cursor = max(cursor, end)
+            if cursor < line_len:
+                append_span(line[cursor:], "", 1.0)
+            rows.append("".join(parts) if parts else "&nbsp;")
+        return "<br/>".join(rows)
+
     def _masked_preview_html(self) -> str:
         lines = self._raw_lines or [""]
+        if self.hidden_control_colored_line_resolver is not None:
+            masked_lines = self._masked_lines_from_raw(lines)
+            return self._masked_lines_with_spans_html(masked_lines, self._masked_color_spans)
         full_text = "\n".join(lines)
         if self.speaker_display_html_resolver is not None:
             rendered = self.speaker_display_html_resolver(full_text).strip()

@@ -589,6 +589,65 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertGreaterEqual(colored, 2)
         widget.deleteLater()
 
+    def test_line1_inference_prefix_color_carries_into_masked_overlay_html(self) -> None:
+        segment = _segment([r"\C[27]Akira", "Line one"])
+        color_token_re = re.compile(r"\\[Cc]\[(\d+)\]")
+
+        def colored_mask(value: str) -> tuple[str, list[tuple[int, int, str, float]]]:
+            output: list[str] = []
+            spans: list[tuple[int, int, str, float]] = []
+            cursor = 0
+            out_pos = 0
+            active_color = ""
+            for match in color_token_re.finditer(value):
+                chunk = value[cursor:match.start()]
+                if chunk:
+                    output.append(chunk)
+                    next_pos = out_pos + len(chunk)
+                    spans.append((out_pos, next_pos, active_color, 1.0))
+                    out_pos = next_pos
+                color_code = int(match.group(1))
+                active_color = "#22aa22" if color_code == 27 else ""
+                cursor = match.end()
+            tail = value[cursor:]
+            if tail:
+                output.append(tail)
+                next_pos = out_pos + len(tail)
+                spans.append((out_pos, next_pos, active_color, 1.0))
+            return "".join(output), spans
+
+        def infer_speaker(_: DialogueSegment) -> str:
+            return "Akira"
+
+        def plain_html(value: str) -> str:
+            return f"PLAIN:{value}"
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=False,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=plain_html,
+            hidden_control_colored_line_resolver=colored_mask,
+            inferred_speaker_name_resolver=infer_speaker,
+            hide_control_codes_when_unfocused=True,
+        )
+        widget.set_editor_active(True)
+        editor = widget.editor
+        assert editor is not None
+        editor.clearFocus()
+        widget._sync_control_code_visibility(force=True)
+        self._app.processEvents()
+
+        overlay = widget._source_hint_overlay
+        self.assertIsNotNone(overlay)
+        assert overlay is not None
+        self.assertFalse(overlay.isHidden())
+        self.assertIn("Line one", overlay.text())
+        self.assertNotIn("Akira", overlay.text())
+        self.assertNotIn("PLAIN:", overlay.text())
+        self.assertIn("color: #22aa22;", overlay.text())
+        widget.deleteLater()
+
     def test_translator_mode_japanese_problem_updates_warning_text(self) -> None:
         segment = _segment(["Source only"])
         segment.translation_lines = ["Alpha あ Beta"]
