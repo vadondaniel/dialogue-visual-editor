@@ -48,7 +48,8 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
     _AUDIT_TAB_CONTROL_MISMATCH = 2
     _AUDIT_TAB_CONSISTENCY = 3
     _AUDIT_TAB_TERM_USAGE = 4
-    _AUDIT_TAB_NAME_CONSISTENCY = 5
+    _AUDIT_TAB_TRANSLATION_COLLISION = 5
+    _AUDIT_TAB_NAME_CONSISTENCY = 6
 
     def _audit_case_toggle_icon(self, checked: bool) -> QIcon:
         pixmap = QPixmap(26, 26)
@@ -102,6 +103,9 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         if tab_index == self._AUDIT_TAB_TERM_USAGE:
             self._refresh_audit_term_panel()
             self._refresh_audit_term_suggestions_panel()
+            return
+        if tab_index == self._AUDIT_TAB_TRANSLATION_COLLISION:
+            self._refresh_audit_translation_collision_panel()
             return
         if tab_index == self._AUDIT_TAB_NAME_CONSISTENCY:
             self._refresh_audit_name_consistency_panel()
@@ -665,6 +669,92 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
 
         tabs.addTab(term_tab, "Term Usage")
 
+        translation_collision_tab = QWidget()
+        translation_collision_layout = QVBoxLayout(translation_collision_tab)
+        translation_collision_layout.setContentsMargins(8, 8, 8, 8)
+        translation_collision_layout.setSpacing(8)
+
+        translation_collision_controls_row = QHBoxLayout()
+        translation_collision_controls_row.setContentsMargins(0, 0, 0, 0)
+        translation_collision_controls_row.setSpacing(6)
+        translation_collision_dialogue_only_check = QCheckBox("Dialogue only")
+        translation_collision_dialogue_only_check.setChecked(True)
+        translation_collision_controls_row.addWidget(
+            translation_collision_dialogue_only_check
+        )
+        translation_collision_only_translated_check = QCheckBox(
+            "Only translated"
+        )
+        translation_collision_only_translated_check.setChecked(True)
+        translation_collision_controls_row.addWidget(
+            translation_collision_only_translated_check
+        )
+        translation_collision_controls_row.addStretch(1)
+        translation_collision_refresh_btn = QPushButton("Refresh")
+        translation_collision_controls_row.addWidget(
+            translation_collision_refresh_btn
+        )
+        translation_collision_layout.addLayout(translation_collision_controls_row)
+
+        translation_collision_splitter = QSplitter(Qt.Orientation.Horizontal)
+        translation_collision_layout.addWidget(translation_collision_splitter, 1)
+
+        translation_collision_groups_panel = QWidget()
+        translation_collision_groups_layout = QVBoxLayout(
+            translation_collision_groups_panel
+        )
+        translation_collision_groups_layout.setContentsMargins(0, 0, 0, 0)
+        translation_collision_groups_layout.setSpacing(6)
+        translation_collision_groups_layout.addWidget(
+            QLabel("Duplicate Translation Groups")
+        )
+        translation_collision_groups_list = QListWidget()
+        translation_collision_groups_layout.addWidget(
+            translation_collision_groups_list, 1
+        )
+        translation_collision_splitter.addWidget(translation_collision_groups_panel)
+
+        translation_collision_entries_panel = QWidget()
+        translation_collision_entries_layout = QVBoxLayout(
+            translation_collision_entries_panel
+        )
+        translation_collision_entries_layout.setContentsMargins(0, 0, 0, 0)
+        translation_collision_entries_layout.setSpacing(6)
+        translation_collision_entries_layout.addWidget(
+            QLabel("Entries With Different Source")
+        )
+        translation_collision_entries_list = QListWidget()
+        translation_collision_entries_font = QFont("Consolas")
+        if not translation_collision_entries_font.exactMatch():
+            translation_collision_entries_font = QFont("Courier New")
+        translation_collision_entries_font.setStyleHint(
+            QFont.StyleHint.Monospace
+        )
+        translation_collision_entries_list.setFont(
+            translation_collision_entries_font
+        )
+        translation_collision_entries_layout.addWidget(
+            translation_collision_entries_list, 1
+        )
+        translation_collision_footer = QHBoxLayout()
+        translation_collision_footer.setContentsMargins(0, 0, 0, 0)
+        translation_collision_footer.setSpacing(6)
+        translation_collision_status_label = QLabel(
+            "Finds matching translations mapped to different source text."
+        )
+        translation_collision_footer.addWidget(
+            translation_collision_status_label, 1
+        )
+        translation_collision_goto_btn = QPushButton("Go To Entry")
+        translation_collision_goto_btn.setEnabled(False)
+        translation_collision_footer.addWidget(translation_collision_goto_btn)
+        translation_collision_entries_layout.addLayout(translation_collision_footer)
+        translation_collision_splitter.addWidget(translation_collision_entries_panel)
+        translation_collision_splitter.setStretchFactor(0, 4)
+        translation_collision_splitter.setStretchFactor(1, 6)
+
+        tabs.addTab(translation_collision_tab, "TL Collisions")
+
         name_consistency_tab = QWidget()
         name_consistency_layout = QVBoxLayout(name_consistency_tab)
         name_consistency_layout.setContentsMargins(8, 8, 8, 8)
@@ -824,6 +914,24 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         self.audit_term_suggest_refresh_btn = term_suggest_refresh_btn
         self.audit_term_variants_progress_overlay = term_variants_progress_overlay
         self.audit_term_hits_progress_overlay = term_hits_progress_overlay
+        self.audit_translation_collision_dialogue_only_check = (
+            translation_collision_dialogue_only_check
+        )
+        self.audit_translation_collision_only_translated_check = (
+            translation_collision_only_translated_check
+        )
+        self.audit_translation_collision_groups_list = (
+            translation_collision_groups_list
+        )
+        self.audit_translation_collision_entries_list = (
+            translation_collision_entries_list
+        )
+        self.audit_translation_collision_status_label = (
+            translation_collision_status_label
+        )
+        self.audit_translation_collision_goto_btn = (
+            translation_collision_goto_btn
+        )
         self.audit_name_consistency_dialogue_only_check = name_consistency_dialogue_only_check
         self.audit_name_consistency_only_discrepancy_check = (
             name_consistency_only_discrepancy_check
@@ -1065,6 +1173,34 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             self._apply_selected_audit_term_variant_to_canonical
         )
         term_goto_btn.clicked.connect(self._go_to_selected_audit_term_hit)
+        translation_collision_dialogue_only_check.toggled.connect(
+            lambda _checked: self._refresh_audit_translation_collision_panel()
+        )
+        translation_collision_only_translated_check.toggled.connect(
+            lambda _checked: self._refresh_audit_translation_collision_panel()
+        )
+        translation_collision_refresh_btn.clicked.connect(
+            self._refresh_audit_translation_collision_panel
+        )
+        translation_collision_groups_list.currentItemChanged.connect(
+            lambda _current, _previous: (
+                self._refresh_audit_translation_collision_entries()
+            )
+        )
+        translation_collision_entries_list.currentItemChanged.connect(
+            lambda current, _previous: (
+                translation_collision_goto_btn.setEnabled(current is not None)
+            )
+        )
+        translation_collision_entries_list.itemDoubleClicked.connect(
+            lambda _item: self._go_to_selected_audit_translation_collision_entry()
+        )
+        translation_collision_entries_list.itemActivated.connect(
+            lambda _item: self._go_to_selected_audit_translation_collision_entry()
+        )
+        translation_collision_goto_btn.clicked.connect(
+            self._go_to_selected_audit_translation_collision_entry
+        )
         name_consistency_dialogue_only_check.toggled.connect(
             lambda _checked: self._refresh_audit_name_consistency_panel()
         )

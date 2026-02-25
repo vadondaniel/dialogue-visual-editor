@@ -7,6 +7,7 @@ from .audit_core_mixin import AuditCoreMixin
 from .audit_search_mixin import AuditSearchMixin
 from .audit_sanitize_mixin import AuditSanitizeMixin
 from .audit_term_usage_mixin import AuditTermUsageMixin
+from .audit_translation_collision_mixin import AuditTranslationCollisionMixin
 from .audit_window_mixin import AuditWindowMixin
 
 
@@ -18,6 +19,7 @@ class AuditMixin(
     AuditControlMismatchMixin,
     AuditConsistencyMixin,
     AuditTermUsageMixin,
+    AuditTranslationCollisionMixin,
     AuditNameConsistencyMixin,
 ):
     pass

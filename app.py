@@ -389,6 +389,12 @@ class DialogueVisualEditor(
         self.audit_term_suggest_refresh_btn: Optional[QPushButton] = None
         self.audit_term_variants_progress_overlay: Optional[QLabel] = None
         self.audit_term_hits_progress_overlay: Optional[QLabel] = None
+        self.audit_translation_collision_dialogue_only_check: Optional[QCheckBox] = None
+        self.audit_translation_collision_only_translated_check: Optional[QCheckBox] = None
+        self.audit_translation_collision_groups_list: Optional[QListWidget] = None
+        self.audit_translation_collision_entries_list: Optional[QListWidget] = None
+        self.audit_translation_collision_status_label: Optional[QLabel] = None
+        self.audit_translation_collision_goto_btn: Optional[QPushButton] = None
         self.audit_name_consistency_dialogue_only_check: Optional[QCheckBox] = None
         self.audit_name_consistency_only_discrepancy_check: Optional[QCheckBox] = None
         self.audit_name_consistency_filter_edit: Optional[QLineEdit] = None
@@ -3014,6 +3020,7 @@ class DialogueVisualEditor(
             self._refresh_audit_consistency_panel()
             self._refresh_audit_term_panel()
             self._refresh_audit_term_suggestions_panel()
+            self._refresh_audit_translation_collision_panel()
             self._refresh_audit_name_consistency_panel()
 
     def _show_middle_autoscroll_indicator(self, anchor_global: QPoint) -> None:

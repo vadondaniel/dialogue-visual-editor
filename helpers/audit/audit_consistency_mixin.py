@@ -1367,6 +1367,11 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             self._refresh_audit_control_mismatch_panel()
             return
 
+        collision_tab = getattr(self, "_AUDIT_TAB_TRANSLATION_COLLISION", None)
+        if isinstance(collision_tab, int) and active_tab == collision_tab:
+            self._refresh_audit_translation_collision_panel()
+            return
+
         name_tab = getattr(self, "_AUDIT_TAB_NAME_CONSISTENCY", None)
         if isinstance(name_tab, int) and active_tab == name_tab:
             self._refresh_audit_name_consistency_panel()

@@ -634,6 +634,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
         self._invalidate_audit_caches()
         self._refresh_audit_sanitize_panel()
         self._refresh_audit_control_mismatch_panel()
+        self._refresh_audit_translation_collision_panel()
         if touched_current and self.current_path is not None:
             current_session = self.sessions.get(self.current_path)
             if current_session is not None:
