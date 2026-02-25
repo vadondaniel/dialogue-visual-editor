@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .mass_translate_dialog import MassTranslateDialog
+from .normalizations_dialog import NormalizationsDialog
 from .ui_components import (
     ControlCodeHighlighter,
     DialogueBlockWidget,
@@ -17,6 +18,7 @@ __all__ = [
     "ExactMatchReviewDialog",
     "ItemNameDescriptionWidget",
     "MassTranslateDialog",
+    "NormalizationsDialog",
     "SpeakerManagerDialog",
     "VariableLengthManagerDialog",
     "build_control_mismatch_selections",

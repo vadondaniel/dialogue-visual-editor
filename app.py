@@ -93,6 +93,7 @@ try:
         ExactMatchReviewDialog,
         ItemNameDescriptionWidget,
         MassTranslateDialog,
+        NormalizationsDialog,
         SpeakerManagerDialog,
         VariableLengthManagerDialog,
         build_control_mismatch_selections,
@@ -132,6 +133,7 @@ except ImportError:
         ExactMatchReviewDialog,
         ItemNameDescriptionWidget,
         MassTranslateDialog,
+        NormalizationsDialog,
         SpeakerManagerDialog,
         VariableLengthManagerDialog,
         build_control_mismatch_selections,
@@ -406,6 +408,7 @@ class DialogueVisualEditor(
         self.audit_name_consistency_status_label: Optional[QLabel] = None
         self.audit_name_consistency_goto_btn: Optional[QPushButton] = None
         self.audit_name_consistency_goto_misc_btn: Optional[QPushButton] = None
+        self.normalizations_dialog: Optional[NormalizationsDialog] = None
         self.mass_translate_dialog: Optional[MassTranslateDialog] = None
         self.audit_cache_generation = 0
         self.audit_result_batch_size = 16
@@ -1103,13 +1106,6 @@ class DialogueVisualEditor(
         speakers_action.triggered.connect(self._open_speaker_manager)
         tools_menu.addAction(speakers_action)
 
-        variable_lengths_action = QAction("Variable Lengths...", self)
-        variable_lengths_action.setShortcut(QKeySequence("F6"))
-        variable_lengths_action.triggered.connect(
-            self._open_variable_length_manager
-        )
-        tools_menu.addAction(variable_lengths_action)
-
         mass_translate_action = QAction("Mass Translate...", self)
         mass_translate_action.setShortcut(QKeySequence("F2"))
         mass_translate_action.triggered.connect(self._open_mass_translate_dialog)
@@ -1122,26 +1118,15 @@ class DialogueVisualEditor(
         )
         tools_menu.addAction(translations_action)
 
-        normalize_codes_action = QAction("Normalize Codes...", self)
-        normalize_codes_action.setShortcut(QKeySequence("F3"))
-        normalize_codes_action.triggered.connect(self._open_normalize_codes_dialog)
-        tools_menu.addAction(normalize_codes_action)
+        normalizations_action = QAction("Normalizations...", self)
+        normalizations_action.setShortcut(QKeySequence("F3"))
+        normalizations_action.triggered.connect(self._open_normalizations_dialog)
+        tools_menu.addAction(normalizations_action)
 
         audit_action = QAction("Audit...", self)
         audit_action.setShortcut(QKeySequence("F4"))
         audit_action.triggered.connect(self._open_audit_window)
         tools_menu.addAction(audit_action)
-
-        tools_menu.addSeparator()
-        smart_collapse_all_action = QAction("Smart Collapse All...", self)
-        smart_collapse_all_action.triggered.connect(
-            self._smart_collapse_all_dialogue_blocks
-        )
-        tools_menu.addAction(smart_collapse_all_action)
-
-        trim_ellipses_action = QAction("Trim Extra Ellipses...", self)
-        trim_ellipses_action.triggered.connect(self._open_trim_extra_ellipses_dialog)
-        tools_menu.addAction(trim_ellipses_action)
 
         self._settings_translation_profiles_menu = None
         self._settings_translation_profiles_switch_menu = None
@@ -4308,6 +4293,39 @@ class DialogueVisualEditor(
             f"Cleared \\V[{safe_id}] override."
         )
         return True
+
+    def _open_normalizations_dialog(self) -> None:
+        if not self.sessions:
+            QMessageBox.information(
+                self,
+                "No data loaded",
+                "Load a data folder before opening Normalizations.",
+            )
+            return
+        existing_dialog = self.normalizations_dialog
+        if existing_dialog is not None:
+            if existing_dialog.isVisible():
+                existing_dialog.raise_()
+                existing_dialog.activateWindow()
+                return
+            self.normalizations_dialog = None
+
+        dialog = NormalizationsDialog(
+            self,
+            on_normalize_codes=self._open_normalize_codes_dialog,
+            on_trim_extra_ellipses=self._open_trim_extra_ellipses_dialog,
+            on_smart_collapse_all=self._smart_collapse_all_dialogue_blocks,
+            on_variable_lengths=self._open_variable_length_manager,
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(self._on_normalizations_dialog_destroyed)
+        self.normalizations_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_normalizations_dialog_destroyed(self, _obj: QObject) -> None:
+        self.normalizations_dialog = None
 
     def _open_variable_length_manager(self) -> None:
         if not self.sessions:
