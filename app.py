@@ -9,7 +9,7 @@ import sys
 import ctypes
 from pathlib import Path
 from time import monotonic
-from typing import Any, Optional, cast
+from typing import Any, Callable, Optional, cast
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import (
@@ -1051,6 +1051,17 @@ class DialogueVisualEditor(
         for control in hidden_controls:
             control.setVisible(False)
 
+    def _tools_menu_action_specs(
+        self,
+    ) -> tuple[tuple[str, str, Callable[[], None]], ...]:
+        return (
+            ("Speakers...", "F1", self._open_speaker_manager),
+            ("Mass Translate...", "F2", self._open_mass_translate_dialog),
+            ("Normalizations...", "F3", self._open_normalizations_dialog),
+            ("Audit...", "F4", self._open_audit_window),
+            ("Translations...", "F6", self._open_translation_settings_dialog),
+        )
+
     def _build_menu_bar(self) -> None:
         menu_bar = self.menuBar()
         menu_bar.clear()
@@ -1101,32 +1112,11 @@ class DialogueVisualEditor(
         file_menu.addAction(exit_action)
 
         tools_menu = menu_bar.addMenu("Tools")
-        speakers_action = QAction("Speakers...", self)
-        speakers_action.setShortcut(QKeySequence("F1"))
-        speakers_action.triggered.connect(self._open_speaker_manager)
-        tools_menu.addAction(speakers_action)
-
-        mass_translate_action = QAction("Mass Translate...", self)
-        mass_translate_action.setShortcut(QKeySequence("F2"))
-        mass_translate_action.triggered.connect(self._open_mass_translate_dialog)
-        tools_menu.addAction(mass_translate_action)
-
-        translations_action = QAction("Translations...", self)
-        translations_action.setShortcut(QKeySequence("F7"))
-        translations_action.triggered.connect(
-            self._open_translation_settings_dialog
-        )
-        tools_menu.addAction(translations_action)
-
-        normalizations_action = QAction("Normalizations...", self)
-        normalizations_action.setShortcut(QKeySequence("F3"))
-        normalizations_action.triggered.connect(self._open_normalizations_dialog)
-        tools_menu.addAction(normalizations_action)
-
-        audit_action = QAction("Audit...", self)
-        audit_action.setShortcut(QKeySequence("F4"))
-        audit_action.triggered.connect(self._open_audit_window)
-        tools_menu.addAction(audit_action)
+        for action_text, shortcut_text, callback in self._tools_menu_action_specs():
+            action = QAction(action_text, self)
+            action.setShortcut(QKeySequence(shortcut_text))
+            action.triggered.connect(callback)
+            tools_menu.addAction(action)
 
         self._settings_translation_profiles_menu = None
         self._settings_translation_profiles_switch_menu = None
