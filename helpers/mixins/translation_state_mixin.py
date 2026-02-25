@@ -188,6 +188,44 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         safe_uid = tl_uid if tl_uid else self._new_translation_uid()
         return f"{session.path.name}:TI:{safe_uid}"
 
+    def _ensure_unique_session_segment_uids(self, session: FileSession) -> int:
+        seen_uids: set[str] = set()
+        renamed_count = 0
+        for index, segment in enumerate(session.segments, start=1):
+            uid_raw = segment.uid if isinstance(segment.uid, str) else ""
+            normalized_uid = uid_raw.strip()
+            if not normalized_uid:
+                normalized_uid = f"{session.path.name}:I:{index}"
+            if normalized_uid not in seen_uids:
+                if normalized_uid != uid_raw:
+                    segment.uid = normalized_uid
+                    renamed_count += 1
+                seen_uids.add(normalized_uid)
+                continue
+
+            if segment.translation_only and segment.tl_uid:
+                base_uid = f"{session.path.name}:TI:{segment.tl_uid}"
+            else:
+                base_uid = normalized_uid
+            if not base_uid:
+                base_uid = f"{session.path.name}:I:{index}"
+            unique_uid = base_uid
+            duplicate_suffix = 2
+            while unique_uid in seen_uids:
+                unique_uid = f"{base_uid}:dup{duplicate_suffix}"
+                duplicate_suffix += 1
+            segment.uid = unique_uid
+            seen_uids.add(unique_uid)
+            renamed_count += 1
+
+        if renamed_count > 0:
+            logger.warning(
+                "Reassigned %d duplicate/blank segment UID(s) in '%s'.",
+                renamed_count,
+                session.path,
+            )
+        return renamed_count
+
     def _build_translation_only_segment_from_state(
         self,
         session: FileSession,
@@ -863,6 +901,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         # Reordering by saved TL order is only needed for dialogue sessions that
         # can contain translation-only inserted blocks.
         if is_name_index_session:
+            self._ensure_unique_session_segment_uids(session)
             setattr(
                 session,
                 "_original_tl_order",
@@ -925,6 +964,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             appended_source_uids.add(source_segment.uid)
 
         session.segments = map_display_segments + ordered_segments
+        self._ensure_unique_session_segment_uids(session)
         setattr(session, "_original_tl_order", [segment.tl_uid for segment in session.segments])
 
     def _sync_translation_state_from_sessions(self) -> None:

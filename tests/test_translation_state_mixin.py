@@ -501,6 +501,55 @@ class TranslationStateMixinTests(unittest.TestCase):
         original_order = getattr(session, "_original_tl_order", [])
         self.assertEqual(len(original_order), 3)
 
+    def test_apply_state_reassigns_duplicate_translation_only_segment_uid(self) -> None:
+        harness = _Harness()
+        seg_1 = _segment("Map010.json:L0:0", "JP 1", "Hero")
+        seg_2 = _segment("Map010.json:L0:1", "JP 2", "Hero")
+        session = FileSession(
+            path=Path("Map010.json"),
+            data=[],
+            bundles=[],
+            segments=[seg_1, seg_2],
+        )
+        hash_1 = harness._segment_source_hash(seg_1)
+        hash_2 = harness._segment_source_hash(seg_2)
+        harness.translation_state["files"] = {
+            "Map010.json": {
+                "order": ["T1", "T_INSERT", "T2"],
+                "entries": {
+                    "T1": {
+                        "source_uid": seg_1.uid,
+                        "source_hash": hash_1,
+                        "translation_lines": ["TL 1"],
+                    },
+                    "T_INSERT": {
+                        "source_uid": "",
+                        "source_hash": "",
+                        "translation_only": True,
+                        "segment_uid": seg_1.uid,
+                        "translation_lines": ["TL insert"],
+                        "source_lines": [""],
+                        "original_lines": [""],
+                    },
+                    "T2": {
+                        "source_uid": seg_2.uid,
+                        "source_hash": hash_2,
+                        "translation_lines": ["TL 2"],
+                    },
+                },
+            }
+        }
+
+        harness._apply_translation_state_to_session(session)
+
+        resulting_uids = [segment.uid for segment in session.segments]
+        self.assertEqual(len(resulting_uids), len(set(resulting_uids)))
+        inserted_segment = next(
+            segment for segment in session.segments if segment.translation_only
+        )
+        self.assertNotEqual(inserted_segment.uid, seg_1.uid)
+        self.assertTrue(inserted_segment.uid.startswith("Map010.json:TI:"))
+
     def test_translation_state_for_name_index_clears_speaker_fields(self) -> None:
         harness = _Harness()
         segment = _segment("System.json:Y:1:gameTitle", "JP title", r"\C[2]\N[1]\C[0]")

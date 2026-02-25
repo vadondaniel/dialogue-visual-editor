@@ -1319,8 +1319,24 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             self._refresh_translator_detail_panel()
 
     def _new_segment_uid(self, path: Path) -> str:
-        self.segment_uid_counter += 1
-        return f"{path.name}:I:{self.segment_uid_counter}"
+        existing_uids: set[str] = set()
+        sessions_raw = getattr(self, "sessions", None)
+        session = (
+            sessions_raw.get(path)
+            if isinstance(sessions_raw, dict)
+            else None
+        )
+        if isinstance(session, FileSession):
+            existing_uids = {
+                segment.uid
+                for segment in session.segments
+                if isinstance(segment.uid, str) and segment.uid
+            }
+        while True:
+            self.segment_uid_counter += 1
+            candidate_uid = f"{path.name}:I:{self.segment_uid_counter}"
+            if candidate_uid not in existing_uids:
+                return candidate_uid
 
     def _find_segment_token(self, session: FileSession, uid: str) -> tuple[Optional[CommandBundle], int]:
         for bundle in session.bundles:

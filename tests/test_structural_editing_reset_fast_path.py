@@ -139,6 +139,12 @@ class _StructuralResetHarness(StructuralEditingMixin):
         return self._status_bar
 
 
+class _UidGenerationHarness(StructuralEditingMixin):
+    def __init__(self, session: FileSession, *, counter: int = 0) -> None:
+        self.sessions: dict[Path, FileSession] = {session.path: session}
+        self.segment_uid_counter = counter
+
+
 def _dialogue_segment(uid: str, text: str, *, speaker: str = "") -> DialogueSegment:
     return DialogueSegment(
         uid=uid,
@@ -152,6 +158,35 @@ def _dialogue_segment(uid: str, text: str, *, speaker: str = "") -> DialogueSegm
 
 
 class StructuralEditingResetFastPathTests(unittest.TestCase):
+    def test_new_segment_uid_skips_existing_ids_in_target_session(self) -> None:
+        path = Path("Map010.json")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[
+                _dialogue_segment("Map010.json:I:1", "A"),
+                _dialogue_segment("Map010.json:I:2", "B"),
+            ],
+        )
+        harness = _UidGenerationHarness(session, counter=0)
+
+        self.assertEqual(harness._new_segment_uid(path), "Map010.json:I:3")
+
+    def test_new_segment_uid_skips_high_existing_id_after_reload(self) -> None:
+        path = Path("Map010.json")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[
+                _dialogue_segment("Map010.json:I:449", "A"),
+            ],
+        )
+        harness = _UidGenerationHarness(session, counter=448)
+
+        self.assertEqual(harness._new_segment_uid(path), "Map010.json:I:450")
+
     def test_translator_reset_uses_single_widget_fast_path(self) -> None:
         harness = _StructuralResetHarness(translator_mode=True)
         segment = _dialogue_segment("A:1", "jp line", speaker="Hero")

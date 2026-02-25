@@ -5771,12 +5771,32 @@ class DialogueVisualEditor(
         setattr(actor_session, "has_actor_name_aliases", alias_count > 0)
         if apply_translation_state:
             self._apply_translation_state_to_session(actor_session)
-        self.segment_uid_counter = max(self.segment_uid_counter, len(actor_session.segments))
+        self._sync_segment_uid_counter_for_session(actor_session)
 
         invalidate_cached_view = getattr(self, "_invalidate_cached_block_view_for_path", None)
         if callable(invalidate_cached_view):
             invalidate_cached_view(actor_session.path)
         return len(rebuilt_segments) - previous_count
+
+    def _sync_segment_uid_counter_for_session(self, session: FileSession) -> None:
+        next_counter = max(0, len(session.segments))
+        inserted_uid_prefix = f"{session.path.name}:I:"
+        for segment in session.segments:
+            uid_raw = segment.uid
+            if not isinstance(uid_raw, str):
+                continue
+            if not uid_raw.startswith(inserted_uid_prefix):
+                continue
+            suffix = uid_raw[len(inserted_uid_prefix):]
+            if not suffix.isdigit():
+                continue
+            try:
+                parsed = int(suffix)
+            except Exception:
+                continue
+            if parsed > next_counter:
+                next_counter = parsed
+        self.segment_uid_counter = max(self.segment_uid_counter, next_counter)
 
     def _build_translation_only_segment_for_import(
         self,
@@ -6163,8 +6183,7 @@ class DialogueVisualEditor(
                     ):
                         translated_import_hydrated = True
                 self.sessions[path] = session
-                self.segment_uid_counter = max(
-                    self.segment_uid_counter, len(session.segments))
+                self._sync_segment_uid_counter_for_session(session)
                 total_blocks += len(session.segments)
 
                 if loaded_from_db:
@@ -6474,8 +6493,7 @@ class DialogueVisualEditor(
                     session = parse_dialogue_file(path)
                 self._apply_translation_state_to_session(session)
                 self.sessions[path] = session
-                self.segment_uid_counter = max(
-                    self.segment_uid_counter, len(session.segments))
+                self._sync_segment_uid_counter_for_session(session)
                 self._rebuild_actor_change_name_segments(
                     apply_translation_state=False
                 )
