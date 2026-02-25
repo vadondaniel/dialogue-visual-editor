@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -102,6 +103,73 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         self._refresh_translator_detail_panel()
         return True
 
+    def _smart_collapse_target_sessions(
+        self,
+        apply_all_files: bool,
+    ) -> list[FileSession]:
+        if apply_all_files:
+            return list(self.sessions.values())
+        if self.current_path is None:
+            return []
+        current_session = self.sessions.get(self.current_path)
+        if current_session is None:
+            return []
+        return [current_session]
+
+    def _count_projected_smart_collapse_changes(
+        self,
+        *,
+        allow_comma_endings: bool,
+        allow_colon_triplet_endings: bool,
+        ellipsis_lowercase_rule: bool,
+        collapse_if_no_punctuation: bool,
+        min_soft_ratio: float,
+        apply_all_files: bool,
+    ) -> tuple[int, int]:
+        target_sessions = self._smart_collapse_target_sessions(apply_all_files)
+        if not target_sessions:
+            return 0, 0
+
+        translator_mode = self._is_translator_mode()
+        projected_blocks = 0
+        projected_files = 0
+        for session in target_sessions:
+            if self._is_name_index_session(session):
+                continue
+            session_will_change = False
+            for segment in session.segments:
+                if not self._is_smart_collapse_eligible_segment(segment):
+                    continue
+                if translator_mode:
+                    current_lines = self._normalize_translation_lines(
+                        segment.translation_lines
+                    )
+                    collapsed_lines = self._collapsed_translation_lines_for_segment(
+                        segment,
+                        allow_comma_endings=allow_comma_endings,
+                        allow_colon_triplet_endings=allow_colon_triplet_endings,
+                        ellipsis_lowercase_rule=ellipsis_lowercase_rule,
+                        collapse_if_no_punctuation=collapse_if_no_punctuation,
+                        min_soft_ratio=min_soft_ratio,
+                    )
+                else:
+                    current_lines = list(segment.lines) if segment.lines else [""]
+                    collapsed_lines = self._collapsed_source_lines_for_segment(
+                        segment,
+                        allow_comma_endings=allow_comma_endings,
+                        allow_colon_triplet_endings=allow_colon_triplet_endings,
+                        ellipsis_lowercase_rule=ellipsis_lowercase_rule,
+                        collapse_if_no_punctuation=collapse_if_no_punctuation,
+                        min_soft_ratio=min_soft_ratio,
+                    )
+                if collapsed_lines == current_lines:
+                    continue
+                projected_blocks += 1
+                session_will_change = True
+            if session_will_change:
+                projected_files += 1
+        return projected_blocks, projected_files
+
     def _prompt_smart_collapse_all_options(
         self,
     ) -> Optional[tuple[bool, bool, bool, bool, float, bool]]:
@@ -166,6 +234,55 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         scope_all_files_check = QCheckBox("Apply to all dialogue files")
         scope_all_files_check.setChecked(False)
         form.addRow(scope_all_files_check)
+        projected_count_label = QLabel("")
+        projected_count_label.setWordWrap(True)
+        form.addRow("Projected fixes", projected_count_label)
+
+        projection_timer = QTimer(dialog)
+        projection_timer.setSingleShot(True)
+        projection_timer.setInterval(80)
+
+        def _current_min_soft_ratio() -> float:
+            if not bool(soft_rule_check.isChecked()):
+                return 0.0
+            return max(0.0, min(1.0, float(int(threshold_spin.value())) / 100.0))
+
+        def _refresh_projected_count_label() -> None:
+            projected_blocks, projected_files = (
+                self._count_projected_smart_collapse_changes(
+                    allow_comma_endings=bool(allow_comma_check.isChecked()),
+                    allow_colon_triplet_endings=bool(
+                        allow_colon_triplet_check.isChecked()
+                    ),
+                    ellipsis_lowercase_rule=bool(
+                        ellipsis_lowercase_rule_check.isChecked()
+                    ),
+                    collapse_if_no_punctuation=bool(no_punctuation_check.isChecked()),
+                    min_soft_ratio=_current_min_soft_ratio(),
+                    apply_all_files=bool(scope_all_files_check.isChecked()),
+                )
+            )
+            block_label = "block" if projected_blocks == 1 else "blocks"
+            file_label = "file" if projected_files == 1 else "files"
+            projected_count_label.setText(
+                f"{projected_blocks} {block_label} in {projected_files} {file_label}"
+            )
+
+        projection_timer.timeout.connect(_refresh_projected_count_label)
+
+        def _schedule_projected_count_refresh() -> None:
+            projection_timer.start()
+
+        soft_rule_check.toggled.connect(_schedule_projected_count_refresh)
+        allow_comma_check.toggled.connect(_schedule_projected_count_refresh)
+        allow_colon_triplet_check.toggled.connect(_schedule_projected_count_refresh)
+        ellipsis_lowercase_rule_check.toggled.connect(
+            _schedule_projected_count_refresh
+        )
+        no_punctuation_check.toggled.connect(_schedule_projected_count_refresh)
+        scope_all_files_check.toggled.connect(_schedule_projected_count_refresh)
+        threshold_spin.valueChanged.connect(_schedule_projected_count_refresh)
+        _refresh_projected_count_label()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -279,15 +396,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         translator_mode = self._is_translator_mode()
         changed_count = 0
         changed_sessions: list[FileSession] = []
-        if apply_all_files:
-            target_sessions = list(self.sessions.values())
-        else:
-            if self.current_path is None:
-                return
-            current_session = self.sessions.get(self.current_path)
-            if current_session is None:
-                return
-            target_sessions = [current_session]
+        target_sessions = self._smart_collapse_target_sessions(apply_all_files)
+        if not target_sessions:
+            return
         for session in target_sessions:
             if self._is_name_index_session(session):
                 continue

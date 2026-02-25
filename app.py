@@ -4294,6 +4294,46 @@ class DialogueVisualEditor(
         )
         return True
 
+    def _normalizations_count_possible_code_normalizations(self) -> int:
+        if not self.sessions:
+            return 0
+        source_count, source_speaker_count, tl_count, tl_speaker_count = (
+            self._count_possible_control_code_normalizations(
+                include_source_text=True,
+                include_source_speaker=True,
+                include_translation_text=True,
+                include_translation_speaker=True,
+            )
+        )
+        return max(0, source_count + source_speaker_count + tl_count + tl_speaker_count)
+
+    def _normalizations_count_possible_ellipsis_trims(self) -> int:
+        if not self.sessions:
+            return 0
+        return max(0, int(self._count_possible_extra_ellipsis_trims()))
+
+    def _normalizations_count_possible_smart_collapse_changes(self) -> int:
+        if not self.sessions:
+            return 0
+        min_soft_ratio = (
+            self._smart_collapse_min_soft_ratio()
+            if self._smart_collapse_use_soft_ratio_rule()
+            else 0.0
+        )
+        projected_blocks, _projected_files = self._count_projected_smart_collapse_changes(
+            allow_comma_endings=bool(self.smart_collapse_allow_comma_endings),
+            allow_colon_triplet_endings=bool(
+                self.smart_collapse_allow_colon_triplet_endings
+            ),
+            ellipsis_lowercase_rule=bool(self.smart_collapse_ellipsis_lowercase_rule),
+            collapse_if_no_punctuation=bool(
+                self.smart_collapse_collapse_if_no_punctuation
+            ),
+            min_soft_ratio=min_soft_ratio,
+            apply_all_files=False,
+        )
+        return max(0, int(projected_blocks))
+
     def _open_normalizations_dialog(self) -> None:
         if not self.sessions:
             QMessageBox.information(
@@ -4316,6 +4356,9 @@ class DialogueVisualEditor(
             on_trim_extra_ellipses=self._open_trim_extra_ellipses_dialog,
             on_smart_collapse_all=self._smart_collapse_all_dialogue_blocks,
             on_variable_lengths=self._open_variable_length_manager,
+            count_normalize_codes=self._normalizations_count_possible_code_normalizations,
+            count_trim_extra_ellipses=self._normalizations_count_possible_ellipsis_trims,
+            count_smart_collapse_all=self._normalizations_count_possible_smart_collapse_changes,
         )
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dialog.destroyed.connect(self._on_normalizations_dialog_destroyed)
