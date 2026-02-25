@@ -122,7 +122,7 @@ class AuditWindowMixinQtSignalTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._app = QApplication.instance() or QApplication([])
 
-    def test_consistency_entries_item_activated_triggers_confirm_apply(self) -> None:
+    def test_consistency_entries_item_double_click_triggers_go_to_entry(self) -> None:
         harness = _QtHarness()
         harness._build_audit_window()
         entries_list = harness.audit_consistency_entries_list
@@ -133,7 +133,25 @@ class AuditWindowMixinQtSignalTests(unittest.TestCase):
         entries_list.addItem(item)
         entries_list.setCurrentItem(item)
 
-        entries_list.itemActivated.emit(item)
+        entries_list.itemDoubleClicked.emit(item)
+
+        self.assertIn("goto_entry", harness.calls)
+        self.assertNotIn("confirm_apply", harness.calls)
+        if harness.audit_window is not None:
+            harness.audit_window.close()
+            harness.audit_window.deleteLater()
+        harness.deleteLater()
+
+    def test_consistency_entries_enter_shortcut_triggers_confirm_apply(self) -> None:
+        harness = _QtHarness()
+        harness._build_audit_window()
+        shortcuts = getattr(harness, "_audit_consistency_entries_apply_shortcuts", None)
+        self.assertIsNotNone(shortcuts)
+        assert isinstance(shortcuts, list)
+        self.assertGreaterEqual(len(shortcuts), 2)
+
+        shortcut = shortcuts[0]
+        shortcut.activated.emit()
 
         self.assertIn("confirm_apply", harness.calls)
         self.assertNotIn("goto_entry", harness.calls)

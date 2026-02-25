@@ -3,7 +3,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPen,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -984,9 +994,16 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
         consistency_entries_list.itemDoubleClicked.connect(
             lambda _item: self._go_to_selected_audit_consistency_entry()
         )
-        consistency_entries_list.itemActivated.connect(
-            lambda _item: self._confirm_and_apply_audit_consistency_target_to_group()
-        )
+        consistency_entries_apply_shortcuts = [
+            QShortcut(QKeySequence(Qt.Key.Key_Return), consistency_entries_list),
+            QShortcut(QKeySequence(Qt.Key.Key_Enter), consistency_entries_list),
+        ]
+        for shortcut in consistency_entries_apply_shortcuts:
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(
+                self._confirm_and_apply_audit_consistency_target_to_group
+            )
+        self._audit_consistency_entries_apply_shortcuts = consistency_entries_apply_shortcuts
         consistency_goto_btn.clicked.connect(
             self._go_to_selected_audit_consistency_entry
         )
