@@ -507,6 +507,26 @@ class RenderMixin(_RenderHostTypingFallback):
             setattr(self, "_dialogue_editor_visibility_timer", timer)
         timer.start(15)
 
+    def _refresh_block_width_constraints(self) -> None:
+        if not self.block_widgets:
+            return
+        for widget in self.block_widgets.values():
+            apply_width = getattr(widget, "_apply_editor_width", None)
+            if callable(apply_width):
+                apply_width()
+
+    def _schedule_block_width_constraints_refresh(self) -> None:
+        timer = cast(
+            Optional[QTimer],
+            getattr(self, "_block_width_constraints_timer", None),
+        )
+        if timer is None:
+            timer = QTimer(cast(QObject, self))
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._refresh_block_width_constraints)
+            setattr(self, "_block_width_constraints_timer", timer)
+        timer.start(15)
+
     def _update_visible_dialogue_editors(self) -> None:
         if not self.block_widgets:
             return

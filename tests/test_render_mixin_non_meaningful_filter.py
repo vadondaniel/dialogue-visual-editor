@@ -18,6 +18,7 @@ class _CheckBoxStub:
 class _Harness(RenderMixin):
     def __init__(self, *, hide_non_meaningful: bool) -> None:
         self.hide_non_meaningful_entries_check = _CheckBoxStub(hide_non_meaningful)
+        self.block_widgets: dict[str, object] = {}
 
     @staticmethod
     def _is_actor_index_session(session: FileSession) -> bool:
@@ -63,6 +64,22 @@ def _session_with_segments(segments: list[DialogueSegment]) -> FileSession:
 
 
 class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
+    def test_refresh_block_width_constraints_calls_widget_width_apply_hook(self) -> None:
+        class _WidthAwareWidget:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def _apply_editor_width(self) -> None:
+                self.calls += 1
+
+        harness = _Harness(hide_non_meaningful=False)
+        target = _WidthAwareWidget()
+        harness.block_widgets = {"a": target, "b": object()}
+
+        harness._refresh_block_width_constraints()
+
+        self.assertEqual(target.calls, 1)
+
     def test_toggle_off_keeps_map_and_plugin_parameter_entries(self) -> None:
         harness = _Harness(hide_non_meaningful=False)
         map_empty = _segment("map", "", segment_kind="map_display_name")

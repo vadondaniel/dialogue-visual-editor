@@ -3046,6 +3046,12 @@ class DialogueVisualEditor(
             app_instance = QApplication.instance()
             if watched is app_instance or watched is self:
                 self._schedule_runtime_theme_refresh()
+        if watched is self.scroll_area.viewport() and event_type in (
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+        ):
+            self._schedule_block_width_constraints_refresh()
+            self._schedule_dialogue_editor_visibility_update()
 
         if event_type == QEvent.Type.MouseButtonPress:
             if not isinstance(event, QMouseEvent):
