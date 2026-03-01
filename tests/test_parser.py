@@ -461,6 +461,28 @@ class ParserTests(unittest.TestCase):
             ["My, my, [兄]-chan."],
         )
 
+    def test_parse_tyrano_script_file_strips_leading_indent_from_dialogue_lines(self) -> None:
+        source = (
+            "#妹\n"
+            "    You're not done yet?[r]\n"
+            "\tWhat, still going?[p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_indented_dialogue.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        )
+        self.assertEqual(dialogue_segment.lines, ["You're not done yet?", "What, still going?"])
+        self.assertEqual(
+            getattr(dialogue_segment, "tyrano_line_prefixes", ()),
+            ("    ", "\t"),
+        )
+
     def test_parse_tyrano_script_file_extracts_markerless_text_inside_conditional_dialogue_branch(self) -> None:
         source = (
             "#妹\n"

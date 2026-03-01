@@ -625,6 +625,31 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertNotIn("[tb_start_text", rebuilt)
         self.assertNotIn("[_tb_end_text]", rebuilt)
 
+    def test_apply_session_to_json_preserves_tyrano_dialogue_line_indentation_prefixes(self) -> None:
+        harness = _Harness()
+        source = (
+            "#妹\n"
+            "    You're not done yet?[r]\n"
+            "\tWhat, still going?[p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_plain_indented.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        )
+        self.assertEqual(dialogue_segment.lines, ["You're not done yet?", "What, still going?"])
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("    You're not done yet?[r]", rebuilt)
+        self.assertIn("\tWhat, still going?[p]", rebuilt)
+
     def test_apply_session_to_json_updates_markerless_conditional_dialogue_branch_text(self) -> None:
         harness = _Harness()
         source = (

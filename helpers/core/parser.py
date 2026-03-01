@@ -89,6 +89,7 @@ _TYRANO_ISCRIPT_START_RE = re.compile(r"^\[\s*iscript(?:\s+[^\]]*)?\s*\]$", re.I
 _TYRANO_ISCRIPT_END_RE = re.compile(r"^\[\s*endscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
 _TYRANO_FLOW_OPEN_TAG_RE = re.compile(r"^\[\s*(?:if|elsif|else)\b[^\]]*\]$", re.IGNORECASE)
 _TYRANO_FLOW_CLOSE_TAG_RE = re.compile(r"^\[\s*(?:elsif|else|endif)\b[^\]]*\]$", re.IGNORECASE)
+_TYRANO_LEADING_INDENT_RE = re.compile(r"^[ \t]+")
 _TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE = re.compile(r"\b(?P<lhs>[A-Za-z_$][\w$.]*)\s*=\s*")
 _TYRANO_SCRIPT_OBJECT_PROPERTY_PREFIX_RE = re.compile(
     r"(?P<key>[A-Za-z_$][\w$]*|\"[^\"]+\"|'[^']+')\s*:\s*"
@@ -353,6 +354,16 @@ def _replace_tyrano_attribute_line_breaks_with_newlines(text: str) -> str:
         return ""
     inline_normalized = _replace_tyrano_inline_line_breaks_with_newlines(text)
     return inline_normalized.replace("\\n", "\n")
+
+
+def _split_tyrano_leading_indent(text: str) -> tuple[str, str]:
+    if not text:
+        return "", ""
+    match = _TYRANO_LEADING_INDENT_RE.match(text)
+    if match is None:
+        return "", text
+    prefix = match.group(0)
+    return prefix, text[len(prefix):]
 
 
 def _is_tyrano_iscript_start_line(line: str) -> bool:
@@ -965,6 +976,7 @@ def _build_tyrano_dialogue_segments(path: Path, data: dict[str, Any]) -> list[Di
             text_item_indexes = [item_index for item_index, _ in text_group]
             lines: list[str] = []
             line_suffixes: list[str] = []
+            line_prefixes: list[str] = []
             for _, line in text_group:
                 visible_line, line_suffix = split_tyrano_dialogue_line_and_suffix(line)
                 split_lines, split_suffixes = _split_tyrano_inline_line_breaks(visible_line)
@@ -975,11 +987,14 @@ def _build_tyrano_dialogue_segments(path: Path, data: dict[str, Any]) -> list[Di
                     suffix = split_suffixes[split_index]
                     if split_index == len(split_lines) - 1:
                         suffix = f"{suffix}{line_suffix}"
-                    lines.append(split_line)
+                    line_prefix, normalized_line = _split_tyrano_leading_indent(split_line)
+                    lines.append(normalized_line)
                     line_suffixes.append(suffix)
+                    line_prefixes.append(line_prefix)
             if not lines:
                 lines = [""]
                 line_suffixes = [""]
+                line_prefixes = [""]
             uid = f"{path.name}:K:{block_index}"
             block_index += 1
             segment = DialogueSegment(
@@ -995,6 +1010,7 @@ def _build_tyrano_dialogue_segments(path: Path, data: dict[str, Any]) -> list[Di
             setattr(segment, "tyrano_speaker_item_index", speaker_item_index)
             setattr(segment, "tyrano_text_item_indexes", tuple(text_item_indexes))
             setattr(segment, "tyrano_line_suffixes", tuple(line_suffixes))
+            setattr(segment, "tyrano_line_prefixes", tuple(line_prefixes))
             # Backward-compatible alias used by older save logic paths.
             setattr(segment, "tyrano_editable_item_indexes", tuple(text_item_indexes))
             segments.append(segment)

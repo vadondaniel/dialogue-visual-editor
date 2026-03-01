@@ -65,6 +65,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
     _TRAILING_COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]\s*$")
     _TYRANO_PAGE_BREAK_TAG_RE = re.compile(r"\[\s*p(?:\s+[^\]]*)?\s*\]", re.IGNORECASE)
     _TYRANO_INLINE_BREAK_TAG_RE = re.compile(r"\[\s*r\s*\]", re.IGNORECASE)
+    _TYRANO_LEADING_INDENT_RE = re.compile(r"^[ \t]+")
     _TYRANO_END_NAME_OVERRIDE_START = "// __DVE_END_NAME_MAP_START__"
     _TYRANO_END_NAME_OVERRIDE_END = "// __DVE_END_NAME_MAP_END__"
     _JAPANESE_CHAR_RE = re.compile(
@@ -1484,6 +1485,26 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             for suffix in suffixes_raw
         ]
 
+    @staticmethod
+    def _segment_tyrano_line_prefixes(segment: DialogueSegment) -> list[str]:
+        prefixes_raw = getattr(segment, "tyrano_line_prefixes", ())
+        if not isinstance(prefixes_raw, (list, tuple)):
+            return []
+        return [
+            prefix if isinstance(prefix, str) else ""
+            for prefix in prefixes_raw
+        ]
+
+    @classmethod
+    def _split_tyrano_leading_indent(cls, text: str) -> tuple[str, str]:
+        if not text:
+            return "", ""
+        match = cls._TYRANO_LEADING_INDENT_RE.match(text)
+        if match is None:
+            return "", text
+        prefix = match.group(0)
+        return prefix, text[len(prefix):]
+
     @classmethod
     def _fallback_tyrano_suffix_for_new_line(cls, stored_suffixes: list[str]) -> str:
         if len(stored_suffixes) == 1:
@@ -1501,6 +1522,15 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 return suffix
         return ""
 
+    @staticmethod
+    def _fallback_tyrano_prefix_for_new_line(stored_prefixes: list[str]) -> str:
+        if len(stored_prefixes) == 1:
+            return stored_prefixes[0]
+        for prefix in stored_prefixes:
+            if prefix:
+                return prefix
+        return ""
+
     @classmethod
     def _render_tyrano_segment_lines_for_save(
         cls,
@@ -1508,7 +1538,9 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         normalized_lines: list[str],
     ) -> tuple[list[str], list[str]]:
         stored_suffixes = cls._segment_tyrano_line_suffixes(segment)
+        stored_prefixes = cls._segment_tyrano_line_prefixes(segment)
         fallback_suffix = cls._fallback_tyrano_suffix_for_new_line(stored_suffixes)
+        fallback_prefix = cls._fallback_tyrano_prefix_for_new_line(stored_prefixes)
 
         prepared_lines: list[tuple[str, str]] = []
         for line_index, raw_line in enumerate(normalized_lines):
@@ -1517,11 +1549,17 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 suffix = stored_suffixes[line_index] or inline_suffix
             else:
                 suffix = inline_suffix or fallback_suffix
+            line_prefix = (
+                stored_prefixes[line_index]
+                if line_index < len(stored_prefixes)
+                else fallback_prefix
+            )
             split_lines = split_lines_preserve_empty(line_text)
             if len(split_lines) <= 1:
-                prepared_lines.append((line_text, suffix))
+                prepared_lines.append((f"{line_prefix}{line_text}", suffix))
                 continue
-            for split_line in split_lines[:-1]:
+            prepared_lines.append((f"{line_prefix}{split_lines[0]}", "[r]"))
+            for split_line in split_lines[1:-1]:
                 prepared_lines.append((split_line, "[r]"))
             prepared_lines.append((split_lines[-1], suffix))
 
@@ -1688,29 +1726,34 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if body_item.get("kind") == "text"
             ]
 
-            segment_lines_payload: list[tuple[DialogueSegment, list[str], list[str]]] = []
+            segment_lines_payload: list[tuple[DialogueSegment, list[str], list[str], list[str]]] = []
             for _, segment in chunk_segments_sorted:
                 normalized_lines = self._normalized_tyrano_segment_lines(segment)
                 rendered_lines, used_suffixes = self._render_tyrano_segment_lines_for_save(
                     segment,
                     normalized_lines,
                 )
-                segment_lines_payload.append((segment, rendered_lines, used_suffixes))
+                used_prefixes: list[str] = []
+                for rendered_line in rendered_lines:
+                    line_text, _ = split_tyrano_dialogue_line_and_suffix(rendered_line)
+                    line_prefix, _ = self._split_tyrano_leading_indent(line_text)
+                    used_prefixes.append(line_prefix)
+                segment_lines_payload.append((segment, rendered_lines, used_suffixes, used_prefixes))
 
             has_any_non_blank_lines = any(
                 any(line != "" for line in lines)
-                for _, lines, _ in segment_lines_payload
+                for _, lines, _, _ in segment_lines_payload
             )
             replacement_items: list[dict[str, str]] = []
-            segment_line_counts: list[tuple[DialogueSegment, int, list[str]]] = []
+            segment_line_counts: list[tuple[DialogueSegment, int, list[str], list[str]]] = []
             if existing_text_indexes or has_any_non_blank_lines:
-                for segment, lines, used_suffixes in segment_lines_payload:
-                    segment_line_counts.append((segment, len(lines), used_suffixes))
+                for segment, lines, used_suffixes, used_prefixes in segment_lines_payload:
+                    segment_line_counts.append((segment, len(lines), used_suffixes, used_prefixes))
                     for line in lines:
                         replacement_items.append({"kind": "text", "line": line})
             else:
-                for segment, _, _ in segment_lines_payload:
-                    segment_line_counts.append((segment, 0, []))
+                for segment, _, _, _ in segment_lines_payload:
+                    segment_line_counts.append((segment, 0, [], []))
 
             insert_at = len(body_items)
             new_body_items: list[dict[str, str]] = []
@@ -1747,11 +1790,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     break
 
             next_text_index = insert_at
-            for segment, line_count, suffixes in segment_line_counts:
+            for segment, line_count, suffixes, prefixes in segment_line_counts:
                 text_indexes = tuple(range(next_text_index, next_text_index + line_count))
                 setattr(segment, "tyrano_speaker_item_index", updated_speaker_item_index)
                 setattr(segment, "tyrano_text_item_indexes", text_indexes)
                 setattr(segment, "tyrano_line_suffixes", tuple(suffixes))
+                setattr(segment, "tyrano_line_prefixes", tuple(prefixes))
                 setattr(segment, "tyrano_editable_item_indexes", text_indexes)
                 next_text_index += line_count
 
