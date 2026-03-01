@@ -301,23 +301,29 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         segments: list[DialogueSegment],
     ) -> list[str]:
         chunks: list[str] = []
+        first_segment_lines: list[str] = []
         for segment in segments:
-            chunk = "\n".join(self._consistency_translation_lines_for_segment(segment)).strip()
+            segment_lines = self._consistency_translation_lines_for_segment(segment)
+            if not first_segment_lines:
+                first_segment_lines = list(segment_lines)
+            chunk = "\n".join(segment_lines)
             chunks.append(chunk)
-        if len(segments) == 1 and chunks and not chunks[0].strip():
+        if len(segments) == 1 and chunks and not any(
+            line.strip() for line in first_segment_lines
+        ):
             alias_fallback = self._consistency_effective_translation_text(
                 session,
                 segments[0],
             )
             if alias_fallback.strip():
-                chunks[0] = alias_fallback.strip()
+                chunks[0] = alias_fallback
         return chunks
 
     def _consistency_translation_text_for_chunks(
         self,
         chunks: list[str],
     ) -> str:
-        return "\n".join(chunks).strip()
+        return "\n".join(chunks).rstrip("\n")
 
     def _consistency_target_display_text_for_chunks(
         self,

@@ -617,6 +617,37 @@ class AuditConsistencyMixinTests(unittest.TestCase):
         translations = {str(entry.get("translation", "")) for entry in groups[0]["entries"]}
         self.assertEqual(translations, {"Alpha\nBeta"})
 
+    def test_variant_count_treats_leading_whitespace_as_different(self) -> None:
+        harness = _Harness()
+        path = Path("Map023.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment(
+                    "a1",
+                    "同一文",
+                    "\\C[14]Press the confirm button.\\C[0]",
+                ),
+                _segment(
+                    "a2",
+                    "同一文",
+                    "              \\C[14]Press the confirm button.\\C[0]",
+                ),
+            ],
+        )
+
+        groups = harness._collect_audit_consistency_groups(
+            only_inconsistent=False,
+            dialogue_only=True,
+            sort_mode="source_order",
+        )
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(int(groups[0]["variant_count"]), 2)
+
     def test_target_display_text_for_chunks_adds_divider_padding(self) -> None:
         harness = _Harness()
 
