@@ -118,6 +118,34 @@ class _Harness(AuditConsistencyMixin):
             return raw_field.strip().lower()
         return "name"
 
+    def _segment_source_lines_for_translation(self, segment: DialogueSegment) -> list[str]:
+        lines = self._segment_source_lines_for_display(segment)
+        if bool(getattr(segment, "consistency_inferred_speaker", False)):
+            if len(lines) > 1:
+                return list(lines[1:])
+            return [""]
+        return list(lines) if lines else [""]
+
+    def _segment_translation_lines_for_translation(self, segment: DialogueSegment) -> list[str]:
+        lines = self._normalize_translation_lines(segment.translation_lines)
+        if bool(getattr(segment, "consistency_inferred_speaker", False)):
+            if len(lines) > 1:
+                return list(lines[1:])
+            return [""]
+        return list(lines) if lines else [""]
+
+    def _compose_translation_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        visible_lines: list[str],
+    ) -> list[str]:
+        normalized_visible = self._normalize_translation_lines(visible_lines)
+        if not bool(getattr(segment, "consistency_inferred_speaker", False)):
+            return normalized_visible
+        source_lines = self._segment_source_lines_for_display(segment)
+        prefix = source_lines[0] if source_lines else ""
+        return [prefix] + normalized_visible
+
     def _actor_name_maps(self) -> tuple[dict[int, str], dict[int, str]]:
         jp_by_id: dict[int, str] = {}
         en_by_id: dict[int, str] = {}
@@ -481,6 +509,32 @@ class AuditConsistencyMixinTests(unittest.TestCase):
         self.assertEqual(int(groups[0]["entry_count"]), 2)
         self.assertEqual(str(groups[0].get("label_hint", "")), "")
 
+    def test_collect_groups_excludes_inferred_speaker_from_source_and_translation(self) -> None:
+        harness = _Harness()
+        path = Path("Map010.json")
+        harness.file_paths = [path]
+        first = _segment("d1", "ユウカ\nこんにちは", "Yuka\nHello", segment_kind="dialogue")
+        second = _segment("d2", "タロウ\nこんにちは", "Taro\nHello", segment_kind="dialogue")
+        setattr(first, "consistency_inferred_speaker", True)
+        setattr(second, "consistency_inferred_speaker", True)
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[first, second],
+        )
+
+        groups = harness._collect_audit_consistency_groups(
+            only_inconsistent=False,
+            dialogue_only=True,
+            sort_mode="source_order",
+        )
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(str(groups[0].get("source_text", "")), "こんにちは")
+        translations = {str(entry.get("translation", "")) for entry in groups[0]["entries"]}
+        self.assertEqual(translations, {"Hello"})
+
     def test_consistency_entry_label_includes_non_name_field_suffix(self) -> None:
         harness = _Harness()
         path = Path("Actors.json")
@@ -578,6 +632,85 @@ class AuditConsistencyMixinTests(unittest.TestCase):
         harness._on_audit_consistency_entry_selected()
 
         self.assertEqual(harness.audit_consistency_target_edit.toPlainText(), "")
+
+    def test_apply_group_preserves_inferred_speaker_storage_line(self) -> None:
+        harness = _Harness()
+        path = Path("Map011.json")
+        segment = _segment("d1", "ユウカ\nこんにちは", "Yuka\nHi", segment_kind="dialogue")
+        setattr(segment, "consistency_inferred_speaker", True)
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[segment],
+        )
+        harness.current_path = None
+        harness.selected_segment_uid = ""
+
+        class _StatusBar:
+            def __init__(self) -> None:
+                self.messages: list[str] = []
+
+            def showMessage(self, message: str) -> None:
+                self.messages.append(message)
+
+        class _FakeItem:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._payload = payload
+
+            def data(self, _role: object) -> object:
+                return self._payload
+
+        class _FakeGroups:
+            def __init__(self, item: _FakeItem) -> None:
+                self._item = item
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+            def currentRow(self) -> int:
+                return 0
+
+            def count(self) -> int:
+                return 1
+
+            def item(self, _index: int) -> _FakeItem:
+                return self._item
+
+        class _FakeTargetEdit:
+            def __init__(self, value: str) -> None:
+                self._value = value
+
+            def toPlainText(self) -> str:
+                return self._value
+
+            def setPlainText(self, value: str) -> None:
+                self._value = value
+
+        payload = {
+            "source_text": "こんにちは",
+            "entries": [
+                {"path": str(path), "uid": "d1", "entry": "Block 1", "translation": "Hi"},
+            ],
+        }
+        harness.audit_consistency_groups_list = _FakeGroups(_FakeItem(payload))
+        harness.audit_consistency_target_edit = _FakeTargetEdit("Hello")
+        harness.audit_consistency_entries_list = None
+        status_bar = _StatusBar()
+        harness.statusBar = lambda: status_bar  # type: ignore[method-assign]
+        harness._refresh_dirty_state = lambda _session: None  # type: ignore[method-assign]
+        harness._invalidate_audit_caches = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_sanitize_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_control_mismatch_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_name_consistency_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_translator_detail_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_consistency_panel = lambda preferred_source=None, preferred_row=None: None  # type: ignore[method-assign]
+        harness._focus_audit_consistency_groups_list = lambda: None  # type: ignore[method-assign]
+        harness._render_session = lambda _session, **_kwargs: None  # type: ignore[method-assign]
+
+        harness._apply_audit_consistency_target_to_group(advance_to_next=False)
+
+        self.assertEqual(segment.translation_lines, ["ユウカ", "Hello"])
 
     def test_neighbor_preview_includes_neighbor_lines_and_speakers(self) -> None:
         harness = _Harness()
