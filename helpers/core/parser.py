@@ -95,18 +95,9 @@ _TYRANO_JS_TRANSLATABLE_OBJECT_KEYS: set[str] = {
     "name",
     "fullname",
     "id",
-    "text",
-    "title",
-    "label",
-    "e",
 }
-_TYRANO_JS_TRANSLATABLE_ASSIGNMENT_SUFFIXES: tuple[str, ...] = (
-    ".name",
-    ".fullname",
-    ".text",
-    ".title",
-    ".label",
-)
+_TYRANO_JS_TRANSLATABLE_ASSIGNMENT_SUFFIXES: tuple[str, ...] = ()
+_TYRANO_END_LIST_DECL_RE = re.compile(r"\bend_list\b\s*=", re.IGNORECASE)
 _NOTE_JAPANESE_CHAR_RE = re.compile(
     r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
     r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF66-\uFF9F]"
@@ -417,15 +408,47 @@ def _normalize_tyrano_script_string_key(raw_key: str) -> str:
 def _should_extract_tyrano_js_script_string(
     candidate_kind: str,
     candidate_key: str,
+    *,
+    in_end_list_context: bool,
 ) -> bool:
     key = candidate_key.strip().lower()
     if not key:
         return False
     if candidate_kind == "object_property":
+        if key == "id":
+            return in_end_list_context
         return key in _TYRANO_JS_TRANSLATABLE_OBJECT_KEYS
     if candidate_kind == "assignment":
         return key.endswith(_TYRANO_JS_TRANSLATABLE_ASSIGNMENT_SUFFIXES)
     return False
+
+
+def _js_bracket_delta_outside_strings(line: str) -> int:
+    delta = 0
+    in_string = False
+    string_quote = ""
+    escaping = False
+    for char in line:
+        if in_string:
+            if escaping:
+                escaping = False
+                continue
+            if char == "\\":
+                escaping = True
+                continue
+            if char == string_quote:
+                in_string = False
+            continue
+        if char in {'"', "'"}:
+            in_string = True
+            string_quote = char
+            continue
+        if char == "[":
+            delta += 1
+            continue
+        if char == "]":
+            delta -= 1
+    return delta
 
 
 def _group_tyrano_text_items_by_page_break(
@@ -1048,6 +1071,7 @@ def _build_tyrano_script_string_segments(
     text_index = 1
     is_js_file = is_tyrano_js_path(path)
     in_iscript_block = is_js_file
+    end_list_depth = 0
     for chunk_index, chunk in enumerate(chunks):
         if chunk_index in excluded_indexes:
             continue
@@ -1057,6 +1081,11 @@ def _build_tyrano_script_string_segments(
             continue
         line_raw = chunk.get("line")
         line = line_raw if isinstance(line_raw, str) else ""
+        is_end_list_line = False
+        if is_js_file:
+            is_end_list_line = end_list_depth > 0
+            if _TYRANO_END_LIST_DECL_RE.search(line):
+                is_end_list_line = True
         if not is_js_file:
             if _is_tyrano_iscript_start_line(line):
                 in_iscript_block = True
@@ -1068,34 +1097,52 @@ def _build_tyrano_script_string_segments(
             continue
         attr_payload = _extract_tyrano_script_assignment_string_value(line)
         if attr_payload is None:
+            if is_js_file and is_end_list_line:
+                end_list_depth += _js_bracket_delta_outside_strings(line)
+                if end_list_depth < 0:
+                    end_list_depth = 0
             continue
         value_start, value_end, decoded_value, quote_char, candidate_kind, candidate_key = attr_payload
-        if is_js_file and not _should_extract_tyrano_js_script_string(candidate_kind, candidate_key):
-            continue
-        if (not is_js_file) and not _NOTE_JAPANESE_CHAR_RE.search(decoded_value):
-            continue
-        if is_js_file and not decoded_value.strip():
-            continue
-        normalized_text = _replace_tyrano_attribute_line_breaks_with_newlines(
-            decoded_value
-        )
-        lines = split_lines_preserve_empty(normalized_text)
-        uid = f"{path.name}:KS:{text_index}"
-        segment = DialogueSegment(
-            uid=uid,
-            context=f"{path.name} > script_text[{text_index}]",
-            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
-            lines=list(lines),
-            original_lines=list(lines),
-            source_lines=list(lines),
-            segment_kind="tyrano_tag_text",
-        )
-        setattr(segment, "tyrano_chunk_index", chunk_index)
-        setattr(segment, "tyrano_tag_text_span", (value_start, value_end))
-        setattr(segment, "tyrano_tag_text_quote", quote_char)
-        setattr(segment, "tyrano_tag_text_join_mode", "script_string")
-        segments.append(segment)
-        text_index += 1
+        should_collect = True
+        if is_js_file:
+            should_collect = _should_extract_tyrano_js_script_string(
+                candidate_kind,
+                candidate_key,
+                in_end_list_context=is_end_list_line,
+            )
+            if should_collect and not decoded_value.strip():
+                should_collect = False
+        else:
+            should_collect = bool(_NOTE_JAPANESE_CHAR_RE.search(decoded_value))
+        if should_collect:
+            normalized_text = _replace_tyrano_attribute_line_breaks_with_newlines(
+                decoded_value
+            )
+            lines = split_lines_preserve_empty(normalized_text)
+            uid = f"{path.name}:KS:{text_index}"
+            segment = DialogueSegment(
+                uid=uid,
+                context=f"{path.name} > script_text[{text_index}]",
+                code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+                lines=list(lines),
+                original_lines=list(lines),
+                source_lines=list(lines),
+                segment_kind="tyrano_tag_text",
+            )
+            setattr(segment, "tyrano_chunk_index", chunk_index)
+            setattr(segment, "tyrano_tag_text_span", (value_start, value_end))
+            setattr(segment, "tyrano_tag_text_quote", quote_char)
+            setattr(segment, "tyrano_tag_text_join_mode", "script_string")
+            if is_js_file and candidate_kind == "object_property" and candidate_key == "id" and is_end_list_line:
+                # Keep END_LIST ids as stable keys and apply translation via display map.
+                setattr(segment, "tyrano_script_end_list_id_source", decoded_value)
+                setattr(segment, "tyrano_tag_text_join_mode", "script_string_end_id")
+            segments.append(segment)
+            text_index += 1
+        if is_js_file and is_end_list_line:
+            end_list_depth += _js_bracket_delta_outside_strings(line)
+            if end_list_depth < 0:
+                end_list_depth = 0
     return segments
 
 

@@ -65,6 +65,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
     _TRAILING_COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]\s*$")
     _TYRANO_PAGE_BREAK_TAG_RE = re.compile(r"\[\s*p(?:\s+[^\]]*)?\s*\]", re.IGNORECASE)
     _TYRANO_INLINE_BREAK_TAG_RE = re.compile(r"\[\s*r\s*\]", re.IGNORECASE)
+    _TYRANO_END_NAME_OVERRIDE_START = "// __DVE_END_NAME_MAP_START__"
+    _TYRANO_END_NAME_OVERRIDE_END = "// __DVE_END_NAME_MAP_END__"
     _JAPANESE_CHAR_RE = re.compile(
         r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
         r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF66-\uFF9F]"
@@ -1329,6 +1331,78 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             flattened.extend(split_lines_preserve_empty(line))
         return "\n".join(flattened)
 
+    @classmethod
+    def _upsert_tyrano_end_name_override_block(
+        cls,
+        raw_chunks: list[dict[str, Any]],
+        end_name_overrides: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        stripped_chunks: list[dict[str, Any]] = []
+        in_override_block = False
+        for chunk in raw_chunks:
+            if not isinstance(chunk, dict):
+                if not in_override_block:
+                    stripped_chunks.append(chunk)
+                continue
+            kind_raw = chunk.get("kind")
+            kind = kind_raw.strip().lower() if isinstance(kind_raw, str) else ""
+            if kind != "raw_line":
+                if not in_override_block:
+                    stripped_chunks.append(chunk)
+                continue
+            line_raw = chunk.get("line")
+            line = line_raw if isinstance(line_raw, str) else ""
+            marker = line.strip()
+            if marker == cls._TYRANO_END_NAME_OVERRIDE_START:
+                in_override_block = True
+                continue
+            if in_override_block and marker == cls._TYRANO_END_NAME_OVERRIDE_END:
+                in_override_block = False
+                continue
+            if not in_override_block:
+                stripped_chunks.append(chunk)
+
+        if not end_name_overrides:
+            return stripped_chunks
+
+        if stripped_chunks:
+            last_chunk = stripped_chunks[-1]
+            if isinstance(last_chunk, dict):
+                kind_raw = last_chunk.get("kind")
+                kind = kind_raw.strip().lower() if isinstance(kind_raw, str) else ""
+                line_raw = last_chunk.get("line")
+                line = line_raw if isinstance(line_raw, str) else ""
+                if kind == "raw_line" and line.strip():
+                    stripped_chunks.append({"kind": "raw_line", "line": ""})
+
+        block_lines: list[str] = [cls._TYRANO_END_NAME_OVERRIDE_START]
+        block_lines.append("const DVE_END_NAME_MAP = {")
+        for source_id, translated_name in sorted(end_name_overrides.items()):
+            escaped_source = cls._escape_tyrano_tag_attribute_value(source_id, "'")
+            escaped_tl = cls._escape_tyrano_tag_attribute_value(translated_name, "'")
+            block_lines.append(f"    '{escaped_source}': '{escaped_tl}',")
+        block_lines.extend(
+            [
+                "};",
+                "function _dveGetEndDisplayName(id) {",
+                "    return DVE_END_NAME_MAP[id] || id;",
+                "}",
+                "if (typeof getEndDataIndex === 'function') {",
+                "    getEndName = function(id) {",
+                "        const num = getEndDataIndex(id);",
+                "        if (0 > num) {",
+                "            return _dveGetEndDisplayName(id);",
+                "        }",
+                "        return 'END ' + (num + 1) + '：' + _dveGetEndDisplayName(id);",
+                "    };",
+                "}",
+                cls._TYRANO_END_NAME_OVERRIDE_END,
+            ]
+        )
+        for line in block_lines:
+            stripped_chunks.append({"kind": "raw_line", "line": line})
+        return stripped_chunks
+
     @staticmethod
     def _escape_tyrano_config_value(value: str, quote_char: str) -> str:
         escaped = value.replace("\\", "\\\\")
@@ -1731,6 +1805,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 )
             setattr(segment, "tyrano_choice_items", tuple(updated_items))
 
+        end_name_overrides: dict[str, str] = {}
         for segment in session.segments:
             if segment.segment_kind != "tyrano_tag_text":
                 continue
@@ -1770,6 +1845,17 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             )
             join_mode_raw = getattr(segment, "tyrano_tag_text_join_mode", "")
             join_mode = join_mode_raw.strip().lower() if isinstance(join_mode_raw, str) else ""
+            if join_mode == "script_string_end_id":
+                source_id_raw = getattr(segment, "tyrano_script_end_list_id_source", "")
+                source_id = source_id_raw if isinstance(source_id_raw, str) else ""
+                translated_id = (
+                    self._join_tyrano_text_lines_for_script_string(segment.lines)
+                    if segment.lines
+                    else ""
+                ).strip()
+                if source_id and translated_id and translated_id != source_id:
+                    end_name_overrides[source_id] = translated_id
+                continue
             joined_value = (
                 self._join_tyrano_text_lines_for_script_string(segment.lines)
                 if join_mode == "script_string"
@@ -1786,6 +1872,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 segment,
                 "tyrano_tag_text_span",
                 (value_start, value_start + len(escaped_value)),
+            )
+
+        if is_tyrano_js_path(session.path):
+            raw_chunks = self._upsert_tyrano_end_name_override_block(
+                raw_chunks,
+                end_name_overrides,
             )
 
         session.data["__dve_tyrano_script_chunks__"] = raw_chunks

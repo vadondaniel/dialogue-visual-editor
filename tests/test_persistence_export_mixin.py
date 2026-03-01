@@ -724,10 +724,43 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertIn("name        : 'Riku'", rebuilt)
         self.assertIn("fullName    : 'Amamiya Riku'", rebuilt)
-        self.assertIn("id: 'Twins'", rebuilt)
+        self.assertIn("id: '双子'", rebuilt)
         self.assertNotIn("name        : '璃久'", rebuilt)
         self.assertNotIn("fullName    : '天宮 璃久'", rebuilt)
-        self.assertNotIn("id: '双子'", rebuilt)
+        self.assertIn("// __DVE_END_NAME_MAP_START__", rebuilt)
+        self.assertIn("'双子': 'Twins'", rebuilt)
+        self.assertIn("getEndName = function(id)", rebuilt)
+
+    def test_apply_session_to_json_removes_tyrano_end_name_override_when_no_end_id_translation(self) -> None:
+        harness = _Harness()
+        source = (
+            "const END_LIST = [{ id: '双子' }];\n"
+            "\n"
+            "// __DVE_END_NAME_MAP_START__\n"
+            "const DVE_END_NAME_MAP = {\n"
+            "    '双子': 'Twins',\n"
+            "};\n"
+            "// __DVE_END_NAME_MAP_END__\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "const.js"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and "script_text[" in segment.context
+        ]
+        self.assertEqual(len(segments), 1)
+        segments[0].lines = ["双子"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertNotIn("__DVE_END_NAME_MAP_START__", rebuilt)
+        self.assertNotIn("DVE_END_NAME_MAP", rebuilt)
 
     def test_apply_session_to_json_updates_tyrano_multi_page_chunk(self) -> None:
         harness = _Harness()

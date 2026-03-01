@@ -580,6 +580,10 @@ class ParserTests(unittest.TestCase):
             [segment.lines[0] for segment in script_text_segments],
             ["璃久", "天宮 璃久", "双子", "妹の妹"],
         )
+        self.assertEqual(
+            [getattr(segment, "tyrano_tag_text_join_mode", "") for segment in script_text_segments],
+            ["script_string", "script_string", "script_string_end_id", "script_string_end_id"],
+        )
         rebuilt_source = tyrano_script_source_from_data(session.data)
         self.assertEqual(rebuilt_source, source)
 
