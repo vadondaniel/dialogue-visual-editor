@@ -671,9 +671,12 @@ class PersistenceExportMixinTests(unittest.TestCase):
             segment
             for segment in session.segments
             if segment.segment_kind == "tyrano_dialogue"
-            and segment.lines == ["も"]
+            and "も" in segment.lines
         )
-        conditional_segment.lines = ["too"]
+        conditional_segment.lines = [
+            "too" if line == "も" else line
+            for line in conditional_segment.lines
+        ]
 
         harness._apply_session_to_json(session)
         rebuilt = tyrano_script_source_from_data(session.data)

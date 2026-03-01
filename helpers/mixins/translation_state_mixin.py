@@ -161,9 +161,54 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         )
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _legacy_tyrano_dialogue_source_text_for_hash(segment: DialogueSegment) -> str:
+        if segment.segment_kind != "tyrano_dialogue":
+            return ""
+        prefixes_raw = getattr(segment, "tyrano_line_prefixes", ())
+        if not isinstance(prefixes_raw, (list, tuple)):
+            return ""
+        prefixes = [
+            prefix if isinstance(prefix, str) else ""
+            for prefix in prefixes_raw
+        ]
+        if not any(prefixes):
+            return ""
+        lines_raw = list(segment.lines or [""])
+        lines = [
+            line if isinstance(line, str) else ("" if line is None else str(line))
+            for line in lines_raw
+        ]
+        prefixed_lines: list[str] = []
+        for line_index, line_text in enumerate(lines):
+            prefix = prefixes[line_index] if line_index < len(prefixes) else ""
+            prefixed_lines.append(f"{prefix}{line_text}")
+        return "\n".join(prefixed_lines)
+
     def _segment_source_hash_candidates(self, segment: DialogueSegment) -> list[str]:
         current_hash = self._segment_source_hash(segment)
         candidates = [current_hash]
+        legacy_tyrano_source_text = self._legacy_tyrano_dialogue_source_text_for_hash(
+            segment
+        )
+        if legacy_tyrano_source_text:
+            legacy_tyrano_payload = "\n".join(
+                [
+                    segment.segment_kind,
+                    segment.context,
+                    str(segment.background),
+                    str(segment.position),
+                    segment.face_name,
+                    str(segment.face_index),
+                    segment.speaker_name,
+                    legacy_tyrano_source_text,
+                ]
+            )
+            legacy_tyrano_hash = hashlib.sha1(
+                legacy_tyrano_payload.encode("utf-8")
+            ).hexdigest()
+            if legacy_tyrano_hash not in candidates:
+                candidates.append(legacy_tyrano_hash)
         # Backward compatibility: older script-message parsing did not capture face
         # info, so saved state hashes used empty face values.
         if segment.segment_kind == "script_message":
@@ -909,6 +954,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             )
             return
 
+        source_segments_in_order: list[DialogueSegment] = []
         source_segments_by_tl_uid: dict[str, DialogueSegment] = {}
         map_display_segments: list[DialogueSegment] = []
         for segment in session.segments:
@@ -917,11 +963,16 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             if segment.segment_kind == "map_display_name":
                 map_display_segments.append(segment)
                 continue
+            source_segments_in_order.append(segment)
             if segment.tl_uid:
                 source_segments_by_tl_uid[segment.tl_uid] = segment
 
         ordered_segments: list[DialogueSegment] = []
-        appended_source_uids: set[str] = set()
+        tl_only_segments_by_uid: dict[str, DialogueSegment] = {}
+        source_tl_uids = set(source_segments_by_tl_uid.keys())
+        tl_only_before_source_uid: dict[str, list[DialogueSegment]] = {}
+        tl_only_after_source_uid: dict[str, list[DialogueSegment]] = {}
+        tl_only_suffix_segments: list[DialogueSegment] = []
 
         def template_for_translation_only() -> Optional[DialogueSegment]:
             for candidate in reversed(ordered_segments):
@@ -933,35 +984,65 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             return session.segments[0] if session.segments else None
 
         for tl_uid in order:
-            source_segment = source_segments_by_tl_uid.get(tl_uid)
-            if source_segment is not None:
-                if source_segment.uid not in appended_source_uids:
-                    ordered_segments.append(source_segment)
-                    appended_source_uids.add(source_segment.uid)
-                continue
-
             entry = entries.get(tl_uid)
             if not isinstance(entry, dict):
                 continue
             if not bool(entry.get("translation_only")):
                 continue
-            tl_only_segment = self._build_translation_only_segment_from_state(
+            if tl_uid in tl_only_segments_by_uid:
+                continue
+            tl_only_segments_by_uid[tl_uid] = self._build_translation_only_segment_from_state(
                 session,
                 tl_uid,
                 entry,
                 template_for_translation_only(),
             )
-            ordered_segments.append(tl_only_segment)
 
-        for source_segment in session.segments:
-            if source_segment.translation_only:
+        for order_index, tl_uid in enumerate(order):
+            tl_only_segment = tl_only_segments_by_uid.get(tl_uid)
+            if tl_only_segment is None:
                 continue
-            if source_segment.segment_kind == "map_display_name":
+
+            anchor_before = ""
+            for scan_uid in reversed(order[:order_index]):
+                if scan_uid in source_tl_uids:
+                    anchor_before = scan_uid
+                    break
+
+            if anchor_before:
+                tl_only_after_source_uid.setdefault(anchor_before, []).append(
+                    tl_only_segment
+                )
                 continue
-            if source_segment.uid in appended_source_uids:
+
+            anchor_after = ""
+            for scan_uid in order[order_index + 1:]:
+                if scan_uid in source_tl_uids:
+                    anchor_after = scan_uid
+                    break
+
+            if anchor_after:
+                tl_only_before_source_uid.setdefault(anchor_after, []).append(
+                    tl_only_segment
+                )
                 continue
+
+            tl_only_suffix_segments.append(tl_only_segment)
+
+        for source_segment in source_segments_in_order:
+            if source_segment.tl_uid:
+                for tl_only_segment in tl_only_before_source_uid.get(
+                    source_segment.tl_uid, []
+                ):
+                    ordered_segments.append(tl_only_segment)
             ordered_segments.append(source_segment)
-            appended_source_uids.add(source_segment.uid)
+            if source_segment.tl_uid:
+                for tl_only_segment in tl_only_after_source_uid.get(
+                    source_segment.tl_uid, []
+                ):
+                    ordered_segments.append(tl_only_segment)
+
+        ordered_segments.extend(tl_only_suffix_segments)
 
         session.segments = map_display_segments + ordered_segments
         self._ensure_unique_session_segment_uids(session)

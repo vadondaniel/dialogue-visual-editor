@@ -415,6 +415,48 @@ class TranslationStateMixinTests(unittest.TestCase):
         self.assertEqual(session.segments[0].translation_lines, ["TL line"])
         self.assertEqual(session.segments[0].tl_uid, "T_legacy")
 
+    def test_apply_state_tyrano_dialogue_legacy_indented_hash_still_matches(self) -> None:
+        harness = _Harness()
+        segment = _segment("scene.ks:K:1", "You are not done yet?", "Narrator")
+        segment.segment_kind = "tyrano_dialogue"
+        setattr(segment, "tyrano_line_prefixes", ("    ",))
+        session = FileSession(
+            path=Path("scene.ks"),
+            data=[],
+            bundles=[],
+            segments=[segment],
+        )
+        legacy_payload = "\n".join(
+            [
+                segment.segment_kind,
+                segment.context,
+                str(segment.background),
+                str(segment.position),
+                segment.face_name,
+                str(segment.face_index),
+                segment.speaker_name,
+                "    You are not done yet?",
+            ]
+        )
+        legacy_hash = hashlib.sha1(legacy_payload.encode("utf-8")).hexdigest()
+        harness.translation_state["files"] = {
+            "scene.ks": {
+                "order": ["T_tyrano_legacy"],
+                "entries": {
+                    "T_tyrano_legacy": {
+                        "source_uid": segment.uid,
+                        "source_hash": legacy_hash,
+                        "translation_lines": ["TL line"],
+                    }
+                },
+            }
+        }
+
+        harness._apply_translation_state_to_session(session)
+
+        self.assertEqual(session.segments[0].translation_lines, ["TL line"])
+        self.assertEqual(session.segments[0].tl_uid, "T_tyrano_legacy")
+
     def test_apply_state_name_index_prefers_source_uid_mapping(self) -> None:
         harness = _Harness()
         seg_a = _segment("States.json:S:1:message1", "JP A")
@@ -549,6 +591,47 @@ class TranslationStateMixinTests(unittest.TestCase):
         )
         self.assertNotEqual(inserted_segment.uid, seg_1.uid)
         self.assertTrue(inserted_segment.uid.startswith("Map010.json:TI:"))
+
+    def test_apply_state_keeps_source_order_when_saved_order_lacks_new_middle_segment(self) -> None:
+        harness = _Harness()
+        seg_1 = _segment("Map020.json:L0:0", "JP 1", "Hero")
+        seg_new = _segment("Map020.json:L0:1", "JP NEW", "Hero")
+        seg_2 = _segment("Map020.json:L0:2", "JP 2", "Hero")
+        session = FileSession(
+            path=Path("Map020.json"),
+            data=[],
+            bundles=[],
+            segments=[seg_1, seg_new, seg_2],
+        )
+        hash_1 = harness._segment_source_hash(seg_1)
+        hash_2 = harness._segment_source_hash(seg_2)
+        harness.translation_state["files"] = {
+            "Map020.json": {
+                "order": ["T1", "T2"],
+                "entries": {
+                    "T1": {
+                        "source_uid": seg_1.uid,
+                        "source_hash": hash_1,
+                        "translation_lines": ["TL 1"],
+                    },
+                    "T2": {
+                        "source_uid": seg_2.uid,
+                        "source_hash": hash_2,
+                        "translation_lines": ["TL 2"],
+                    },
+                },
+            }
+        }
+
+        harness._apply_translation_state_to_session(session)
+
+        self.assertEqual(
+            [segment.uid for segment in session.segments if not segment.translation_only],
+            [seg_1.uid, seg_new.uid, seg_2.uid],
+        )
+        self.assertEqual(session.segments[0].translation_lines, ["TL 1"])
+        self.assertEqual(session.segments[1].translation_lines, [""])
+        self.assertEqual(session.segments[2].translation_lines, ["TL 2"])
 
     def test_translation_state_for_name_index_clears_speaker_fields(self) -> None:
         harness = _Harness()

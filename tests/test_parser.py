@@ -432,6 +432,43 @@ class ParserTests(unittest.TestCase):
             ("[r]", "[p]"),
         )
 
+    def test_parse_tyrano_script_file_handles_indented_conditional_dialogue_with_standalone_markers(self) -> None:
+        source = (
+            " #妹\n"
+            "\n"
+            "    お兄ちゃんを12歳まで若返らせたんだよ！\n"
+            "\n"
+            "    [if exp=\"'通常' == getCharaStatus('妹', 'base')\"]\n"
+            "\n"
+            "        [r]\n"
+            "\n"
+            "        私と同い年になっちゃったね♪\n"
+            "\n"
+            "    [endif]\n"
+            "\n"
+            "    [p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_indented_conditional.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(len(dialogue_segments), 1)
+        self.assertEqual(dialogue_segments[0].speaker_name, "妹")
+        self.assertEqual(
+            dialogue_segments[0].lines,
+            ["お兄ちゃんを12歳まで若返らせたんだよ！", "私と同い年になっちゃったね♪"],
+        )
+        self.assertEqual(
+            getattr(dialogue_segments[0], "tyrano_line_suffixes", ()),
+            ("[r]", "[p]"),
+        )
+
     def test_parse_tyrano_script_file_accepts_bracket_prefixed_variable_dialogue_lines(self) -> None:
         source = (
             "#兄\n"
@@ -505,8 +542,9 @@ class ParserTests(unittest.TestCase):
             if segment.segment_kind == "tyrano_dialogue"
         ]
         dialogue_lines = [segment.lines for segment in dialogue_segments]
-        self.assertIn(["も"], dialogue_lines)
-        self.assertIn(["D"], dialogue_lines)
+        flattened_lines = [line for segment_lines in dialogue_lines for line in segment_lines]
+        self.assertIn("も", flattened_lines)
+        self.assertIn("D", flattened_lines)
 
     def test_parse_tyrano_script_file_ignores_markerless_conditional_code_blocks(self) -> None:
         source = (

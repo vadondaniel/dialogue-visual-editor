@@ -81,6 +81,10 @@ _TYRANO_CONFIG_TITLE_QUOTE_KEY = "__dve_tyrano_config_title_quote__"
 _MAP_FILE_NAME_RE = re.compile(r"^map\d+\.json$", re.IGNORECASE)
 _TYRANO_PAGE_BREAK_TAG_RE = re.compile(r"\[\s*p(?:\s+[^\]]*)?\s*\]", re.IGNORECASE)
 _TYRANO_INLINE_LINE_BREAK_TAG_RE = re.compile(r"\[\s*r\s*\]", re.IGNORECASE)
+_TYRANO_STANDALONE_DIALOGUE_MARKER_RE = re.compile(
+    r"^\[\s*(?:p(?:\s+[^\]]*)?|r)\s*\]$",
+    re.IGNORECASE,
+)
 _TYRANO_TRAILING_DIALOGUE_MARKERS_RE = re.compile(
     r"(?:\s*\[\s*(?:p|r)\s*\]\s*)+$",
     re.IGNORECASE,
@@ -356,6 +360,15 @@ def _replace_tyrano_attribute_line_breaks_with_newlines(text: str) -> str:
     return inline_normalized.replace("\\n", "\n")
 
 
+def _extract_tyrano_standalone_dialogue_marker(line: str) -> str:
+    stripped = line.strip()
+    if not stripped:
+        return ""
+    if _TYRANO_STANDALONE_DIALOGUE_MARKER_RE.match(stripped) is None:
+        return ""
+    return stripped
+
+
 def _split_tyrano_leading_indent(text: str) -> tuple[str, str]:
     if not text:
         return "", ""
@@ -568,34 +581,94 @@ def _collect_tyrano_implicit_dialogue_block(
     # lines without wrapping `[tb_start_text]` tags.
     if stripped_start.startswith("#"):
         body_items: list[dict[str, str]] = [{"kind": "speaker", "line": start_line}]
+        has_text_items = False
         has_dialogue_marker = False
         next_index = start_index + 1
         while next_index < len(source_lines):
             candidate = source_lines[next_index]
+            stripped_candidate = candidate.strip()
+            if not stripped_candidate:
+                body_items.append({"kind": "raw", "line": candidate})
+                next_index += 1
+                continue
+            if stripped_candidate.startswith("#"):
+                break
+            standalone_marker = _extract_tyrano_standalone_dialogue_marker(candidate)
+            if standalone_marker:
+                text_item_index: int | None = None
+                for item_index in range(len(body_items) - 1, -1, -1):
+                    if body_items[item_index].get("kind") == "text":
+                        text_item_index = item_index
+                        break
+                if text_item_index is None:
+                    body_items.append({"kind": "raw", "line": candidate})
+                else:
+                    original_line = body_items[text_item_index].get("line", "")
+                    body_items[text_item_index]["line"] = f"{original_line}{standalone_marker}"
+                has_dialogue_marker = True
+                next_index += 1
+                continue
+            if _is_tyrano_flow_open_line(candidate) or _is_tyrano_flow_close_line(candidate):
+                body_items.append({"kind": "raw", "line": candidate})
+                next_index += 1
+                continue
             if not _is_tyrano_dialogue_text_line(candidate):
                 break
             body_items.append({"kind": "text", "line": candidate})
+            has_text_items = True
             if _line_has_tyrano_dialogue_marker(candidate):
                 has_dialogue_marker = True
             next_index += 1
-        if len(body_items) <= 1 or not has_dialogue_marker:
+        if not has_text_items:
+            return None
+        if not has_dialogue_marker and not _is_tyrano_conditional_dialogue_window(
+            source_lines,
+            start_index + 1,
+            next_index,
+        ):
             return None
         return body_items, next_index
 
     if not _is_tyrano_dialogue_text_line(start_line):
         return None
     body_items = []
+    has_text_items = False
     has_dialogue_marker = False
     next_index = start_index
     while next_index < len(source_lines):
         candidate = source_lines[next_index]
+        stripped_candidate = candidate.strip()
+        if not stripped_candidate:
+            body_items.append({"kind": "raw", "line": candidate})
+            next_index += 1
+            continue
+        standalone_marker = _extract_tyrano_standalone_dialogue_marker(candidate)
+        if standalone_marker:
+            text_item_index: int | None = None
+            for item_index in range(len(body_items) - 1, -1, -1):
+                if body_items[item_index].get("kind") == "text":
+                    text_item_index = item_index
+                    break
+            if text_item_index is None:
+                body_items.append({"kind": "raw", "line": candidate})
+            else:
+                original_line = body_items[text_item_index].get("line", "")
+                body_items[text_item_index]["line"] = f"{original_line}{standalone_marker}"
+            has_dialogue_marker = True
+            next_index += 1
+            continue
+        if _is_tyrano_flow_open_line(candidate) or _is_tyrano_flow_close_line(candidate):
+            body_items.append({"kind": "raw", "line": candidate})
+            next_index += 1
+            continue
         if not _is_tyrano_dialogue_text_line(candidate):
             break
         body_items.append({"kind": "text", "line": candidate})
+        has_text_items = True
         if _line_has_tyrano_dialogue_marker(candidate):
             has_dialogue_marker = True
         next_index += 1
-    if not body_items:
+    if not has_text_items:
         return None
     if not has_dialogue_marker and not _is_tyrano_conditional_dialogue_window(
         source_lines,
