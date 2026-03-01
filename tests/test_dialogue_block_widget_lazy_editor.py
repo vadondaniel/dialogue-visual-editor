@@ -459,6 +459,47 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertNotIn("Pos:", meta)
         widget.deleteLater()
 
+    def test_tyrano_tag_text_meta_in_misc_scope_avoids_entry_id_actor_name_fields(self) -> None:
+        segment = _segment(["ラベル"])
+        segment.segment_kind = "tyrano_tag_text"
+        widget = DialogueBlockWidget(
+            segment=segment,
+            block_number=2,
+            thin_width=34,
+            wide_width=44,
+            max_lines=4,
+            infer_name_from_first_line=True,
+            smart_collapse_allow_comma_endings=True,
+            smart_collapse_allow_colon_triplet_endings=True,
+            smart_collapse_ellipsis_lowercase_rule=True,
+            smart_collapse_collapse_if_no_punctuation=False,
+            smart_collapse_min_soft_ratio=0.5,
+            hide_control_codes_when_unfocused=False,
+            hidden_control_line_transform=None,
+            hidden_control_colored_line_resolver=None,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hint_display_html_resolver=None,
+            color_code_resolver=None,
+            variable_label_resolver=None,
+            speaker_tint_color="#0284c7",
+            translator_mode=True,
+            highlight_control_mismatch=False,
+            highlight_contains_japanese=False,
+            actor_mode=True,
+            name_index_kind="",
+            name_index_label="Entry",
+            allow_structural_actions=False,
+            inferred_speaker_name_resolver=None,
+            segment_prompt_type_resolver=None,
+        )
+
+        self.assertIn("Script text | View: EN script text", widget.meta_label.text())
+        self.assertIn("Script Text 2", widget.title_label.text())
+        self.assertNotIn("Entry ID:", widget.meta_label.text())
+        self.assertNotIn("Field:", widget.meta_label.text())
+        widget.deleteLater()
+
     def test_context_is_inline_in_title_when_selected_and_context_row_hidden(self) -> None:
         segment = _segment(["Hello"])
         segment.context = "scene.ks > dialogue line 42"

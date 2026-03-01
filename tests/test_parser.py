@@ -516,6 +516,8 @@ class ParserTests(unittest.TestCase):
             getattr(script_text_segments[0], "tyrano_tag_text_join_mode", ""),
             "script_string",
         )
+        self.assertIn("mp.text", script_text_segments[0].context)
+        self.assertIn("mp.text", script_text_segments[1].context)
 
     def test_parse_tyrano_script_file_extracts_iscript_object_property_name_strings(self) -> None:
         source = (
@@ -552,6 +554,8 @@ class ParserTests(unittest.TestCase):
                 for segment in script_text_segments
             )
         )
+        self.assertIn("(name)", script_text_segments[0].context)
+        self.assertIn("(fullname)", script_text_segments[1].context.lower())
 
     def test_parse_tyrano_js_file_extracts_const_name_fullname_and_ending_id_strings(self) -> None:
         source = (
@@ -584,6 +588,8 @@ class ParserTests(unittest.TestCase):
             [getattr(segment, "tyrano_tag_text_join_mode", "") for segment in script_text_segments],
             ["script_string", "script_string", "script_string_end_id", "script_string_end_id"],
         )
+        self.assertIn("CHARA_LIST['兄'].name", script_text_segments[0].context)
+        self.assertIn("END_LIST[1].id", script_text_segments[2].context)
         rebuilt_source = tyrano_script_source_from_data(session.data)
         self.assertEqual(rebuilt_source, source)
 

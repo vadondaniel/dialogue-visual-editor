@@ -2792,14 +2792,20 @@ class DialogueBlockWidget(QFrame):
             self.title_label.setText(f"<b>{escaped_base}</b>")
 
         if self.actor_mode:
-            label = (
-                f"{self.name_index_label} {self._actor_id}"
-                if self._actor_id is not None
-                else f"{self.name_index_label} Entry {self.block_number}"
-            )
-            set_title_text(f"{label}{title_suffix}")
+            if self._is_tyrano_tag_text_block():
+                set_title_text(f"Script Text {self.block_number}{title_suffix}")
+            else:
+                label = (
+                    f"{self.name_index_label} {self._actor_id}"
+                    if self._actor_id is not None
+                    else f"{self.name_index_label} Entry {self.block_number}"
+                )
+                set_title_text(f"{label}{title_suffix}")
         else:
-            block_prefix = "Block"
+            label = (
+                "Block"
+            )
+            block_prefix = label
             if self._is_choice_block():
                 block_prefix = "Choice"
             elif self._is_map_display_name_block():
@@ -3547,6 +3553,12 @@ class DialogueBlockWidget(QFrame):
 
     def _refresh_meta_label(self) -> None:
         if self.actor_mode:
+            if self._is_tyrano_tag_text_block():
+                view_text = "EN script text" if self.translator_mode else "JP script text"
+                meta_html = f"Script text | View: {html.escape(view_text)}"
+                self.meta_label.setTextFormat(Qt.TextFormat.RichText)
+                self.meta_label.setText(meta_html)
+                return
             actor_id_text = str(
                 self._actor_id) if self._actor_id is not None else "?"
             field_text = self._name_index_field

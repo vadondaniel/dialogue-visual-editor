@@ -91,6 +91,9 @@ _TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE = re.compile(r"\b(?P<lhs>[A-Za-z_$][\w$.]*)\
 _TYRANO_SCRIPT_OBJECT_PROPERTY_PREFIX_RE = re.compile(
     r"(?P<key>[A-Za-z_$][\w$]*|\"[^\"]+\"|'[^']+')\s*:\s*"
 )
+_TYRANO_JS_OBJECT_OWNER_START_RE = re.compile(
+    r"(?P<owner>[A-Za-z_$][\w$]*(?:\[[^\]]+\])?)\s*=\s*\{"
+)
 _TYRANO_JS_TRANSLATABLE_OBJECT_KEYS: set[str] = {
     "name",
     "fullname",
@@ -1072,6 +1075,8 @@ def _build_tyrano_script_string_segments(
     is_js_file = is_tyrano_js_path(path)
     in_iscript_block = is_js_file
     end_list_depth = 0
+    end_list_id_counter = 0
+    js_owner_hint = ""
     for chunk_index, chunk in enumerate(chunks):
         if chunk_index in excluded_indexes:
             continue
@@ -1081,6 +1086,14 @@ def _build_tyrano_script_string_segments(
             continue
         line_raw = chunk.get("line")
         line = line_raw if isinstance(line_raw, str) else ""
+        if is_js_file:
+            owner_match = _TYRANO_JS_OBJECT_OWNER_START_RE.search(line)
+            if owner_match is not None:
+                owner_raw = owner_match.groupdict().get("owner", "")
+                js_owner_hint = owner_raw.strip()
+            elif "};" in line:
+                # Best-effort owner reset after object block close.
+                js_owner_hint = ""
         is_end_list_line = False
         if is_js_file:
             is_end_list_line = end_list_depth > 0
@@ -1119,10 +1132,23 @@ def _build_tyrano_script_string_segments(
                 decoded_value
             )
             lines = split_lines_preserve_empty(normalized_text)
+            descriptor = candidate_key
+            if is_js_file and candidate_kind == "object_property" and candidate_key == "id" and is_end_list_line:
+                end_list_id_counter += 1
+                descriptor = f"END_LIST[{end_list_id_counter}].id"
+            if (
+                candidate_kind == "object_property"
+                and js_owner_hint
+                and candidate_key
+                and descriptor == candidate_key
+            ):
+                descriptor = f"{js_owner_hint}.{candidate_key}"
+            if not descriptor:
+                descriptor = "script_text"
             uid = f"{path.name}:KS:{text_index}"
             segment = DialogueSegment(
                 uid=uid,
-                context=f"{path.name} > script_text[{text_index}]",
+                context=f"{path.name} > script_text[{text_index}] ({descriptor})",
                 code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
                 lines=list(lines),
                 original_lines=list(lines),
