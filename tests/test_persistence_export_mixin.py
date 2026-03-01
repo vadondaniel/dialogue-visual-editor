@@ -686,6 +686,41 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertIn("too", rebuilt)
         self.assertNotIn("\nも\n", rebuilt)
 
+    def test_apply_session_to_json_preserves_conditional_branch_text_when_editing_neighbor_segments(self) -> None:
+        harness = _Harness()
+        source = (
+            "#妹\n"
+            "女の子にされちゃっても、おっぱいの事考えてるなんて…[r]\n"
+            "お兄ちゃんって本当におっぱい大好きなのね。[p]\n"
+            "そんなにおっぱいが好きなら、[r]\n"
+            "お兄ちゃんのおっぱい\n"
+            "[if exp=\"getStoryFlag('妹変化')\"]\n"
+            "    も\n"
+            "[endif]\n"
+            "大きくしてあげようか？[p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_conditional_neighbor_edit.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        non_conditional_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+            and "も" not in segment.lines
+        ]
+        self.assertTrue(non_conditional_segments)
+        for segment in non_conditional_segments:
+            segment.lines = [line.replace("おっぱい", "boobs") for line in segment.lines]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("[if exp=\"getStoryFlag('妹変化')\"]", rebuilt)
+        self.assertIn("[endif]", rebuilt)
+        self.assertIn("\n    も\n", rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_iscript_assignment_text_string(self) -> None:
         harness = _Harness()
         source = (

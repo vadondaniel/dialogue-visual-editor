@@ -1704,6 +1704,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     break
             desired_speaker_line = f"#{speaker_value}" if speaker_value else "#"
 
+            speaker_insert_at: int | None = None
             if speaker_item_index is not None:
                 body_items[speaker_item_index]["kind"] = "speaker"
                 body_items[speaker_item_index]["line"] = desired_speaker_line
@@ -1719,6 +1720,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 insert_at = first_text_index if isinstance(first_text_index, int) else 0
                 body_items.insert(insert_at, {"kind": "speaker", "line": desired_speaker_line})
                 speaker_item_index = insert_at
+                speaker_insert_at = insert_at
 
             existing_text_indexes = [
                 idx
@@ -1726,8 +1728,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if body_item.get("kind") == "text"
             ]
 
-            segment_lines_payload: list[tuple[DialogueSegment, list[str], list[str], list[str]]] = []
-            for _, segment in chunk_segments_sorted:
+            segment_lines_payload: list[dict[str, Any]] = []
+            for sorted_index, (_, segment) in enumerate(chunk_segments_sorted):
                 normalized_lines = self._normalized_tyrano_segment_lines(segment)
                 rendered_lines, used_suffixes = self._render_tyrano_segment_lines_for_save(
                     segment,
@@ -1738,41 +1740,109 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     line_text, _ = split_tyrano_dialogue_line_and_suffix(rendered_line)
                     line_prefix, _ = self._split_tyrano_leading_indent(line_text)
                     used_prefixes.append(line_prefix)
-                segment_lines_payload.append((segment, rendered_lines, used_suffixes, used_prefixes))
+                segment_text_indexes = self._segment_tyrano_text_indexes(segment)
+                if speaker_insert_at is not None:
+                    segment_text_indexes = [
+                        text_index + 1 if text_index >= speaker_insert_at else text_index
+                        for text_index in segment_text_indexes
+                    ]
+                segment_lines_payload.append(
+                    {
+                        "segment": segment,
+                        "lines": rendered_lines,
+                        "suffixes": used_suffixes,
+                        "prefixes": used_prefixes,
+                        "text_indexes": segment_text_indexes,
+                        "order_index": sorted_index,
+                        "new_indexes": (),
+                    }
+                )
 
             has_any_non_blank_lines = any(
-                any(line != "" for line in lines)
-                for _, lines, _, _ in segment_lines_payload
+                any(line != "" for line in payload.get("lines", []))
+                for payload in segment_lines_payload
             )
-            replacement_items: list[dict[str, str]] = []
-            segment_line_counts: list[tuple[DialogueSegment, int, list[str], list[str]]] = []
-            if existing_text_indexes or has_any_non_blank_lines:
-                for segment, lines, used_suffixes, used_prefixes in segment_lines_payload:
-                    segment_line_counts.append((segment, len(lines), used_suffixes, used_prefixes))
-                    for line in lines:
-                        replacement_items.append({"kind": "text", "line": line})
-            else:
-                for segment, _, _, _ in segment_lines_payload:
-                    segment_line_counts.append((segment, 0, [], []))
-
-            insert_at = len(body_items)
             new_body_items: list[dict[str, str]] = []
             if existing_text_indexes:
-                first_text_index = min(existing_text_indexes)
-                inserted = False
-                for body_index, body_item in enumerate(body_items):
-                    if body_item.get("kind") == "text":
-                        if not inserted and body_index == first_text_index:
-                            insert_at = len(new_body_items)
-                            if replacement_items:
-                                new_body_items.extend(replacement_items)
-                            inserted = True
+                sorted_text_indexes = sorted(existing_text_indexes)
+                text_clusters: list[list[int]] = []
+                current_cluster: list[int] = []
+                for text_index in sorted_text_indexes:
+                    if not current_cluster:
+                        current_cluster = [text_index]
                         continue
-                    new_body_items.append(body_item)
-                if not inserted:
-                    insert_at = len(new_body_items)
-                    if replacement_items:
-                        new_body_items.extend(replacement_items)
+                    if text_index == current_cluster[-1] + 1:
+                        current_cluster.append(text_index)
+                        continue
+                    text_clusters.append(list(current_cluster))
+                    current_cluster = [text_index]
+                if current_cluster:
+                    text_clusters.append(list(current_cluster))
+
+                cluster_payloads: list[dict[str, Any]] = []
+                for cluster in text_clusters:
+                    cluster_payloads.append(
+                        {
+                            "indexes": set(cluster),
+                            "start": cluster[0],
+                            "end": cluster[-1],
+                            "payloads": [],
+                        }
+                    )
+
+                for payload in segment_lines_payload:
+                    text_indexes_raw = payload.get("text_indexes", [])
+                    text_indexes = (
+                        text_indexes_raw
+                        if isinstance(text_indexes_raw, list)
+                        else []
+                    )
+                    if not text_indexes:
+                        continue
+                    first_index = min(text_indexes)
+                    for cluster_payload in cluster_payloads:
+                        if first_index in cluster_payload["indexes"]:
+                            cluster_payload["payloads"].append(payload)
+                            break
+
+                cluster_by_start = {
+                    int(cluster_payload["start"]): cluster_payload
+                    for cluster_payload in cluster_payloads
+                }
+                all_cluster_indexes: set[int] = set()
+                for cluster_payload in cluster_payloads:
+                    all_cluster_indexes.update(cluster_payload["indexes"])
+
+                body_index = 0
+                while body_index < len(body_items):
+                    cluster_payload = cluster_by_start.get(body_index)
+                    if cluster_payload is not None:
+                        payloads_in_cluster = list(cluster_payload.get("payloads", []))
+                        payloads_in_cluster.sort(
+                            key=lambda row: (
+                                min(row.get("text_indexes", []) or [10**9]),
+                                int(row.get("order_index", 0)),
+                            )
+                        )
+                        next_text_index = len(new_body_items)
+                        for payload in payloads_in_cluster:
+                            payload_lines_raw = payload.get("lines", [])
+                            payload_lines = payload_lines_raw if isinstance(payload_lines_raw, list) else []
+                            payload["new_indexes"] = tuple(
+                                range(next_text_index, next_text_index + len(payload_lines))
+                            )
+                            next_text_index += len(payload_lines)
+                            for line in payload_lines:
+                                new_body_items.append({"kind": "text", "line": line})
+                        body_index = int(cluster_payload.get("end", body_index)) + 1
+                        continue
+
+                    if body_index in all_cluster_indexes:
+                        body_index += 1
+                        continue
+
+                    new_body_items.append(body_items[body_index])
+                    body_index += 1
             else:
                 new_body_items = list(body_items)
                 insert_at = (
@@ -1780,8 +1850,39 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     if isinstance(speaker_item_index, int)
                     else len(new_body_items)
                 )
-                if replacement_items:
-                    new_body_items[insert_at:insert_at] = replacement_items
+                for payload in segment_lines_payload:
+                    payload_lines_raw = payload.get("lines", [])
+                    payload_lines = payload_lines_raw if isinstance(payload_lines_raw, list) else []
+                    if payload_lines:
+                        payload["new_indexes"] = tuple(
+                            range(insert_at, insert_at + len(payload_lines))
+                        )
+                        insert_at += len(payload_lines)
+                        for offset, line in enumerate(payload_lines):
+                            new_body_items.insert(
+                                int(payload["new_indexes"][offset]),
+                                {"kind": "text", "line": line},
+                            )
+                    else:
+                        payload["new_indexes"] = ()
+
+            unassigned_payloads = [
+                payload
+                for payload in segment_lines_payload
+                if not payload.get("new_indexes")
+                and bool(payload.get("lines"))
+            ]
+            if unassigned_payloads:
+                next_text_index = len(new_body_items)
+                for payload in unassigned_payloads:
+                    payload_lines_raw = payload.get("lines", [])
+                    payload_lines = payload_lines_raw if isinstance(payload_lines_raw, list) else []
+                    payload["new_indexes"] = tuple(
+                        range(next_text_index, next_text_index + len(payload_lines))
+                    )
+                    next_text_index += len(payload_lines)
+                    for line in payload_lines:
+                        new_body_items.append({"kind": "text", "line": line})
 
             updated_speaker_item_index: int | None = None
             for idx, body_item in enumerate(new_body_items):
@@ -1789,15 +1890,26 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     updated_speaker_item_index = idx
                     break
 
-            next_text_index = insert_at
-            for segment, line_count, suffixes, prefixes in segment_line_counts:
-                text_indexes = tuple(range(next_text_index, next_text_index + line_count))
+            for payload in segment_lines_payload:
+                segment_raw = payload.get("segment")
+                if not isinstance(segment_raw, DialogueSegment):
+                    continue
+                suffixes_raw = payload.get("suffixes", [])
+                suffixes = suffixes_raw if isinstance(suffixes_raw, list) else []
+                prefixes_raw = payload.get("prefixes", [])
+                prefixes = prefixes_raw if isinstance(prefixes_raw, list) else []
+                new_indexes_raw = payload.get("new_indexes", ())
+                text_indexes = (
+                    tuple(new_indexes_raw)
+                    if isinstance(new_indexes_raw, tuple)
+                    else tuple()
+                )
+                segment = segment_raw
                 setattr(segment, "tyrano_speaker_item_index", updated_speaker_item_index)
                 setattr(segment, "tyrano_text_item_indexes", text_indexes)
                 setattr(segment, "tyrano_line_suffixes", tuple(suffixes))
                 setattr(segment, "tyrano_line_prefixes", tuple(prefixes))
                 setattr(segment, "tyrano_editable_item_indexes", text_indexes)
-                next_text_index += line_count
 
             chunk_raw["body_items"] = new_body_items
 

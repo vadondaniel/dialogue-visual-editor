@@ -458,16 +458,19 @@ class ParserTests(unittest.TestCase):
             for segment in session.segments
             if segment.segment_kind == "tyrano_dialogue"
         ]
-        self.assertEqual(len(dialogue_segments), 1)
-        self.assertEqual(dialogue_segments[0].speaker_name, "妹")
+        self.assertEqual(len(dialogue_segments), 2)
+        self.assertTrue(all(segment.speaker_name == "妹" for segment in dialogue_segments))
+        flattened_lines = [line for segment in dialogue_segments for line in segment.lines]
         self.assertEqual(
-            dialogue_segments[0].lines,
+            flattened_lines,
             ["お兄ちゃんを12歳まで若返らせたんだよ！", "私と同い年になっちゃったね♪"],
         )
-        self.assertEqual(
-            getattr(dialogue_segments[0], "tyrano_line_suffixes", ()),
-            ("[r]", "[p]"),
-        )
+        flattened_suffixes = [
+            suffix
+            for segment in dialogue_segments
+            for suffix in getattr(segment, "tyrano_line_suffixes", ())
+        ]
+        self.assertEqual(flattened_suffixes, ["[r]", "[p]"])
 
     def test_parse_tyrano_script_file_accepts_bracket_prefixed_variable_dialogue_lines(self) -> None:
         source = (

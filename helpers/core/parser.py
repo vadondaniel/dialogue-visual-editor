@@ -566,6 +566,48 @@ def _group_tyrano_text_items_by_page_break(
     return groups
 
 
+def _group_tyrano_dialogue_text_items(
+    body_items: list[Any],
+) -> list[list[tuple[int, str]]]:
+    groups: list[list[tuple[int, str]]] = []
+    pending_group: list[tuple[int, str]] = []
+    for body_index, body_item in enumerate(body_items):
+        if not isinstance(body_item, dict):
+            continue
+        item_kind = str(body_item.get("kind", "")).strip().lower()
+        line_raw = body_item.get("line", "")
+        item_line = line_raw if isinstance(line_raw, str) else ""
+        if item_kind == "text":
+            pending_group.append((body_index, item_line))
+            if _line_has_tyrano_page_break(item_line):
+                groups.append(list(pending_group))
+                pending_group = []
+            continue
+
+        if item_kind != "raw":
+            continue
+
+        stripped_line = item_line.strip()
+        if not stripped_line:
+            continue
+
+        if (
+            _is_tyrano_flow_open_line(stripped_line)
+            or _is_tyrano_flow_close_line(stripped_line)
+        ) and pending_group:
+            groups.append(list(pending_group))
+            pending_group = []
+            continue
+
+        if pending_group:
+            groups.append(list(pending_group))
+            pending_group = []
+
+    if pending_group:
+        groups.append(list(pending_group))
+    return groups
+
+
 def _collect_tyrano_implicit_dialogue_block(
     source_lines: list[str],
     start_index: int,
@@ -1042,7 +1084,9 @@ def _build_tyrano_dialogue_segments(path: Path, data: dict[str, Any]) -> list[Di
             text_items.append((body_index, item_line))
         if speaker_item_index is None and not text_items:
             continue
-        text_groups = _group_tyrano_text_items_by_page_break(text_items)
+        text_groups = _group_tyrano_dialogue_text_items(body_items_raw)
+        if not text_groups:
+            text_groups = _group_tyrano_text_items_by_page_break(text_items)
         if not text_groups:
             text_groups = [[]]
         for text_group in text_groups:
