@@ -1062,6 +1062,108 @@ class AuditConsistencyMixinTests(unittest.TestCase):
         remaining_uids = [segment.uid for segment in harness.sessions[path].segments]
         self.assertNotIn("t1f", remaining_uids)
 
+    def test_apply_group_structure_change_on_current_file_uses_structural_refresh(self) -> None:
+        harness = _Harness()
+        path = Path("Map034.json")
+        harness.file_paths = [path]
+        selected_anchor = _segment("s1", "同一文", "A1\nA2\nA3\nA4")
+        split_anchor = _segment("t1", "同一文", "B1\nB2\nB3")
+        split_followup = _segment("t1f", "", "B4\nB5", translation_only=True)
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[selected_anchor, split_anchor, split_followup],
+        )
+        harness.current_path = path
+        harness.selected_segment_uid = "t1"
+
+        class _FakeItem:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._payload = payload
+
+            def data(self, _role: object) -> object:
+                return self._payload
+
+        class _FakeGroups:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._item = _FakeItem(payload)
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+            def currentRow(self) -> int:
+                return 0
+
+            def count(self) -> int:
+                return 1
+
+            def item(self, _index: int) -> _FakeItem:
+                return self._item
+
+        class _FakeEntries:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._item = _FakeItem(payload)
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+        class _FakeTargetEdit:
+            def __init__(self, value: str) -> None:
+                self._value = value
+
+            def toPlainText(self) -> str:
+                return self._value
+
+            def setPlainText(self, value: str) -> None:
+                self._value = value
+
+        groups = harness._collect_audit_consistency_groups(
+            only_inconsistent=False,
+            dialogue_only=True,
+            sort_mode="source_order",
+        )
+        self.assertEqual(len(groups), 1)
+        entries = groups[0]["entries"]
+        selected_entry = next(
+            entry for entry in entries if str(entry.get("uid", "")) == "s1"
+        )
+
+        harness.audit_consistency_groups_list = _FakeGroups(groups[0])
+        harness.audit_consistency_entries_list = _FakeEntries(selected_entry)
+        harness.audit_consistency_target_edit = _FakeTargetEdit("N1\nN2\nN3\nN4")
+        harness._refresh_dirty_state = lambda _session: None  # type: ignore[method-assign]
+        harness._invalidate_audit_caches = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_sanitize_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_control_mismatch_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_name_consistency_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_translator_detail_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_consistency_panel = (  # type: ignore[method-assign]
+            lambda preferred_source=None, preferred_row=None: None
+        )
+        harness._focus_audit_consistency_groups_list = lambda: None  # type: ignore[method-assign]
+
+        calls = {"structure_refresh": 0, "rerender": 0, "render": 0}
+        harness._refresh_after_structure_change_without_full_rerender = (  # type: ignore[method-assign]
+            lambda _session, focus_uid=None, preserve_scroll=True: calls.__setitem__(
+                "structure_refresh",
+                calls["structure_refresh"] + 1,
+            ) or True
+        )
+        harness._rerender_blocks_near_viewport = (  # type: ignore[method-assign]
+            lambda overscan_px=240: calls.__setitem__("rerender", calls["rerender"] + 1)
+        )
+        harness._render_session = lambda _session, **_kwargs: calls.__setitem__(  # type: ignore[method-assign]
+            "render",
+            calls["render"] + 1,
+        )
+
+        harness._apply_audit_consistency_target_to_group(advance_to_next=False)
+
+        self.assertEqual(calls["structure_refresh"], 1)
+        self.assertEqual(calls["rerender"], 0)
+        self.assertEqual(calls["render"], 0)
+
     def test_neighbor_preview_includes_neighbor_lines_and_speakers(self) -> None:
         harness = _Harness()
         harness._speaker_map["勇者"] = "Hero"

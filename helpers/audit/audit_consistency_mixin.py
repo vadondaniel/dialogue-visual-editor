@@ -1599,6 +1599,8 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
 
         touched_paths: set[Path] = set()
         touched_current = False
+        structure_changed_paths: set[Path] = set()
+        current_focus_uid: Optional[str] = None
         changed_entries = 0
         segment_lookup_by_path: dict[Path, dict[str, DialogueSegment]] = {}
         normalize_for_segment = getattr(
@@ -1683,8 +1685,12 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 continue
             changed_entries += 1
             touched_paths.add(path)
+            if structure_changed:
+                structure_changed_paths.add(path)
             if self.current_path is not None and path == self.current_path:
                 touched_current = True
+                if current_focus_uid is None:
+                    current_focus_uid = uid_raw
 
         if changed_entries <= 0:
             self.statusBar().showMessage("No translations changed in this group.")
@@ -1708,14 +1714,52 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         self._invalidate_audit_caches()
         self._refresh_active_non_consistency_audit_panel()
         if touched_current and self.current_path is not None:
-            rerender_near_viewport = getattr(
-                self, "_rerender_blocks_near_viewport", None
-            )
-            if callable(rerender_near_viewport):
-                try:
-                    rerender_near_viewport(overscan_px=240)
-                except TypeError:
-                    rerender_near_viewport()
+            current_session = self.sessions.get(self.current_path)
+            did_structural_refresh = False
+            if (
+                current_session is not None
+                and self.current_path in structure_changed_paths
+            ):
+                fast_structure_refresh = getattr(
+                    self, "_refresh_after_structure_change_without_full_rerender", None
+                )
+                if callable(fast_structure_refresh):
+                    try:
+                        did_structural_refresh = bool(
+                            fast_structure_refresh(
+                                current_session,
+                                focus_uid=current_focus_uid,
+                                preserve_scroll=True,
+                            )
+                        )
+                    except TypeError:
+                        did_structural_refresh = bool(
+                            fast_structure_refresh(
+                                current_session,
+                                focus_uid=current_focus_uid,
+                            )
+                        )
+                if not did_structural_refresh and current_session is not None:
+                    render_session = getattr(self, "_render_session", None)
+                    if callable(render_session):
+                        try:
+                            render_session(
+                                current_session,
+                                focus_uid=current_focus_uid,
+                                preserve_scroll=True,
+                            )
+                        except TypeError:
+                            render_session(current_session, focus_uid=current_focus_uid)
+                        did_structural_refresh = True
+            if not did_structural_refresh:
+                rerender_near_viewport = getattr(
+                    self, "_rerender_blocks_near_viewport", None
+                )
+                if callable(rerender_near_viewport):
+                    try:
+                        rerender_near_viewport(overscan_px=240)
+                    except TypeError:
+                        rerender_near_viewport()
         self._refresh_translator_detail_panel()
         preferred_source = (
             next_source_key if advance_to_next and next_source_key else source_key
