@@ -8,7 +8,7 @@ import re
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QBrush, QColor, QTextCharFormat, QTextCursor, QTextFormat
 from PySide6.QtWidgets import QApplication, QListWidgetItem, QMessageBox, QTextEdit, QWidget
 
 from ..core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
@@ -30,6 +30,12 @@ class _AuditConsistencyHostTypingFallback:
 class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     _BLOCK_ENTRY_RE = re.compile(r"^Block\s+(\d+)$", re.IGNORECASE)
     _NAME_INDEX_ALIAS_FIELD_RE = re.compile(r"^alt_\d+$", re.IGNORECASE)
+    _CONSISTENCY_TARGET_SPLIT_DIVIDER_RE = re.compile(
+        r"^(?:-+|\|+|-{5,}\s*Block\s+\d+\s*-{5,})$",
+        re.IGNORECASE,
+    )
+    _CONSISTENCY_TARGET_MIN_LINES = 5
+    _CONSISTENCY_TARGET_MAX_LINES = 16
 
     def _consistency_entry_file_stem(self, path_raw: str) -> str:
         relative_path = self._relative_path(Path(path_raw))
@@ -312,6 +318,210 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         chunks: list[str],
     ) -> str:
         return "\n".join(chunks).strip()
+
+    def _consistency_target_display_text_for_chunks(
+        self,
+        chunks: list[str],
+    ) -> str:
+        normalized_chunks: list[str] = []
+        for chunk in chunks:
+            if isinstance(chunk, str):
+                normalized_chunks.append(chunk)
+        if not normalized_chunks:
+            return ""
+        if len(normalized_chunks) <= 1:
+            return normalized_chunks[0]
+        max_lines_spin = getattr(self, "max_lines_spin", None)
+        line_limit = int(max_lines_spin.value()) if max_lines_spin is not None else 4
+        line_limit = max(1, line_limit)
+        parts: list[str] = []
+        for index, chunk in enumerate(normalized_chunks):
+            chunk_lines = self._normalize_translation_lines(chunk)
+            parts.extend(chunk_lines)
+            if index < len(normalized_chunks) - 1:
+                pad_lines = max(0, line_limit - len(chunk_lines))
+                parts.extend(
+                    [""] * pad_lines
+                )
+                # Keep one blank boundary row; it will be styled as separator.
+                parts.extend([""])
+        return "\n".join(parts)
+
+    def _consistency_target_display_text_for_payload(
+        self,
+        payload: Optional[dict[str, Any]],
+    ) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        chunks_raw = payload.get("translation_chunks")
+        chunks: list[str] = []
+        if isinstance(chunks_raw, list):
+            for raw_chunk in chunks_raw:
+                if isinstance(raw_chunk, str):
+                    chunks.append(raw_chunk)
+        if chunks:
+            return self._consistency_target_display_text_for_chunks(chunks)
+        translation = payload.get("translation")
+        return translation if isinstance(translation, str) else ""
+
+    def _consistency_target_is_split_divider(self, line_text: str) -> bool:
+        return self._CONSISTENCY_TARGET_SPLIT_DIVIDER_RE.fullmatch(line_text.strip()) is not None
+
+    def _resize_audit_consistency_target_editor_for_content(self) -> None:
+        target_edit = getattr(self, "audit_consistency_target_edit", None)
+        if target_edit is None:
+            return
+        document = getattr(target_edit, "document", None)
+        if not callable(document):
+            return
+        try:
+            doc = document()
+        except Exception:
+            return
+        block_count = 0
+        if doc is not None and hasattr(doc, "blockCount"):
+            try:
+                block_count = int(doc.blockCount())
+            except Exception:
+                block_count = 0
+        if block_count <= 0 and hasattr(target_edit, "toPlainText"):
+            try:
+                block_count = len(str(target_edit.toPlainText()).splitlines()) or 1
+            except Exception:
+                block_count = 1
+        desired_lines = max(
+            self._CONSISTENCY_TARGET_MIN_LINES,
+            min(self._CONSISTENCY_TARGET_MAX_LINES, block_count),
+        )
+        font_metrics = getattr(target_edit, "fontMetrics", None)
+        if not callable(font_metrics):
+            return
+        try:
+            line_height = int(font_metrics().lineSpacing())
+        except Exception:
+            return
+        try:
+            doc_margin = int(doc.documentMargin() * 2) if doc is not None else 0
+        except Exception:
+            doc_margin = 0
+        try:
+            frame = int(target_edit.frameWidth() * 2)
+        except Exception:
+            frame = 0
+        target_height = line_height * desired_lines + doc_margin + frame + 2
+        set_fixed_height = getattr(target_edit, "setFixedHeight", None)
+        if callable(set_fixed_height):
+            try:
+                set_fixed_height(target_height)
+            except Exception:
+                pass
+
+    def _consistency_target_chunks_for_text(
+        self,
+        text: str,
+    ) -> list[dict[str, Any]]:
+        lines = self._normalize_translation_lines(text)
+        chunks: list[dict[str, Any]] = []
+        current_lines: list[str] = []
+        current_indices: list[int] = []
+        pending_blank_index: Optional[int] = None
+        in_separator_zone = False
+        max_lines_spin = getattr(self, "max_lines_spin", None)
+        line_limit = int(max_lines_spin.value()) if max_lines_spin is not None else 4
+        line_limit = max(1, line_limit)
+
+        def flush_current() -> None:
+            nonlocal current_lines, current_indices
+            chunk_lines = list(current_lines) if current_lines else [""]
+            chunks.append(
+                {
+                    "lines": self._normalize_translation_lines(chunk_lines),
+                    "display_indices": list(current_indices),
+                }
+            )
+            current_lines = []
+            current_indices = []
+
+        for line_index, line_text in enumerate(lines):
+            if self._consistency_target_is_split_divider(line_text):
+                pending_blank_index = None
+                flush_current()
+                in_separator_zone = True
+                continue
+            if line_text == "":
+                if in_separator_zone:
+                    continue
+                if pending_blank_index is not None:
+                    # second consecutive blank = explicit boundary split
+                    pending_blank_index = None
+                    flush_current()
+                    in_separator_zone = True
+                    continue
+                pending_blank_index = line_index
+                continue
+            if pending_blank_index is not None:
+                if len(current_lines) >= line_limit:
+                    # single blank after a full chunk is treated as boundary row
+                    flush_current()
+                    in_separator_zone = False
+                else:
+                    current_lines.append("")
+                    current_indices.append(pending_blank_index)
+                pending_blank_index = None
+            in_separator_zone = False
+            current_lines.append(line_text)
+            current_indices.append(line_index)
+
+        if pending_blank_index is not None:
+            if len(current_lines) < line_limit:
+                current_lines.append("")
+                current_indices.append(pending_blank_index)
+            pending_blank_index = None
+
+        if current_lines or not chunks:
+            flush_current()
+        return chunks
+
+    def _consistency_target_separator_display_indices(
+        self,
+        text: str,
+    ) -> list[int]:
+        lines = self._normalize_translation_lines(text)
+        separator_indices: list[int] = []
+        pending_blank_index: Optional[int] = None
+        in_separator_zone = False
+        max_lines_spin = getattr(self, "max_lines_spin", None)
+        line_limit = int(max_lines_spin.value()) if max_lines_spin is not None else 4
+        line_limit = max(1, line_limit)
+        current_line_count = 0
+        for line_index, line_text in enumerate(lines):
+            if self._consistency_target_is_split_divider(line_text):
+                separator_indices.append(line_index)
+                pending_blank_index = None
+                in_separator_zone = True
+                current_line_count = 0
+                continue
+            if line_text == "":
+                if in_separator_zone:
+                    continue
+                if pending_blank_index is not None:
+                    separator_indices.append(line_index)
+                    pending_blank_index = None
+                    in_separator_zone = True
+                    current_line_count = 0
+                    continue
+                pending_blank_index = line_index
+                continue
+            if pending_blank_index is not None:
+                if current_line_count >= line_limit:
+                    separator_indices.append(pending_blank_index)
+                    current_line_count = 0
+                else:
+                    current_line_count += 1
+                pending_blank_index = None
+            in_separator_zone = False
+            current_line_count += 1
+        return separator_indices
 
     def _consistency_chunk_line_counts_from_payload(
         self,
@@ -960,6 +1170,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             return
 
         target_edit = self.audit_consistency_target_edit
+        self._resize_audit_consistency_target_editor_for_content()
         target_edit.setExtraSelections([])
         if self.audit_consistency_groups_list is None:
             return
@@ -973,6 +1184,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             return
 
         segment: Optional[DialogueSegment] = None
+        selected_session: Optional[FileSession] = None
         selected_payload = (
             self._audit_consistency_entry_payload(self.audit_consistency_entries_list.currentItem())
             if self.audit_consistency_entries_list is not None
@@ -981,7 +1193,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         if isinstance(selected_payload, dict):
             resolved_selected = self._find_consistency_entry_segment(selected_payload)
             if resolved_selected is not None:
-                _session, _index, segment = resolved_selected
+                selected_session, _index, segment = resolved_selected
         if segment is None:
             for entry in entries:
                 if not isinstance(entry, dict):
@@ -989,31 +1201,34 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 resolved = self._find_consistency_entry_segment(entry)
                 if resolved is None:
                     continue
-                _session, _index, segment = resolved
+                selected_session, _index, segment = resolved
                 break
         if segment is None:
             return
 
+        target_chunks = self._consistency_target_chunks_for_text(target_edit.toPlainText())
+        if not target_chunks:
+            return
+        segments_for_chunks: list[DialogueSegment] = [segment]
+        if isinstance(selected_payload, dict) and selected_session is not None:
+            segment_uids_raw = selected_payload.get("segment_uids")
+            if isinstance(segment_uids_raw, list):
+                session_lookup = {
+                    candidate.uid: candidate for candidate in selected_session.segments
+                }
+                resolved_segments: list[DialogueSegment] = []
+                for uid_raw in segment_uids_raw:
+                    if not isinstance(uid_raw, str) or not uid_raw:
+                        continue
+                    candidate = session_lookup.get(uid_raw)
+                    if candidate is not None:
+                        resolved_segments.append(candidate)
+                if resolved_segments:
+                    segments_for_chunks = resolved_segments
+
         normalize_for_segment = getattr(
             self, "_normalize_audit_translation_lines_for_segment", None
         )
-        if callable(normalize_for_segment):
-            try:
-                target_lines_raw = normalize_for_segment(
-                    segment, target_edit.toPlainText()
-                )
-            except Exception:
-                target_lines_raw = self._normalize_translation_lines(target_edit.toPlainText())
-        else:
-            target_lines_raw = self._normalize_translation_lines(target_edit.toPlainText())
-        target_lines = self._normalize_translation_lines(target_lines_raw)
-        metrics = self._consistency_target_overflow_metrics_for_segment(
-            segment,
-            target_lines,
-        )
-        width_limit = int(metrics["width_limit"])
-        row_limit = float(metrics["row_limit"])
-
         dark = is_dark_palette()
         overflow_bg = QColor("#7f1d1d" if dark else "#fee2e2")
         overflow_fg = QColor("#fecaca" if dark else "#991b1b")
@@ -1023,44 +1238,112 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         line_fmt = QTextCharFormat()
         line_fmt.setBackground(overflow_bg)
         line_fmt.setForeground(overflow_fg)
+        separator_fmt = QTextCharFormat()
+        separator_bg = QColor("#334155" if dark else "#cbd5e1")
+        separator_fmt.setBackground(separator_bg)
+        separator_fmt.setProperty(QTextFormat.Property.FullWidthSelection, True)
 
         selections: list[QTextEdit.ExtraSelection] = []
         document = target_edit.document()
-        for line_index, line_text in enumerate(target_lines):
-            overflow_idx = first_overflow_char_index(line_text, width_limit)
-            if overflow_idx is None or overflow_idx >= len(line_text):
-                continue
-            block = document.findBlockByNumber(line_index)
-            if not block.isValid():
-                continue
-            cursor = QTextCursor(document)
-            start_pos = block.position() + overflow_idx
-            cursor.setPosition(start_pos)
-            cursor.setPosition(
-                block.position() + len(line_text),
-                QTextCursor.MoveMode.KeepAnchor,
-            )
-            extra = QTextEdit.ExtraSelection()
-            setattr(extra, "cursor", cursor)
-            setattr(extra, "format", char_fmt)
-            selections.append(extra)
-
-        kept_lines, overflow_lines = split_lines_by_row_budget(target_lines, row_limit)
-        overflow_start = len(kept_lines) if overflow_lines else len(target_lines)
-        for line_index in range(overflow_start, len(target_lines)):
-            block = document.findBlockByNumber(line_index)
+        for separator_index in self._consistency_target_separator_display_indices(
+            target_edit.toPlainText()
+        ):
+            block = document.findBlockByNumber(separator_index)
             if not block.isValid():
                 continue
             cursor = QTextCursor(document)
             cursor.setPosition(block.position())
             cursor.setPosition(
-                block.position() + len(target_lines[line_index]),
+                block.position() + len(block.text()),
                 QTextCursor.MoveMode.KeepAnchor,
             )
             extra = QTextEdit.ExtraSelection()
             setattr(extra, "cursor", cursor)
-            setattr(extra, "format", line_fmt)
+            setattr(extra, "format", separator_fmt)
             selections.append(extra)
+
+        for chunk_index, chunk in enumerate(target_chunks):
+            chunk_lines_raw = chunk.get("lines")
+            display_indices_raw = chunk.get("display_indices")
+            if not isinstance(chunk_lines_raw, list):
+                continue
+            if not isinstance(display_indices_raw, list):
+                continue
+            display_indices = [
+                idx for idx in display_indices_raw if isinstance(idx, int) and idx >= 0
+            ]
+            if not display_indices:
+                continue
+            chunk_lines = self._normalize_translation_lines(chunk_lines_raw)
+            chunk_segment = (
+                segments_for_chunks[chunk_index]
+                if chunk_index < len(segments_for_chunks)
+                else segments_for_chunks[-1]
+            )
+
+            if callable(normalize_for_segment):
+                try:
+                    normalized_chunk_raw = normalize_for_segment(
+                        chunk_segment, chunk_lines
+                    )
+                except Exception:
+                    normalized_chunk_raw = chunk_lines
+                normalized_chunk = self._normalize_translation_lines(normalized_chunk_raw)
+            else:
+                normalized_chunk = chunk_lines
+
+            metrics = self._consistency_target_overflow_metrics_for_segment(
+                chunk_segment,
+                normalized_chunk,
+            )
+            width_limit = int(metrics["width_limit"])
+            row_limit = float(metrics["row_limit"])
+
+            for line_index, line_text in enumerate(normalized_chunk):
+                if line_index >= len(display_indices):
+                    break
+                display_line_index = display_indices[line_index]
+                overflow_idx = first_overflow_char_index(line_text, width_limit)
+                if overflow_idx is None:
+                    continue
+                block = document.findBlockByNumber(display_line_index)
+                if not block.isValid():
+                    continue
+                block_text = block.text()
+                if overflow_idx >= len(block_text):
+                    continue
+                cursor = QTextCursor(document)
+                start_pos = block.position() + overflow_idx
+                cursor.setPosition(start_pos)
+                cursor.setPosition(
+                    block.position() + len(block_text),
+                    QTextCursor.MoveMode.KeepAnchor,
+                )
+                extra = QTextEdit.ExtraSelection()
+                setattr(extra, "cursor", cursor)
+                setattr(extra, "format", char_fmt)
+                selections.append(extra)
+
+            kept_lines, overflow_lines = split_lines_by_row_budget(normalized_chunk, row_limit)
+            overflow_start = len(kept_lines) if overflow_lines else len(normalized_chunk)
+            for line_index in range(overflow_start, len(normalized_chunk)):
+                if line_index >= len(display_indices):
+                    break
+                display_line_index = display_indices[line_index]
+                block = document.findBlockByNumber(display_line_index)
+                if not block.isValid():
+                    continue
+                block_text = block.text()
+                cursor = QTextCursor(document)
+                cursor.setPosition(block.position())
+                cursor.setPosition(
+                    block.position() + len(block_text),
+                    QTextCursor.MoveMode.KeepAnchor,
+                )
+                extra = QTextEdit.ExtraSelection()
+                setattr(extra, "cursor", cursor)
+                setattr(extra, "format", line_fmt)
+                selections.append(extra)
 
         target_edit.setExtraSelections(selections)
 
@@ -1374,11 +1657,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             first_payload = self._audit_consistency_entry_payload(
                 self.audit_consistency_entries_list.currentItem()
             )
-            target_value = ""
-            if first_payload is not None:
-                first_translation = first_payload.get("translation")
-                if isinstance(first_translation, str):
-                    target_value = first_translation
+            target_value = self._consistency_target_display_text_for_payload(
+                first_payload
+            )
             self.audit_consistency_target_edit.setPlainText(target_value)
             self._refresh_audit_consistency_target_overflow_status()
             self._refresh_audit_consistency_neighbors_preview()
@@ -1398,12 +1679,11 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         )
         if payload is None:
             return
-        translation = payload.get("translation")
-        if isinstance(translation, str):
-            current_target = self.audit_consistency_target_edit.toPlainText()
-            # Keep a non-empty draft target while browsing empty entries.
-            if translation.strip() or not current_target.strip():
-                self.audit_consistency_target_edit.setPlainText(translation)
+        target_value = self._consistency_target_display_text_for_payload(payload)
+        current_target = self.audit_consistency_target_edit.toPlainText()
+        # Keep a non-empty draft target while browsing empty entries.
+        if target_value.strip() or not current_target.strip():
+            self.audit_consistency_target_edit.setPlainText(target_value)
         self._refresh_audit_consistency_target_overflow_status()
         self._refresh_audit_consistency_neighbors_preview()
 
@@ -1577,8 +1857,25 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             return
 
         target_text = self.audit_consistency_target_edit.toPlainText()
-        target_lines = self._normalize_translation_lines(target_text)
+        target_chunks_payload = self._consistency_target_chunks_for_text(target_text)
+        target_chunks_lines: list[list[str]] = []
+        for chunk in target_chunks_payload:
+            chunk_lines_raw = chunk.get("lines")
+            if isinstance(chunk_lines_raw, list):
+                target_chunks_lines.append(self._normalize_translation_lines(chunk_lines_raw))
+        if not target_chunks_lines:
+            target_chunks_lines = [self._normalize_translation_lines(target_text)]
+        target_lines = [
+            line
+            for chunk_lines in target_chunks_lines
+            for line in chunk_lines
+        ]
         selected_pattern_counts: list[int] = []
+        if len(target_chunks_lines) > 1:
+            selected_pattern_counts = [
+                max(1, len(chunk_lines))
+                for chunk_lines in target_chunks_lines
+            ]
         selected_entry_payload: Optional[dict[str, Any]] = None
         if self.audit_consistency_entries_list is not None:
             selected_entry_payload = self._audit_consistency_entry_payload(

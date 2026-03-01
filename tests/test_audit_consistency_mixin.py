@@ -617,6 +617,18 @@ class AuditConsistencyMixinTests(unittest.TestCase):
         translations = {str(entry.get("translation", "")) for entry in groups[0]["entries"]}
         self.assertEqual(translations, {"Alpha\nBeta"})
 
+    def test_target_display_text_for_chunks_adds_divider_padding(self) -> None:
+        harness = _Harness()
+
+        rendered = harness._consistency_target_display_text_for_chunks(
+            ["Line A", "Line B"]
+        )
+
+        self.assertEqual(
+            rendered,
+            "Line A\n\n\n\n\nLine B",
+        )
+
     def test_consistency_entry_label_includes_non_name_field_suffix(self) -> None:
         harness = _Harness()
         path = Path("Actors.json")
@@ -865,6 +877,273 @@ class AuditConsistencyMixinTests(unittest.TestCase):
         harness.audit_consistency_groups_list = _FakeGroups(groups[0])
         harness.audit_consistency_entries_list = _FakeEntries(selected_entry)
         harness.audit_consistency_target_edit = _FakeTargetEdit("N1\nN2\nN3")
+        harness._refresh_dirty_state = lambda _session: None  # type: ignore[method-assign]
+        harness._invalidate_audit_caches = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_sanitize_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_control_mismatch_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_name_consistency_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_translator_detail_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_consistency_panel = (  # type: ignore[method-assign]
+            lambda preferred_source=None, preferred_row=None: None
+        )
+        harness._focus_audit_consistency_groups_list = lambda: None  # type: ignore[method-assign]
+        harness._render_session = lambda _session, **_kwargs: None  # type: ignore[method-assign]
+
+        harness._apply_audit_consistency_target_to_group(advance_to_next=False)
+
+        self.assertEqual(anchor_a.translation_lines, ["N1", "N2"])
+        self.assertEqual(followup_a.translation_lines, ["N3"])
+        self.assertEqual(anchor_b.translation_lines, ["N1", "N2"])
+        self.assertEqual(followup_b.translation_lines, ["N3"])
+
+    def test_apply_group_parses_divider_text_into_split_chunks(self) -> None:
+        harness = _Harness()
+        path = Path("Map031b.json")
+        harness.file_paths = [path]
+        anchor_a = _segment("a1", "同一文", "x1\nx2")
+        followup_a = _segment("a1f", "", "x3", translation_only=True)
+        anchor_b = _segment("a2", "同一文", "y1")
+        followup_b = _segment("a2f", "", "y2", translation_only=True)
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[anchor_a, followup_a, anchor_b, followup_b],
+        )
+        harness.current_path = None
+        harness.selected_segment_uid = ""
+
+        class _FakeItem:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._payload = payload
+
+            def data(self, _role: object) -> object:
+                return self._payload
+
+        class _FakeGroups:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._item = _FakeItem(payload)
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+            def currentRow(self) -> int:
+                return 0
+
+            def count(self) -> int:
+                return 1
+
+            def item(self, _index: int) -> _FakeItem:
+                return self._item
+
+        class _FakeEntries:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._item = _FakeItem(payload)
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+        class _FakeTargetEdit:
+            def __init__(self, value: str) -> None:
+                self._value = value
+
+            def toPlainText(self) -> str:
+                return self._value
+
+            def setPlainText(self, value: str) -> None:
+                self._value = value
+
+        groups = harness._collect_audit_consistency_groups(
+            only_inconsistent=False,
+            dialogue_only=True,
+            sort_mode="source_order",
+        )
+        self.assertEqual(len(groups), 1)
+        selected_entry = groups[0]["entries"][0]
+
+        harness.audit_consistency_groups_list = _FakeGroups(groups[0])
+        harness.audit_consistency_entries_list = _FakeEntries(selected_entry)
+        harness.audit_consistency_target_edit = _FakeTargetEdit(
+            "N1\nN2\n\n\n\nN3"
+        )
+        harness._refresh_dirty_state = lambda _session: None  # type: ignore[method-assign]
+        harness._invalidate_audit_caches = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_sanitize_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_control_mismatch_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_name_consistency_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_translator_detail_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_consistency_panel = (  # type: ignore[method-assign]
+            lambda preferred_source=None, preferred_row=None: None
+        )
+        harness._focus_audit_consistency_groups_list = lambda: None  # type: ignore[method-assign]
+        harness._render_session = lambda _session, **_kwargs: None  # type: ignore[method-assign]
+
+        harness._apply_audit_consistency_target_to_group(advance_to_next=False)
+
+        self.assertEqual(anchor_a.translation_lines, ["N1", "N2"])
+        self.assertEqual(followup_a.translation_lines, ["N3"])
+        self.assertEqual(anchor_b.translation_lines, ["N1", "N2"])
+        self.assertEqual(followup_b.translation_lines, ["N3"])
+
+    def test_apply_group_parses_single_blank_separator_after_line_limit(self) -> None:
+        harness = _Harness()
+        path = Path("Map031d.json")
+        harness.file_paths = [path]
+        anchor_a = _segment("a1", "同一文", "x1\nx2\nx3\nx4")
+        followup_a = _segment("a1f", "", "x5", translation_only=True)
+        anchor_b = _segment("a2", "同一文", "y1")
+        followup_b = _segment("a2f", "", "y2", translation_only=True)
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[anchor_a, followup_a, anchor_b, followup_b],
+        )
+        harness.current_path = None
+        harness.selected_segment_uid = ""
+
+        class _FakeItem:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._payload = payload
+
+            def data(self, _role: object) -> object:
+                return self._payload
+
+        class _FakeGroups:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._item = _FakeItem(payload)
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+            def currentRow(self) -> int:
+                return 0
+
+            def count(self) -> int:
+                return 1
+
+            def item(self, _index: int) -> _FakeItem:
+                return self._item
+
+        class _FakeEntries:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._item = _FakeItem(payload)
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+        class _FakeTargetEdit:
+            def __init__(self, value: str) -> None:
+                self._value = value
+
+            def toPlainText(self) -> str:
+                return self._value
+
+            def setPlainText(self, value: str) -> None:
+                self._value = value
+
+        groups = harness._collect_audit_consistency_groups(
+            only_inconsistent=False,
+            dialogue_only=True,
+            sort_mode="source_order",
+        )
+        self.assertEqual(len(groups), 1)
+        selected_entry = groups[0]["entries"][0]
+
+        harness.audit_consistency_groups_list = _FakeGroups(groups[0])
+        harness.audit_consistency_entries_list = _FakeEntries(selected_entry)
+        harness.audit_consistency_target_edit = _FakeTargetEdit(
+            "N1\nN2\nN3\nN4\n\nN5"
+        )
+        harness._refresh_dirty_state = lambda _session: None  # type: ignore[method-assign]
+        harness._invalidate_audit_caches = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_sanitize_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_control_mismatch_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_name_consistency_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_translator_detail_panel = lambda: None  # type: ignore[method-assign]
+        harness._refresh_audit_consistency_panel = (  # type: ignore[method-assign]
+            lambda preferred_source=None, preferred_row=None: None
+        )
+        harness._focus_audit_consistency_groups_list = lambda: None  # type: ignore[method-assign]
+        harness._render_session = lambda _session, **_kwargs: None  # type: ignore[method-assign]
+
+        harness._apply_audit_consistency_target_to_group(advance_to_next=False)
+
+        self.assertEqual(anchor_a.translation_lines, ["N1", "N2", "N3", "N4"])
+        self.assertEqual(followup_a.translation_lines, ["N5"])
+        self.assertEqual(anchor_b.translation_lines, ["N1", "N2", "N3", "N4"])
+        self.assertEqual(followup_b.translation_lines, ["N5"])
+
+    def test_apply_group_parses_legacy_block_divider_text_into_split_chunks(self) -> None:
+        harness = _Harness()
+        path = Path("Map031c.json")
+        harness.file_paths = [path]
+        anchor_a = _segment("a1", "同一文", "x1\nx2")
+        followup_a = _segment("a1f", "", "x3", translation_only=True)
+        anchor_b = _segment("a2", "同一文", "y1")
+        followup_b = _segment("a2f", "", "y2", translation_only=True)
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[anchor_a, followup_a, anchor_b, followup_b],
+        )
+        harness.current_path = None
+        harness.selected_segment_uid = ""
+
+        class _FakeItem:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._payload = payload
+
+            def data(self, _role: object) -> object:
+                return self._payload
+
+        class _FakeGroups:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._item = _FakeItem(payload)
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+            def currentRow(self) -> int:
+                return 0
+
+            def count(self) -> int:
+                return 1
+
+            def item(self, _index: int) -> _FakeItem:
+                return self._item
+
+        class _FakeEntries:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._item = _FakeItem(payload)
+
+            def currentItem(self) -> _FakeItem:
+                return self._item
+
+        class _FakeTargetEdit:
+            def __init__(self, value: str) -> None:
+                self._value = value
+
+            def toPlainText(self) -> str:
+                return self._value
+
+            def setPlainText(self, value: str) -> None:
+                self._value = value
+
+        groups = harness._collect_audit_consistency_groups(
+            only_inconsistent=False,
+            dialogue_only=True,
+            sort_mode="source_order",
+        )
+        self.assertEqual(len(groups), 1)
+        selected_entry = groups[0]["entries"][0]
+
+        harness.audit_consistency_groups_list = _FakeGroups(groups[0])
+        harness.audit_consistency_entries_list = _FakeEntries(selected_entry)
+        harness.audit_consistency_target_edit = _FakeTargetEdit(
+            "N1\nN2\n\n----- Block 2 -----\n\nN3"
+        )
         harness._refresh_dirty_state = lambda _session: None  # type: ignore[method-assign]
         harness._invalidate_audit_caches = lambda: None  # type: ignore[method-assign]
         harness._refresh_audit_sanitize_panel = lambda: None  # type: ignore[method-assign]

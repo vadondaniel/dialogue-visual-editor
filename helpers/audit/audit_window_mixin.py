@@ -376,7 +376,7 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             "Type translation to apply to all entries in selected group."
         )
         consistency_target_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        consistency_target_edit.setFixedHeight(
+        consistency_target_edit.setMinimumHeight(
             _plain_text_height_for_lines(consistency_target_edit, 5)
         )
         consistency_target_highlighter = ControlCodeHighlighter(
