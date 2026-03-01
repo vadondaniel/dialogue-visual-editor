@@ -52,6 +52,34 @@ class _Harness(AuditNameConsistencyMixin):
             return value.split("\n")
         return [""]
 
+    def _segment_source_lines_for_translation(self, segment: DialogueSegment) -> list[str]:
+        lines = self._segment_source_lines_for_display(segment)
+        if bool(getattr(segment, "consistency_inferred_speaker", False)):
+            if len(lines) > 1:
+                return list(lines[1:])
+            return [""]
+        return list(lines) if lines else [""]
+
+    def _segment_translation_lines_for_translation(self, segment: DialogueSegment) -> list[str]:
+        lines = self._normalize_translation_lines(segment.translation_lines)
+        if bool(getattr(segment, "consistency_inferred_speaker", False)):
+            if len(lines) > 1:
+                return list(lines[1:])
+            return [""]
+        return list(lines) if lines else [""]
+
+    def _compose_translation_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        visible_lines: list[str],
+    ) -> list[str]:
+        normalized_visible = self._normalize_translation_lines(visible_lines)
+        if not bool(getattr(segment, "consistency_inferred_speaker", False)):
+            return normalized_visible
+        source_lines = self._segment_source_lines_for_display(segment)
+        prefix = source_lines[0] if source_lines else ""
+        return [prefix] + normalized_visible
+
     @staticmethod
     def _is_name_index_session(session: FileSession) -> bool:
         return bool(getattr(session, "is_name_index_session", False))
@@ -282,6 +310,37 @@ class AuditNameConsistencyMixinTests(unittest.TestCase):
 
         self.assertEqual(len(matched), 1)
         self.assertEqual(filtered_out, [])
+
+    def test_collect_groups_ignores_inferred_speaker_line_for_glossary_checks(self) -> None:
+        harness = _Harness()
+        misc_path = Path("Actors.json")
+        misc_session = FileSession(
+            path=misc_path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("Actors.json:A:1:name", "ユウカ", "Yuka", segment_kind="name_index"),
+            ],
+        )
+        setattr(misc_session, "is_name_index_session", True)
+        setattr(misc_session, "name_index_label", "Actor")
+
+        map_path = Path("Map020.json")
+        dialogue = _segment("Map020.json:L0:0", "ユウカ\nこんにちは", "ユウカ\nHello")
+        setattr(dialogue, "consistency_inferred_speaker", True)
+        map_session = FileSession(
+            path=map_path,
+            data=[],
+            bundles=[],
+            segments=[dialogue],
+        )
+        harness.file_paths = [misc_path, map_path]
+        harness.sessions[misc_path] = misc_session
+        harness.sessions[map_path] = map_session
+
+        groups = harness._collect_audit_name_consistency_groups(dialogue_only=True)
+
+        self.assertEqual(groups, [])
 
 
 if __name__ == "__main__":

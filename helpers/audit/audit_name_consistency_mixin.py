@@ -95,6 +95,62 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 return source_line, target_line
         return "", ""
 
+    def _name_consistency_source_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+    ) -> list[str]:
+        source_lines_resolver = getattr(self, "_segment_source_lines_for_translation", None)
+        if callable(source_lines_resolver):
+            try:
+                resolved = source_lines_resolver(segment)
+            except Exception:
+                resolved = None
+            if isinstance(resolved, list):
+                return self._normalize_translation_lines(resolved)
+        return self._normalize_translation_lines(
+            self._segment_source_lines_for_display(segment)
+        )
+
+    def _name_consistency_translation_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+    ) -> list[str]:
+        visible_lines_resolver = getattr(self, "_segment_translation_lines_for_translation", None)
+        if callable(visible_lines_resolver):
+            try:
+                resolved_visible = visible_lines_resolver(segment)
+            except Exception:
+                resolved_visible = None
+            if isinstance(resolved_visible, list):
+                candidate = self._normalize_translation_lines(resolved_visible)
+                normalize_for_segment = getattr(
+                    self, "_normalize_audit_translation_lines_for_segment", None
+                )
+                if callable(normalize_for_segment):
+                    try:
+                        normalized_raw = normalize_for_segment(segment, candidate)
+                    except Exception:
+                        normalized_raw = candidate
+                    return self._normalize_translation_lines(normalized_raw)
+                return candidate
+
+        normalize_for_segment = getattr(
+            self, "_normalize_audit_translation_lines_for_segment", None
+        )
+        if callable(normalize_for_segment):
+            try:
+                tl_lines_raw = normalize_for_segment(
+                    segment,
+                    segment.translation_lines,
+                )
+            except Exception:
+                tl_lines_raw = self._normalize_translation_lines(
+                    segment.translation_lines
+                )
+        else:
+            tl_lines_raw = self._normalize_translation_lines(segment.translation_lines)
+        return self._normalize_translation_lines(tl_lines_raw)
+
     def _collect_misc_glossary_entries(self) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str, str]] = set()
@@ -115,21 +171,8 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                         field_name = resolved_field.strip().lower()
                 if field_name != "name":
                     continue
-                source_lines = self._segment_source_lines_for_display(segment)
-                normalize_for_segment = getattr(
-                    self, "_normalize_audit_translation_lines_for_segment", None
-                )
-                if callable(normalize_for_segment):
-                    try:
-                        tl_lines = normalize_for_segment(
-                            segment, segment.translation_lines
-                        )
-                    except Exception:
-                        tl_lines = self._normalize_translation_lines(
-                            segment.translation_lines
-                        )
-                else:
-                    tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                source_lines = self._name_consistency_source_lines_for_segment(segment)
+                tl_lines = self._name_consistency_translation_lines_for_segment(segment)
                 if not isinstance(source_lines, list) or not source_lines:
                     continue
                 if not isinstance(tl_lines, list):
@@ -175,21 +218,8 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             for block_index, segment in enumerate(session.segments, start=1):
                 if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
                     continue
-                source_lines = self._segment_source_lines_for_display(segment)
-                normalize_for_segment = getattr(
-                    self, "_normalize_audit_translation_lines_for_segment", None
-                )
-                if callable(normalize_for_segment):
-                    try:
-                        tl_lines = normalize_for_segment(
-                            segment, segment.translation_lines
-                        )
-                    except Exception:
-                        tl_lines = self._normalize_translation_lines(
-                            segment.translation_lines
-                        )
-                else:
-                    tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                source_lines = self._name_consistency_source_lines_for_segment(segment)
+                tl_lines = self._name_consistency_translation_lines_for_segment(segment)
                 if not isinstance(source_lines, list) or not source_lines:
                     continue
                 if not isinstance(tl_lines, list):
@@ -572,23 +602,9 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                     break
             if target_segment is None:
                 continue
-            normalize_for_segment = getattr(
-                self, "_normalize_audit_translation_lines_for_segment", None
+            current_lines = self._name_consistency_translation_lines_for_segment(
+                target_segment
             )
-            if callable(normalize_for_segment):
-                try:
-                    current_lines_raw = normalize_for_segment(
-                        target_segment, target_segment.translation_lines
-                    )
-                except Exception:
-                    current_lines_raw = self._normalize_translation_lines(
-                        target_segment.translation_lines
-                    )
-            else:
-                current_lines_raw = self._normalize_translation_lines(
-                    target_segment.translation_lines
-                )
-            current_lines = self._normalize_translation_lines(current_lines_raw)
             next_lines: list[str] = []
             block_replacements = 0
             for line in current_lines:
@@ -601,18 +617,29 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 block_replacements += count
             if block_replacements <= 0:
                 continue
+            normalize_for_segment = getattr(
+                self, "_normalize_audit_translation_lines_for_segment", None
+            )
+            compose_resolver = getattr(self, "_compose_translation_lines_for_segment", None)
+            visible_next_lines = list(next_lines)
             if callable(normalize_for_segment):
                 try:
-                    stored_lines_raw = normalize_for_segment(
-                        target_segment, next_lines
+                    stored_visible_raw = normalize_for_segment(
+                        target_segment,
+                        visible_next_lines,
                     )
-                    target_segment.translation_lines = list(
-                        self._normalize_translation_lines(stored_lines_raw)
-                    )
+                    visible_next_lines = self._normalize_translation_lines(stored_visible_raw)
                 except Exception:
-                    target_segment.translation_lines = list(next_lines)
-            else:
-                target_segment.translation_lines = list(next_lines)
+                    visible_next_lines = list(next_lines)
+            stored_lines: list[str] = list(visible_next_lines)
+            if callable(compose_resolver):
+                try:
+                    composed_raw = compose_resolver(target_segment, visible_next_lines)
+                except Exception:
+                    composed_raw = stored_lines
+                if isinstance(composed_raw, list):
+                    stored_lines = self._normalize_translation_lines(composed_raw)
+            target_segment.translation_lines = list(stored_lines)
             changed_blocks += 1
             replaced_total += block_replacements
             touched_paths.add(path)
