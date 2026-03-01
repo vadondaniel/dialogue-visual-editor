@@ -22,6 +22,7 @@ from ..core.models import (
 from ..core.parser import (
     is_tyrano_config_data,
     is_tyrano_config_path,
+    is_tyrano_js_path,
     is_plugins_js_path,
     is_tyrano_script_data,
     is_tyrano_script_path,
@@ -2566,7 +2567,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if is_plugins_js_path(path):
                     decoded_payload = json.loads(payload)
                     output_text = plugins_js_source_from_data(decoded_payload)
-                elif is_tyrano_script_path(path):
+                elif is_tyrano_script_path(path) or is_tyrano_js_path(path):
                     decoded_payload = json.loads(payload)
                     output_text = tyrano_script_source_from_data(decoded_payload)
                 elif is_tyrano_config_path(path):

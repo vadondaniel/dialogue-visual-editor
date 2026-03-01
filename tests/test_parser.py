@@ -553,6 +553,78 @@ class ParserTests(unittest.TestCase):
             )
         )
 
+    def test_parse_tyrano_js_file_extracts_const_name_fullname_and_ending_id_strings(self) -> None:
+        source = (
+            "const CHARA_LIST = {};\n"
+            "CHARA_LIST['兄'] = {\n"
+            "    name        : '璃久'\n"
+            "  , fullName    : '天宮 璃久'\n"
+            "};\n"
+            "const END_LIST = [\n"
+            "  { id: '双子' },\n"
+            "  { id: '妹の妹' },\n"
+            "];\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "const.js"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        script_text_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and str(getattr(segment, "context", "")).find("script_text[") >= 0
+        ]
+        self.assertEqual(
+            [segment.lines[0] for segment in script_text_segments],
+            ["璃久", "天宮 璃久", "双子", "妹の妹"],
+        )
+        rebuilt_source = tyrano_script_source_from_data(session.data)
+        self.assertEqual(rebuilt_source, source)
+
+    def test_parse_tyrano_js_file_skips_non_whitelisted_property_strings(self) -> None:
+        source = (
+            "const STATUS = {};\n"
+            "STATUS['x'] = {\n"
+            "    base : '通常',\n"
+            "    body : '巨乳',\n"
+            "    sound: '女体化',\n"
+            "};\n"
+            "const CHARA = { name: '陽菜' };\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "const_status.js"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        script_text_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and str(getattr(segment, "context", "")).find("script_text[") >= 0
+        ]
+        self.assertEqual([segment.lines[0] for segment in script_text_segments], ["陽菜"])
+
+    def test_parse_tyrano_js_file_does_not_extract_weekday_array_literal_values(self) -> None:
+        source = (
+            "const symbol = {\n"
+            "    E: ['日', '月', '火', '水', '木', '金', '土'][idx]\n"
+            "};\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "script.js"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        script_text_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and str(getattr(segment, "context", "")).find("script_text[") >= 0
+        ]
+        self.assertEqual(script_text_segments, [])
+
     def test_parse_tyrano_script_file_splits_dialogue_by_page_break(self) -> None:
         source = (
             "[tb_start_text mode=3 ]\n"

@@ -90,6 +90,49 @@ class TyranoConfigFileCollectionTests(unittest.TestCase):
 
         self.assertIn(config_path.resolve(), collected)
 
+    def test_collect_tyrano_script_paths_includes_others_js(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "data"
+            scenario_dir = data_dir / "scenario"
+            others_dir = data_dir / "others"
+            scenario_dir.mkdir(parents=True)
+            others_dir.mkdir(parents=True)
+            ks_path = scenario_dir / "scene1.ks"
+            const_js_path = others_dir / "const.js"
+            script_js_path = others_dir / "script.js"
+            ks_path.write_text("[tb_start_text mode=1 ]\nline[p]\n[_tb_end_text]\n", encoding="utf-8")
+            const_js_path.write_text("const A = 'x';\n", encoding="utf-8")
+            script_js_path.write_text("const B = 'y';\n", encoding="utf-8")
+
+            harness = _Harness(data_dir)
+            collected = harness._collect_tyrano_script_paths(data_dir)
+
+        self.assertIn(ks_path.resolve(), collected)
+        self.assertIn(const_js_path.resolve(), collected)
+        self.assertIn(script_js_path.resolve(), collected)
+
+    def test_collect_supported_file_paths_for_tyrano_includes_others_js(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / "data"
+            scenario_dir = data_dir / "scenario"
+            others_dir = data_dir / "others"
+            scenario_dir.mkdir(parents=True)
+            others_dir.mkdir(parents=True)
+            (scenario_dir / "scene1.ks").write_text(
+                "[tb_start_text mode=1 ]\nline[p]\n[_tb_end_text]\n",
+                encoding="utf-8",
+            )
+            const_js_path = others_dir / "const.js"
+            const_js_path.write_text("const A = 'x';\n", encoding="utf-8")
+
+            harness = _Harness(data_dir)
+            collected = cast(
+                list[Path],
+                _call_editor_method("_collect_supported_file_paths", harness, data_dir),
+            )
+
+        self.assertIn(const_js_path.resolve(), collected)
+
 
 if __name__ == "__main__":
     unittest.main()

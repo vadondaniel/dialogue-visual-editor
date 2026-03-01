@@ -693,6 +693,42 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertNotIn("name        : '璃久'", rebuilt)
         self.assertNotIn("fullName    : '天宮 璃久'", rebuilt)
 
+    def test_apply_session_to_json_updates_tyrano_js_const_object_strings(self) -> None:
+        harness = _Harness()
+        source = (
+            "const CHARA_LIST = {};\n"
+            "CHARA_LIST['兄'] = {\n"
+            "    name        : '璃久'\n"
+            "  , fullName    : '天宮 璃久'\n"
+            "};\n"
+            "const END_LIST = [{ id: '双子' }];\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "const.js"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and "script_text[" in segment.context
+        ]
+        self.assertEqual([segment.lines[0] for segment in segments], ["璃久", "天宮 璃久", "双子"])
+        segments[0].lines = ["Riku"]
+        segments[1].lines = ["Amamiya Riku"]
+        segments[2].lines = ["Twins"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("name        : 'Riku'", rebuilt)
+        self.assertIn("fullName    : 'Amamiya Riku'", rebuilt)
+        self.assertIn("id: 'Twins'", rebuilt)
+        self.assertNotIn("name        : '璃久'", rebuilt)
+        self.assertNotIn("fullName    : '天宮 璃久'", rebuilt)
+        self.assertNotIn("id: '双子'", rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_multi_page_chunk(self) -> None:
         harness = _Harness()
         source = (

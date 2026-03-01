@@ -168,6 +168,7 @@ except ImportError:
 
 try:
     from .helpers.core.parser import (
+        is_tyrano_js_path,
         is_tyrano_script_path,
         load_plugins_js_file,
         load_tyrano_config_file,
@@ -176,6 +177,7 @@ try:
     )
 except ImportError:
     from helpers.core.parser import (
+        is_tyrano_js_path,
         is_tyrano_script_path,
         load_plugins_js_file,
         load_tyrano_config_file,
@@ -5640,6 +5642,20 @@ class DialogueVisualEditor(
                 continue
             seen.add(resolved)
             supported_files.append(resolved)
+        others_dir = data_dir / "others"
+        if others_dir.is_dir():
+            for path in others_dir.rglob("*.js"):
+                if not path.is_file():
+                    continue
+                if path.name.endswith(".bak"):
+                    continue
+                if path.name.strip().lower() == "plugins.js":
+                    continue
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                supported_files.append(resolved)
         for candidate in self._tyrano_config_candidates(data_dir):
             if not candidate.is_file():
                 continue
@@ -5720,7 +5736,7 @@ class DialogueVisualEditor(
         source_path: Path,
         virtual_path: Path,
     ) -> FileSession:
-        if is_tyrano_script_path(virtual_path):
+        if is_tyrano_script_path(virtual_path) or is_tyrano_js_path(virtual_path):
             decoded = load_tyrano_script_file(source_path)
             return parse_dialogue_data(virtual_path, decoded)
         if virtual_path.name.strip().lower() == "plugins.js":

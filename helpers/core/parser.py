@@ -87,9 +87,25 @@ _TYRANO_TRAILING_DIALOGUE_MARKERS_RE = re.compile(
 )
 _TYRANO_ISCRIPT_START_RE = re.compile(r"^\[\s*iscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
 _TYRANO_ISCRIPT_END_RE = re.compile(r"^\[\s*endscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
-_TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE = re.compile(r"\b[A-Za-z_$][\w$.]*\s*=\s*")
+_TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE = re.compile(r"\b(?P<lhs>[A-Za-z_$][\w$.]*)\s*=\s*")
 _TYRANO_SCRIPT_OBJECT_PROPERTY_PREFIX_RE = re.compile(
-    r"^\s*,?\s*(?:[A-Za-z_$][\w$]*|\"[^\"]+\"|'[^']+')\s*:\s*"
+    r"(?P<key>[A-Za-z_$][\w$]*|\"[^\"]+\"|'[^']+')\s*:\s*"
+)
+_TYRANO_JS_TRANSLATABLE_OBJECT_KEYS: set[str] = {
+    "name",
+    "fullname",
+    "id",
+    "text",
+    "title",
+    "label",
+    "e",
+}
+_TYRANO_JS_TRANSLATABLE_ASSIGNMENT_SUFFIXES: tuple[str, ...] = (
+    ".name",
+    ".fullname",
+    ".text",
+    ".title",
+    ".label",
 )
 _NOTE_JAPANESE_CHAR_RE = re.compile(
     r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
@@ -126,6 +142,10 @@ def is_plugins_js_path(path: Path) -> bool:
 
 def is_tyrano_script_path(path: Path) -> bool:
     return path.suffix.strip().lower() == ".ks"
+
+
+def is_tyrano_js_path(path: Path) -> bool:
+    return path.suffix.strip().lower() == ".js" and not is_plugins_js_path(path)
 
 
 def is_tyrano_config_path(path: Path) -> bool:
@@ -327,27 +347,39 @@ def _is_tyrano_iscript_end_line(line: str) -> bool:
 
 def _extract_tyrano_script_assignment_string_value(
     line: str,
-) -> tuple[int, int, str, str] | None:
+) -> tuple[int, int, str, str, str, str] | None:
     if not isinstance(line, str):
         return None
-    object_property_prefix = _TYRANO_SCRIPT_OBJECT_PROPERTY_PREFIX_RE.match(line)
-    if object_property_prefix is not None:
+    for object_property_prefix in _TYRANO_SCRIPT_OBJECT_PROPERTY_PREFIX_RE.finditer(line):
+        key_raw = object_property_prefix.groupdict().get("key", "")
+        key_name = _normalize_tyrano_script_string_key(key_raw)
         value_start = object_property_prefix.end()
-        if value_start < len(line):
-            quote_char = line[value_start]
-            if quote_char in {'"', "'"}:
-                cursor = value_start + 1
-                while cursor < len(line):
-                    char = line[cursor]
-                    if char == "\\":
-                        cursor += 2
-                        continue
-                    if char == quote_char:
-                        raw_value = line[value_start + 1:cursor]
-                        decoded = _unescape_tyrano_tag_attribute_value(raw_value)
-                        return value_start + 1, cursor, decoded, quote_char
-                    cursor += 1
+        if value_start >= len(line):
+            continue
+        quote_char = line[value_start]
+        if quote_char not in {'"', "'"}:
+            continue
+        cursor = value_start + 1
+        while cursor < len(line):
+            char = line[cursor]
+            if char == "\\":
+                cursor += 2
+                continue
+            if char == quote_char:
+                raw_value = line[value_start + 1:cursor]
+                decoded = _unescape_tyrano_tag_attribute_value(raw_value)
+                return (
+                    value_start + 1,
+                    cursor,
+                    decoded,
+                    quote_char,
+                    "object_property",
+                    key_name,
+                )
+            cursor += 1
     for match in _TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE.finditer(line):
+        lhs_raw = match.groupdict().get("lhs", "")
+        lhs_name = lhs_raw.strip().lower()
         value_start = match.end()
         if value_start >= len(line):
             continue
@@ -363,9 +395,37 @@ def _extract_tyrano_script_assignment_string_value(
             if char == quote_char:
                 raw_value = line[value_start + 1:cursor]
                 decoded = _unescape_tyrano_tag_attribute_value(raw_value)
-                return value_start + 1, cursor, decoded, quote_char
+                return (
+                    value_start + 1,
+                    cursor,
+                    decoded,
+                    quote_char,
+                    "assignment",
+                    lhs_name,
+                )
             cursor += 1
     return None
+
+
+def _normalize_tyrano_script_string_key(raw_key: str) -> str:
+    key = raw_key.strip()
+    if len(key) >= 2 and key[0] in {'"', "'"} and key[-1] == key[0]:
+        key = key[1:-1]
+    return key.strip().lower()
+
+
+def _should_extract_tyrano_js_script_string(
+    candidate_kind: str,
+    candidate_key: str,
+) -> bool:
+    key = candidate_key.strip().lower()
+    if not key:
+        return False
+    if candidate_kind == "object_property":
+        return key in _TYRANO_JS_TRANSLATABLE_OBJECT_KEYS
+    if candidate_kind == "assignment":
+        return key.endswith(_TYRANO_JS_TRANSLATABLE_ASSIGNMENT_SUFFIXES)
+    return False
 
 
 def _group_tyrano_text_items_by_page_break(
@@ -986,7 +1046,8 @@ def _build_tyrano_script_string_segments(
     segments: list[DialogueSegment] = []
     excluded_indexes = excluded_chunk_indexes or set()
     text_index = 1
-    in_iscript_block = False
+    is_js_file = is_tyrano_js_path(path)
+    in_iscript_block = is_js_file
     for chunk_index, chunk in enumerate(chunks):
         if chunk_index in excluded_indexes:
             continue
@@ -996,19 +1057,24 @@ def _build_tyrano_script_string_segments(
             continue
         line_raw = chunk.get("line")
         line = line_raw if isinstance(line_raw, str) else ""
-        if _is_tyrano_iscript_start_line(line):
-            in_iscript_block = True
-            continue
-        if _is_tyrano_iscript_end_line(line):
-            in_iscript_block = False
-            continue
+        if not is_js_file:
+            if _is_tyrano_iscript_start_line(line):
+                in_iscript_block = True
+                continue
+            if _is_tyrano_iscript_end_line(line):
+                in_iscript_block = False
+                continue
         if not in_iscript_block:
             continue
         attr_payload = _extract_tyrano_script_assignment_string_value(line)
         if attr_payload is None:
             continue
-        value_start, value_end, decoded_value, quote_char = attr_payload
-        if not _NOTE_JAPANESE_CHAR_RE.search(decoded_value):
+        value_start, value_end, decoded_value, quote_char, candidate_kind, candidate_key = attr_payload
+        if is_js_file and not _should_extract_tyrano_js_script_string(candidate_kind, candidate_key):
+            continue
+        if (not is_js_file) and not _NOTE_JAPANESE_CHAR_RE.search(decoded_value):
+            continue
+        if is_js_file and not decoded_value.strip():
             continue
         normalized_text = _replace_tyrano_attribute_line_breaks_with_newlines(
             decoded_value
@@ -1911,7 +1977,7 @@ def parse_dialogue_file(path: Path) -> FileSession:
     if is_plugins_js_path(path):
         data = load_plugins_js_file(path)
         return parse_dialogue_data(path, data)
-    if is_tyrano_script_path(path):
+    if is_tyrano_script_path(path) or is_tyrano_js_path(path):
         data = load_tyrano_script_file(path)
         return parse_dialogue_data(path, data)
     if is_tyrano_config_path(path):
