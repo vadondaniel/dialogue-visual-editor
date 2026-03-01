@@ -487,6 +487,36 @@ class ParserTests(unittest.TestCase):
         ]
         self.assertEqual(dialogue_segments, [])
 
+    def test_parse_tyrano_script_file_extracts_iscript_translatable_assignment_strings(self) -> None:
+        source = (
+            "[macro name=\"titlebutton\"]\n"
+            "[iscript]\n"
+            "    mp.text = 'はじめから';\n"
+            "    mp.storage = 'opening.ks';\n"
+            "    mp.role = 'sleepgame';\n"
+            "    mp.text = 'つづきから';\n"
+            "[endscript]\n"
+            "[endmacro]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "script_strings.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        script_text_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and str(getattr(segment, "context", "")).find("script_text[") >= 0
+        ]
+        self.assertEqual(len(script_text_segments), 2)
+        self.assertEqual(script_text_segments[0].lines, ["はじめから"])
+        self.assertEqual(script_text_segments[1].lines, ["つづきから"])
+        self.assertEqual(
+            getattr(script_text_segments[0], "tyrano_tag_text_join_mode", ""),
+            "script_string",
+        )
+
     def test_parse_tyrano_script_file_splits_dialogue_by_page_break(self) -> None:
         source = (
             "[tb_start_text mode=3 ]\n"

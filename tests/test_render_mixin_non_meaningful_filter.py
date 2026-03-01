@@ -306,6 +306,42 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
 
         self.assertEqual([segment.uid for segment in display], ["pc_text"])
 
+    def test_toggle_on_hides_alphanumeric_tyrano_script_string_segments(self) -> None:
+        harness = _Harness(hide_non_meaningful=True)
+        script_id = _segment("scene.ks:KS:1", "SAVE1", segment_kind="tyrano_tag_text")
+        setattr(script_id, "tyrano_tag_text_join_mode", "script_string")
+        script_words = _segment("scene.ks:KS:2", "MAIN MENU 2", segment_kind="tyrano_tag_text")
+        setattr(script_words, "tyrano_tag_text_join_mode", "script_string")
+        script_path = _segment("scene.ks:KS:3", "opening.ks", segment_kind="tyrano_tag_text")
+        setattr(script_path, "tyrano_tag_text_join_mode", "script_string")
+        script_jp = _segment("scene.ks:KS:4", "回想モード", segment_kind="tyrano_tag_text")
+        setattr(script_jp, "tyrano_tag_text_join_mode", "script_string")
+        session = _session_with_segments([script_id, script_words, script_path, script_jp])
+
+        display = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=False,
+        )
+
+        self.assertEqual([segment.uid for segment in display], ["scene.ks:KS:3", "scene.ks:KS:4"])
+
+    def test_toggle_off_keeps_alphanumeric_tyrano_script_string_segments(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        script_id = _segment("scene.ks:KS:1", "SAVE1", segment_kind="tyrano_tag_text")
+        setattr(script_id, "tyrano_tag_text_join_mode", "script_string")
+        script_words = _segment("scene.ks:KS:2", "MAIN MENU 2", segment_kind="tyrano_tag_text")
+        setattr(script_words, "tyrano_tag_text_join_mode", "script_string")
+        session = _session_with_segments([script_id, script_words])
+
+        display = harness._display_segments_for_session(
+            session,
+            translator_mode=False,
+            actor_mode=False,
+        )
+
+        self.assertEqual([segment.uid for segment in display], ["scene.ks:KS:1", "scene.ks:KS:2"])
+
     def test_translation_state_entry_filter_respects_toggle_for_plugin_parameters(self) -> None:
         entry = {
             "source_uid": "plugins.js:J:3:param_1_enabled",
@@ -347,6 +383,24 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
         )
         self.assertFalse(
             harness._translation_state_entry_is_meaningful_for_display(empty_entry)
+        )
+
+    def test_translation_state_entry_filter_hides_alphanumeric_tyrano_script_string_entries(self) -> None:
+        harness = _Harness(hide_non_meaningful=True)
+        hidden_entry = {
+            "source_uid": "scene.ks:KS:7",
+            "source_preview": "MAIN MENU 2",
+        }
+        visible_entry = {
+            "source_uid": "scene.ks:KS:8",
+            "source_preview": "回想モード",
+        }
+
+        self.assertFalse(
+            harness._translation_state_entry_is_meaningful_for_display(hidden_entry)
+        )
+        self.assertTrue(
+            harness._translation_state_entry_is_meaningful_for_display(visible_entry)
         )
 
     def test_plugin_group_key_and_title_detected_for_plugin_text_segment(self) -> None:

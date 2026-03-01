@@ -1322,6 +1322,13 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         return "[r]".join(flattened)
 
     @staticmethod
+    def _join_tyrano_text_lines_for_script_string(lines: list[str]) -> str:
+        flattened: list[str] = []
+        for line in lines:
+            flattened.extend(split_lines_preserve_empty(line))
+        return "\n".join(flattened)
+
+    @staticmethod
     def _escape_tyrano_config_value(value: str, quote_char: str) -> str:
         escaped = value.replace("\\", "\\\\")
         if quote_char == "'":
@@ -1760,8 +1767,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             quote_char = (
                 quote_raw if isinstance(quote_raw, str) and quote_raw in {'"', "'"} else '"'
             )
+            join_mode_raw = getattr(segment, "tyrano_tag_text_join_mode", "")
+            join_mode = join_mode_raw.strip().lower() if isinstance(join_mode_raw, str) else ""
             joined_value = (
-                self._join_tyrano_text_lines_for_attribute(segment.lines)
+                self._join_tyrano_text_lines_for_script_string(segment.lines)
+                if join_mode == "script_string"
+                else self._join_tyrano_text_lines_for_attribute(segment.lines)
                 if segment.lines
                 else ""
             )

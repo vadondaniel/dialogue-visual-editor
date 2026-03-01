@@ -85,6 +85,9 @@ _TYRANO_TRAILING_DIALOGUE_MARKERS_RE = re.compile(
     r"(?:\s*\[\s*(?:p|r)\s*\]\s*)+$",
     re.IGNORECASE,
 )
+_TYRANO_ISCRIPT_START_RE = re.compile(r"^\[\s*iscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
+_TYRANO_ISCRIPT_END_RE = re.compile(r"^\[\s*endscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
+_TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE = re.compile(r"\b[A-Za-z_$][\w$.]*\s*=\s*")
 _NOTE_JAPANESE_CHAR_RE = re.compile(
     r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
     r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF66-\uFF9F]"
@@ -309,6 +312,40 @@ def _replace_tyrano_attribute_line_breaks_with_newlines(text: str) -> str:
         return ""
     inline_normalized = _replace_tyrano_inline_line_breaks_with_newlines(text)
     return inline_normalized.replace("\\n", "\n")
+
+
+def _is_tyrano_iscript_start_line(line: str) -> bool:
+    return bool(_TYRANO_ISCRIPT_START_RE.match(line.strip()))
+
+
+def _is_tyrano_iscript_end_line(line: str) -> bool:
+    return bool(_TYRANO_ISCRIPT_END_RE.match(line.strip()))
+
+
+def _extract_tyrano_script_assignment_string_value(
+    line: str,
+) -> tuple[int, int, str, str] | None:
+    if not isinstance(line, str):
+        return None
+    for match in _TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE.finditer(line):
+        value_start = match.end()
+        if value_start >= len(line):
+            continue
+        quote_char = line[value_start]
+        if quote_char not in {'"', "'"}:
+            continue
+        cursor = value_start + 1
+        while cursor < len(line):
+            char = line[cursor]
+            if char == "\\":
+                cursor += 2
+                continue
+            if char == quote_char:
+                raw_value = line[value_start + 1:cursor]
+                decoded = _unescape_tyrano_tag_attribute_value(raw_value)
+                return value_start + 1, cursor, decoded, quote_char
+            cursor += 1
+    return None
 
 
 def _group_tyrano_text_items_by_page_break(
@@ -919,6 +956,63 @@ def _build_tyrano_tag_text_segments(
     return segments
 
 
+def _build_tyrano_script_string_segments(
+    path: Path,
+    data: dict[str, Any],
+    *,
+    excluded_chunk_indexes: set[int] | None = None,
+) -> list[DialogueSegment]:
+    chunks = _coerce_tyrano_script_chunks(data)
+    segments: list[DialogueSegment] = []
+    excluded_indexes = excluded_chunk_indexes or set()
+    text_index = 1
+    in_iscript_block = False
+    for chunk_index, chunk in enumerate(chunks):
+        if chunk_index in excluded_indexes:
+            continue
+        kind_raw = chunk.get("kind")
+        kind = kind_raw.strip().lower() if isinstance(kind_raw, str) else ""
+        if kind != "raw_line":
+            continue
+        line_raw = chunk.get("line")
+        line = line_raw if isinstance(line_raw, str) else ""
+        if _is_tyrano_iscript_start_line(line):
+            in_iscript_block = True
+            continue
+        if _is_tyrano_iscript_end_line(line):
+            in_iscript_block = False
+            continue
+        if not in_iscript_block:
+            continue
+        attr_payload = _extract_tyrano_script_assignment_string_value(line)
+        if attr_payload is None:
+            continue
+        value_start, value_end, decoded_value, quote_char = attr_payload
+        if not _NOTE_JAPANESE_CHAR_RE.search(decoded_value):
+            continue
+        normalized_text = _replace_tyrano_attribute_line_breaks_with_newlines(
+            decoded_value
+        )
+        lines = split_lines_preserve_empty(normalized_text)
+        uid = f"{path.name}:KS:{text_index}"
+        segment = DialogueSegment(
+            uid=uid,
+            context=f"{path.name} > script_text[{text_index}]",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=list(lines),
+            original_lines=list(lines),
+            source_lines=list(lines),
+            segment_kind="tyrano_tag_text",
+        )
+        setattr(segment, "tyrano_chunk_index", chunk_index)
+        setattr(segment, "tyrano_tag_text_span", (value_start, value_end))
+        setattr(segment, "tyrano_tag_text_quote", quote_char)
+        setattr(segment, "tyrano_tag_text_join_mode", "script_string")
+        segments.append(segment)
+        text_index += 1
+    return segments
+
+
 def _build_plugins_text_segments(path: Path, data: dict[str, Any]) -> list[DialogueSegment]:
     if not is_plugins_js_data(data):
         return []
@@ -1391,7 +1485,17 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
             data,
             excluded_chunk_indexes=choice_chunk_indexes,
         )
-        tyrano_segments = dialogue_segments + choice_segments + tag_text_segments
+        script_string_segments = _build_tyrano_script_string_segments(
+            path,
+            data,
+            excluded_chunk_indexes=choice_chunk_indexes,
+        )
+        tyrano_segments = (
+            dialogue_segments
+            + choice_segments
+            + tag_text_segments
+            + script_string_segments
+        )
         tyrano_segments.sort(
             key=lambda segment: (
                 int(getattr(segment, "tyrano_chunk_index", 0)),

@@ -30,6 +30,8 @@ class RenderMixin(_RenderHostTypingFallback):
     _PLUGIN_NUMBER_RE = re.compile(
         r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"
     )
+    _ALPHANUMERIC_TEXT_RE = re.compile(r"^[A-Za-z0-9]+(?:[ \t]+[A-Za-z0-9]+)*$")
+    _TYRANO_SCRIPT_TEXT_UID_RE = re.compile(r":ks:\d+$")
 
     @classmethod
     def _text_is_non_meaningful_parameter_value(cls, text: str) -> bool:
@@ -72,6 +74,20 @@ class RenderMixin(_RenderHostTypingFallback):
         if not normalized:
             return False
         return normalized.startswith("plugins.js:j:") and ":param_" in normalized
+
+    @classmethod
+    def _source_uid_is_tyrano_script_string_entry(cls, source_uid: str) -> bool:
+        normalized = source_uid.strip().lower()
+        if not normalized:
+            return False
+        return bool(cls._TYRANO_SCRIPT_TEXT_UID_RE.search(normalized))
+
+    @classmethod
+    def _text_is_alphanumeric_only(cls, text: str) -> bool:
+        compact = " ".join(text.split())
+        if not compact:
+            return False
+        return bool(cls._ALPHANUMERIC_TEXT_RE.fullmatch(compact))
 
     def _plugin_group_key_and_title_for_segment(
         self,
@@ -319,10 +335,23 @@ class RenderMixin(_RenderHostTypingFallback):
         source_text = self._segment_source_text_for_meaningful_check(segment)
         return self._text_is_non_meaningful_parameter_value(source_text)
 
+    def _is_tyrano_script_string_non_meaningful_segment(self, segment: DialogueSegment) -> bool:
+        if segment.segment_kind != "tyrano_tag_text":
+            return False
+        join_mode_raw = getattr(segment, "tyrano_tag_text_join_mode", "")
+        join_mode = join_mode_raw.strip().lower() if isinstance(join_mode_raw, str) else ""
+        if join_mode != "script_string":
+            return False
+        source_text = self._segment_source_text_for_meaningful_check(segment)
+        visible = strip_control_tokens(source_text).replace("\u3000", " ").strip()
+        return self._text_is_alphanumeric_only(visible)
+
     def _is_meaningful_segment_for_display(self, segment: DialogueSegment) -> bool:
         if self._is_empty_map_display_name_segment(segment):
             return False
         if self._is_plugin_non_meaningful_parameter_segment(segment):
+            return False
+        if self._is_tyrano_script_string_non_meaningful_segment(segment):
             return False
         return True
 
@@ -385,6 +414,11 @@ class RenderMixin(_RenderHostTypingFallback):
         if (
             self._source_uid_is_plugins_parameter_entry(source_uid)
             and self._text_is_non_meaningful_parameter_value(visible_source)
+        ):
+            return False
+        if (
+            self._source_uid_is_tyrano_script_string_entry(source_uid)
+            and self._text_is_alphanumeric_only(visible_source)
         ):
             return False
         return True

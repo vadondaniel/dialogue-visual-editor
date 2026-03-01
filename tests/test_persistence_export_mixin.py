@@ -625,6 +625,34 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertNotIn("[tb_start_text", rebuilt)
         self.assertNotIn("[_tb_end_text]", rebuilt)
 
+    def test_apply_session_to_json_updates_tyrano_iscript_assignment_text_string(self) -> None:
+        harness = _Harness()
+        source = (
+            "[iscript]\n"
+            "mp.text = 'はじめから';\n"
+            "mp.storage = 'opening.ks';\n"
+            "[endscript]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_script_text.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        script_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and "script_text[" in segment.context
+        )
+        script_segment.lines = ["Start", "From Beginning"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("mp.text = 'Start\\nFrom Beginning';", rebuilt)
+        self.assertIn("mp.storage = 'opening.ks';", rebuilt)
+        self.assertNotIn("mp.text = 'はじめから';", rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_multi_page_chunk(self) -> None:
         harness = _Harness()
         source = (
