@@ -625,6 +625,39 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertNotIn("[tb_start_text", rebuilt)
         self.assertNotIn("[_tb_end_text]", rebuilt)
 
+    def test_apply_session_to_json_updates_markerless_conditional_dialogue_branch_text(self) -> None:
+        harness = _Harness()
+        source = (
+            "#妹\n"
+            "A[r]\n"
+            "B[p]\n"
+            "C\n"
+            "[if exp=\"flag\"]\n"
+            "も\n"
+            "[endif]\n"
+            "D[p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_if_branch_text_save.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        conditional_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+            and segment.lines == ["も"]
+        )
+        conditional_segment.lines = ["too"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("[if exp=\"flag\"]", rebuilt)
+        self.assertIn("[endif]", rebuilt)
+        self.assertIn("too", rebuilt)
+        self.assertNotIn("\nも\n", rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_iscript_assignment_text_string(self) -> None:
         harness = _Harness()
         source = (

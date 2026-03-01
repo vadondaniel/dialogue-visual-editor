@@ -461,6 +461,49 @@ class ParserTests(unittest.TestCase):
             ["My, my, [兄]-chan."],
         )
 
+    def test_parse_tyrano_script_file_extracts_markerless_text_inside_conditional_dialogue_branch(self) -> None:
+        source = (
+            "#妹\n"
+            "A[r]\n"
+            "B[p]\n"
+            "C\n"
+            "[if exp=\"flag\"]\n"
+            "も\n"
+            "[endif]\n"
+            "D[p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_if_branch_text.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        dialogue_lines = [segment.lines for segment in dialogue_segments]
+        self.assertIn(["も"], dialogue_lines)
+        self.assertIn(["D"], dialogue_lines)
+
+    def test_parse_tyrano_script_file_ignores_markerless_conditional_code_blocks(self) -> None:
+        source = (
+            "[if exp=\"f.debug\"]\n"
+            "doWork();\n"
+            "[endif]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_if_code.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(dialogue_segments, [])
+
     def test_parse_tyrano_script_file_keeps_command_tag_lines_out_of_dialogue(self) -> None:
         source = (
             "[cm]\n"

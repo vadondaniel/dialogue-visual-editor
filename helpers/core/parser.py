@@ -87,6 +87,8 @@ _TYRANO_TRAILING_DIALOGUE_MARKERS_RE = re.compile(
 )
 _TYRANO_ISCRIPT_START_RE = re.compile(r"^\[\s*iscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
 _TYRANO_ISCRIPT_END_RE = re.compile(r"^\[\s*endscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
+_TYRANO_FLOW_OPEN_TAG_RE = re.compile(r"^\[\s*(?:if|elsif|else)\b[^\]]*\]$", re.IGNORECASE)
+_TYRANO_FLOW_CLOSE_TAG_RE = re.compile(r"^\[\s*(?:elsif|else|endif)\b[^\]]*\]$", re.IGNORECASE)
 _TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE = re.compile(r"\b(?P<lhs>[A-Za-z_$][\w$.]*)\s*=\s*")
 _TYRANO_SCRIPT_OBJECT_PROPERTY_PREFIX_RE = re.compile(
     r"(?P<key>[A-Za-z_$][\w$]*|\"[^\"]+\"|'[^']+')\s*:\s*"
@@ -361,6 +363,55 @@ def _is_tyrano_iscript_end_line(line: str) -> bool:
     return bool(_TYRANO_ISCRIPT_END_RE.match(line.strip()))
 
 
+def _is_tyrano_flow_open_line(line: str) -> bool:
+    return bool(_TYRANO_FLOW_OPEN_TAG_RE.match(line.strip()))
+
+
+def _is_tyrano_flow_close_line(line: str) -> bool:
+    return bool(_TYRANO_FLOW_CLOSE_TAG_RE.match(line.strip()))
+
+
+def _nearest_non_empty_line(
+    source_lines: list[str],
+    start_index: int,
+    step: int,
+) -> str | None:
+    index = start_index
+    while 0 <= index < len(source_lines):
+        candidate = source_lines[index]
+        if candidate.strip():
+            return candidate
+        index += step
+    return None
+
+
+def _has_tyrano_dialogue_marker_near_window(
+    source_lines: list[str],
+    start_index: int,
+    end_index: int,
+) -> bool:
+    scan_start = max(0, start_index - 8)
+    scan_end = min(len(source_lines), end_index + 8)
+    for line in source_lines[scan_start:scan_end]:
+        if _line_has_tyrano_dialogue_marker(line):
+            return True
+    return False
+
+
+def _is_tyrano_conditional_dialogue_window(
+    source_lines: list[str],
+    start_index: int,
+    end_index: int,
+) -> bool:
+    previous_line = _nearest_non_empty_line(source_lines, start_index - 1, -1)
+    if previous_line is None or not _is_tyrano_flow_open_line(previous_line):
+        return False
+    following_line = _nearest_non_empty_line(source_lines, end_index, 1)
+    if following_line is None or not _is_tyrano_flow_close_line(following_line):
+        return False
+    return _has_tyrano_dialogue_marker_near_window(source_lines, start_index, end_index)
+
+
 def _extract_tyrano_script_assignment_string_value(
     line: str,
 ) -> tuple[int, int, str, str, str, str] | None:
@@ -533,7 +584,13 @@ def _collect_tyrano_implicit_dialogue_block(
         if _line_has_tyrano_dialogue_marker(candidate):
             has_dialogue_marker = True
         next_index += 1
-    if not body_items or not has_dialogue_marker:
+    if not body_items:
+        return None
+    if not has_dialogue_marker and not _is_tyrano_conditional_dialogue_window(
+        source_lines,
+        start_index,
+        next_index,
+    ):
         return None
     return body_items, next_index
 
