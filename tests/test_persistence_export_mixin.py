@@ -762,6 +762,36 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertNotIn("__DVE_END_NAME_MAP_START__", rebuilt)
         self.assertNotIn("DVE_END_NAME_MAP", rebuilt)
 
+    def test_apply_session_to_json_keeps_tyrano_end_key_reference_assignments_stable(self) -> None:
+        harness = _Harness()
+        source = (
+            "[iscript]\n"
+            "f.ending = '双子';\n"
+            "[endscript]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "end_refs.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        ref_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and "script_text[" in segment.context
+        )
+        self.assertEqual(
+            getattr(ref_segment, "tyrano_tag_text_join_mode", ""),
+            "script_string_end_id_ref",
+        )
+        ref_segment.lines = ["Twins"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("f.ending = '双子';", rebuilt)
+        self.assertNotIn("f.ending = 'Twins';", rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_multi_page_chunk(self) -> None:
         harness = _Harness()
         source = (

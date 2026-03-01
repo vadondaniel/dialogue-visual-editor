@@ -1856,6 +1856,10 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                 if source_id and translated_id and translated_id != source_id:
                     end_name_overrides[source_id] = translated_id
                 continue
+            if join_mode == "script_string_end_id_ref":
+                # END key references must remain source-stable so game lookup
+                # still resolves END_LIST ids.
+                continue
             joined_value = (
                 self._join_tyrano_text_lines_for_script_string(segment.lines)
                 if join_mode == "script_string"

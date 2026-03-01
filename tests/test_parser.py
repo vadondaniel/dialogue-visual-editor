@@ -519,6 +519,37 @@ class ParserTests(unittest.TestCase):
         self.assertIn("mp.text", script_text_segments[0].context)
         self.assertIn("mp.text", script_text_segments[1].context)
 
+    def test_parse_tyrano_script_file_marks_ending_key_assignments_as_end_list_refs(self) -> None:
+        source = (
+            "[iscript]\n"
+            "f.ending = '双子';\n"
+            "f.ending = '妹の身代わり';\n"
+            "[endscript]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "end_refs.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        script_text_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and str(getattr(segment, "context", "")).find("script_text[") >= 0
+        ]
+        self.assertEqual(len(script_text_segments), 2)
+        self.assertEqual(
+            [segment.lines[0] for segment in script_text_segments],
+            ["双子", "妹の身代わり"],
+        )
+        self.assertTrue(
+            all(
+                getattr(segment, "tyrano_tag_text_join_mode", "") == "script_string_end_id_ref"
+                for segment in script_text_segments
+            )
+        )
+        self.assertIn("f.ending -> END_LIST.id", script_text_segments[0].context)
+
     def test_parse_tyrano_script_file_extracts_iscript_object_property_name_strings(self) -> None:
         source = (
             "[iscript]\n"

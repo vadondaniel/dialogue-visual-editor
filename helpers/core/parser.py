@@ -1126,7 +1126,10 @@ def _build_tyrano_script_string_segments(
             if should_collect and not decoded_value.strip():
                 should_collect = False
         else:
-            should_collect = bool(_NOTE_JAPANESE_CHAR_RE.search(decoded_value))
+            if candidate_kind == "assignment" and candidate_key.endswith(".ending"):
+                should_collect = bool(decoded_value.strip())
+            else:
+                should_collect = bool(_NOTE_JAPANESE_CHAR_RE.search(decoded_value))
         if should_collect:
             normalized_text = _replace_tyrano_attribute_line_breaks_with_newlines(
                 decoded_value
@@ -1136,6 +1139,12 @@ def _build_tyrano_script_string_segments(
             if is_js_file and candidate_kind == "object_property" and candidate_key == "id" and is_end_list_line:
                 end_list_id_counter += 1
                 descriptor = f"END_LIST[{end_list_id_counter}].id"
+            is_end_id_ref = (
+                candidate_kind == "assignment"
+                and candidate_key.endswith(".ending")
+            )
+            if is_end_id_ref:
+                descriptor = f"{candidate_key} -> END_LIST.id"
             if (
                 candidate_kind == "object_property"
                 and js_owner_hint
@@ -1163,6 +1172,11 @@ def _build_tyrano_script_string_segments(
                 # Keep END_LIST ids as stable keys and apply translation via display map.
                 setattr(segment, "tyrano_script_end_list_id_source", decoded_value)
                 setattr(segment, "tyrano_tag_text_join_mode", "script_string_end_id")
+            elif is_end_id_ref:
+                # END key references (e.g. f.ending = '双子') should stay stable and
+                # resolve through END_LIST ids, not be rewritten directly.
+                setattr(segment, "tyrano_script_end_list_id_source", decoded_value)
+                setattr(segment, "tyrano_tag_text_join_mode", "script_string_end_id_ref")
             segments.append(segment)
             text_index += 1
         if is_js_file and is_end_list_line:
