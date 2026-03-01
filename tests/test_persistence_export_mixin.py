@@ -653,6 +653,46 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertIn("mp.storage = 'opening.ks';", rebuilt)
         self.assertNotIn("mp.text = 'はじめから';", rebuilt)
 
+    def test_apply_session_to_json_updates_tyrano_iscript_object_property_name_string(self) -> None:
+        harness = _Harness()
+        source = (
+            "[iscript]\n"
+            "CHARA_LIST['兄'] = {\n"
+            "    name        : '璃久'\n"
+            "  , fullName    : '天宮 璃久'\n"
+            "};\n"
+            "[endscript]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_script_names.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        name_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and "script_text[" in segment.context
+            and segment.lines == ["璃久"]
+        )
+        full_name_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and "script_text[" in segment.context
+            and segment.lines == ["天宮 璃久"]
+        )
+        name_segment.lines = ["Riku"]
+        full_name_segment.lines = ["Amamiya Riku"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("name        : 'Riku'", rebuilt)
+        self.assertIn("fullName    : 'Amamiya Riku'", rebuilt)
+        self.assertNotIn("name        : '璃久'", rebuilt)
+        self.assertNotIn("fullName    : '天宮 璃久'", rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_multi_page_chunk(self) -> None:
         harness = _Harness()
         source = (

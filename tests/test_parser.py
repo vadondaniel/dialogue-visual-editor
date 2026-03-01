@@ -517,6 +517,42 @@ class ParserTests(unittest.TestCase):
             "script_string",
         )
 
+    def test_parse_tyrano_script_file_extracts_iscript_object_property_name_strings(self) -> None:
+        source = (
+            "[iscript]\n"
+            "CHARA_LIST['兄'] = {\n"
+            "    name        : '璃久'\n"
+            "  , fullName    : '天宮 璃久'\n"
+            "};\n"
+            "CHARA_LIST['妹'] = {\n"
+            "    name        : '陽菜'\n"
+            "  , fullName    : '天宮 陽菜'\n"
+            "};\n"
+            "[endscript]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "script_names.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        script_text_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+            and str(getattr(segment, "context", "")).find("script_text[") >= 0
+        ]
+        self.assertEqual(len(script_text_segments), 4)
+        self.assertEqual(
+            [segment.lines[0] for segment in script_text_segments],
+            ["璃久", "天宮 璃久", "陽菜", "天宮 陽菜"],
+        )
+        self.assertTrue(
+            all(
+                getattr(segment, "tyrano_tag_text_join_mode", "") == "script_string"
+                for segment in script_text_segments
+            )
+        )
+
     def test_parse_tyrano_script_file_splits_dialogue_by_page_break(self) -> None:
         source = (
             "[tb_start_text mode=3 ]\n"

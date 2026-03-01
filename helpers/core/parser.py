@@ -88,6 +88,9 @@ _TYRANO_TRAILING_DIALOGUE_MARKERS_RE = re.compile(
 _TYRANO_ISCRIPT_START_RE = re.compile(r"^\[\s*iscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
 _TYRANO_ISCRIPT_END_RE = re.compile(r"^\[\s*endscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
 _TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE = re.compile(r"\b[A-Za-z_$][\w$.]*\s*=\s*")
+_TYRANO_SCRIPT_OBJECT_PROPERTY_PREFIX_RE = re.compile(
+    r"^\s*,?\s*(?:[A-Za-z_$][\w$]*|\"[^\"]+\"|'[^']+')\s*:\s*"
+)
 _NOTE_JAPANESE_CHAR_RE = re.compile(
     r"[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u31F0-\u31FF"
     r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF66-\uFF9F]"
@@ -327,6 +330,23 @@ def _extract_tyrano_script_assignment_string_value(
 ) -> tuple[int, int, str, str] | None:
     if not isinstance(line, str):
         return None
+    object_property_prefix = _TYRANO_SCRIPT_OBJECT_PROPERTY_PREFIX_RE.match(line)
+    if object_property_prefix is not None:
+        value_start = object_property_prefix.end()
+        if value_start < len(line):
+            quote_char = line[value_start]
+            if quote_char in {'"', "'"}:
+                cursor = value_start + 1
+                while cursor < len(line):
+                    char = line[cursor]
+                    if char == "\\":
+                        cursor += 2
+                        continue
+                    if char == quote_char:
+                        raw_value = line[value_start + 1:cursor]
+                        decoded = _unescape_tyrano_tag_attribute_value(raw_value)
+                        return value_start + 1, cursor, decoded, quote_char
+                    cursor += 1
     for match in _TYRANO_SCRIPT_ASSIGNMENT_PREFIX_RE.finditer(line):
         value_start = match.end()
         if value_start >= len(line):
