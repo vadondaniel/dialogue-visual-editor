@@ -859,6 +859,13 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                     unused.remove(preferred_uid)
 
             if not chosen_uid:
+                for candidate_uid in source_uid_buckets.get(segment.uid, []):
+                    if candidate_uid in unused:
+                        chosen_uid = candidate_uid
+                        unused.remove(candidate_uid)
+                        break
+
+            if not chosen_uid:
                 seen_candidate_uids: set[str] = set()
                 for source_hash in source_hash_candidates:
                     for candidate_uid in hash_buckets.get(source_hash, []):

@@ -495,6 +495,35 @@ class TranslationStateMixinTests(unittest.TestCase):
         self.assertEqual(session.segments[1].translation_speaker, "")
         self.assertEqual([seg.uid for seg in session.segments], [seg_a.uid, seg_b.uid])
 
+    def test_apply_state_dialogue_falls_back_to_source_uid_when_hash_mismatches(self) -> None:
+        harness = _Harness()
+        session_segment = _segment("scene.ks:K:1", "EN source", "Hero")
+        session = FileSession(
+            path=Path("scene.ks"),
+            data=[],
+            bundles=[],
+            segments=[session_segment],
+        )
+        legacy_segment = _segment("scene.ks:K:1", "JP source", "Hero")
+        legacy_hash = harness._segment_source_hash(legacy_segment)
+        harness.translation_state["files"] = {
+            "scene.ks": {
+                "order": ["T_uid_fallback"],
+                "entries": {
+                    "T_uid_fallback": {
+                        "source_uid": "scene.ks:K:1",
+                        "source_hash": legacy_hash,
+                        "translation_lines": ["TL line"],
+                    }
+                },
+            }
+        }
+
+        harness._apply_translation_state_to_session(session)
+
+        self.assertEqual(session.segments[0].tl_uid, "T_uid_fallback")
+        self.assertEqual(session.segments[0].translation_lines, ["TL line"])
+
     def test_apply_state_inserts_translation_only_segments_in_saved_order(self) -> None:
         harness = _Harness()
         seg_1 = _segment("Map001.json:L0:0", "JP 1", "Hero")
