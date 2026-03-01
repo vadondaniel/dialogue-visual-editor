@@ -1067,6 +1067,34 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertIn('text="Line A[r]Line B"', rebuilt)
 
+    def test_apply_session_to_json_updates_tyrano_at_command_tag_text(self) -> None:
+        harness = _Harness()
+        source = (
+            '@titlebutton text="兄編" target="*A"\n'
+            '@titlebutton text="妹編" target="*B"\n'
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_at_tag_text_save.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        tag_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+        ]
+        self.assertEqual([segment.lines for segment in tag_segments], [["兄編"], ["妹編"]])
+        tag_segments[0].lines = ["Brother Route"]
+        tag_segments[1].lines = ["Sister Route"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn('@titlebutton text="Brother Route" target="*A"', rebuilt)
+        self.assertIn('@titlebutton text="Sister Route" target="*B"', rebuilt)
+        self.assertNotIn('@titlebutton text="兄編" target="*A"', rebuilt)
+        self.assertNotIn('@titlebutton text="妹編" target="*B"', rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_config_system_title(self) -> None:
         harness = _Harness()
         source = (

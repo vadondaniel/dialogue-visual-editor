@@ -918,6 +918,24 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(tag_segment.lines, ["補助", "ラベル"])
 
+    def test_parse_tyrano_at_command_text_extracts_tag_text(self) -> None:
+        source = (
+            '@titlebutton text="兄編" target="*A"\n'
+            '@titlebutton text="妹編" target="*B"\n'
+            '@jump target="*C"\n'
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_at_tag_text.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        tag_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_tag_text"
+        ]
+        self.assertEqual([segment.lines for segment in tag_segments], [["兄編"], ["妹編"]])
+
     def test_parse_tyrano_script_blank_speaker_marker_is_no_speaker(self) -> None:
         source = (
             "[tb_start_text mode=1 ]\n"

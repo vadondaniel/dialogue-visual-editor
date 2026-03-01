@@ -1117,7 +1117,7 @@ def _build_tyrano_tag_text_segments(
         line_raw = chunk.get("line")
         line = line_raw if isinstance(line_raw, str) else ""
         stripped = line.strip()
-        if not stripped.startswith("["):
+        if not (stripped.startswith("[") or stripped.startswith("@")):
             continue
         attr_payload = _extract_tyrano_tag_attribute_value(line, "text")
         if attr_payload is None:
