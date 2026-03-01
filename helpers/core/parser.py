@@ -395,6 +395,20 @@ def _is_tyrano_flow_close_line(line: str) -> bool:
     return bool(_TYRANO_FLOW_CLOSE_TAG_RE.match(line.strip()))
 
 
+def _tyrano_flow_depth_delta(line: str) -> int:
+    stripped = line.strip()
+    if not stripped:
+        return 0
+    lowered = stripped.lower()
+    if lowered.startswith("[if"):
+        return 1
+    if lowered.startswith("[else") or lowered.startswith("[elsif"):
+        return 0
+    if lowered.startswith("[endif"):
+        return -1
+    return 0
+
+
 def _nearest_non_empty_line(
     source_lines: list[str],
     start_index: int,
@@ -608,6 +622,27 @@ def _group_tyrano_dialogue_text_items(
     return groups
 
 
+def _append_tyrano_standalone_marker_to_previous_text(
+    body_items: list[dict[str, str]],
+    marker: str,
+) -> bool:
+    if not marker:
+        return False
+    for item_index in range(len(body_items) - 1, -1, -1):
+        item = body_items[item_index]
+        item_kind = str(item.get("kind", "")).strip().lower()
+        line_raw = item.get("line", "")
+        line = line_raw if isinstance(line_raw, str) else ""
+        if item_kind == "text":
+            item["line"] = f"{line}{marker}"
+            return True
+        if item_kind != "raw":
+            return False
+        if line.strip():
+            return False
+    return False
+
+
 def _collect_tyrano_implicit_dialogue_block(
     source_lines: list[str],
     start_index: int,
@@ -625,6 +660,7 @@ def _collect_tyrano_implicit_dialogue_block(
         body_items: list[dict[str, str]] = [{"kind": "speaker", "line": start_line}]
         has_text_items = False
         has_dialogue_marker = False
+        flow_depth = 0
         next_index = start_index + 1
         while next_index < len(source_lines):
             candidate = source_lines[next_index]
@@ -637,21 +673,20 @@ def _collect_tyrano_implicit_dialogue_block(
                 break
             standalone_marker = _extract_tyrano_standalone_dialogue_marker(candidate)
             if standalone_marker:
-                text_item_index: int | None = None
-                for item_index in range(len(body_items) - 1, -1, -1):
-                    if body_items[item_index].get("kind") == "text":
-                        text_item_index = item_index
-                        break
-                if text_item_index is None:
+                if (
+                    flow_depth > 0
+                    or not _append_tyrano_standalone_marker_to_previous_text(
+                        body_items,
+                        standalone_marker,
+                    )
+                ):
                     body_items.append({"kind": "raw", "line": candidate})
-                else:
-                    original_line = body_items[text_item_index].get("line", "")
-                    body_items[text_item_index]["line"] = f"{original_line}{standalone_marker}"
                 has_dialogue_marker = True
                 next_index += 1
                 continue
             if _is_tyrano_flow_open_line(candidate) or _is_tyrano_flow_close_line(candidate):
                 body_items.append({"kind": "raw", "line": candidate})
+                flow_depth = max(0, flow_depth + _tyrano_flow_depth_delta(candidate))
                 next_index += 1
                 continue
             if not _is_tyrano_dialogue_text_line(candidate):
@@ -676,6 +711,7 @@ def _collect_tyrano_implicit_dialogue_block(
     body_items = []
     has_text_items = False
     has_dialogue_marker = False
+    flow_depth = 0
     next_index = start_index
     while next_index < len(source_lines):
         candidate = source_lines[next_index]
@@ -686,21 +722,20 @@ def _collect_tyrano_implicit_dialogue_block(
             continue
         standalone_marker = _extract_tyrano_standalone_dialogue_marker(candidate)
         if standalone_marker:
-            text_item_index: int | None = None
-            for item_index in range(len(body_items) - 1, -1, -1):
-                if body_items[item_index].get("kind") == "text":
-                    text_item_index = item_index
-                    break
-            if text_item_index is None:
+            if (
+                flow_depth > 0
+                or not _append_tyrano_standalone_marker_to_previous_text(
+                    body_items,
+                    standalone_marker,
+                )
+            ):
                 body_items.append({"kind": "raw", "line": candidate})
-            else:
-                original_line = body_items[text_item_index].get("line", "")
-                body_items[text_item_index]["line"] = f"{original_line}{standalone_marker}"
             has_dialogue_marker = True
             next_index += 1
             continue
         if _is_tyrano_flow_open_line(candidate) or _is_tyrano_flow_close_line(candidate):
             body_items.append({"kind": "raw", "line": candidate})
+            flow_depth = max(0, flow_depth + _tyrano_flow_depth_delta(candidate))
             next_index += 1
             continue
         if not _is_tyrano_dialogue_text_line(candidate):

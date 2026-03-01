@@ -470,7 +470,7 @@ class ParserTests(unittest.TestCase):
             for segment in dialogue_segments
             for suffix in getattr(segment, "tyrano_line_suffixes", ())
         ]
-        self.assertEqual(flattened_suffixes, ["[r]", "[p]"])
+        self.assertEqual(flattened_suffixes, ["", ""])
 
     def test_parse_tyrano_script_file_accepts_bracket_prefixed_variable_dialogue_lines(self) -> None:
         source = (
