@@ -787,6 +787,24 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(choice_segment.lines, ["A\nB"])
 
+    def test_parse_tyrano_mylink_text_extracts_choice(self) -> None:
+        source = (
+            '@mylink text="元に戻せ！" target="*A"\n'
+            '@mylink text="胸が小さいな…" target="*B"\n'
+            "[s]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_choice_mylink.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        choice_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
+        )
+        self.assertEqual(choice_segment.lines, ["元に戻せ！", "胸が小さいな…"])
+
     def test_parse_tyrano_choice_converts_nbsp_to_spaces_for_editor(self) -> None:
         source = '[glink text="A\u00A0\u00A0B" target="*A"]\n'
         with tempfile.TemporaryDirectory() as tmpdir:

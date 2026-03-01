@@ -969,6 +969,31 @@ class PersistenceExportMixinTests(unittest.TestCase):
 
         self.assertIn('text="Choice[r]Line"', rebuilt)
 
+    def test_apply_session_to_json_updates_tyrano_mylink_choice_text(self) -> None:
+        harness = _Harness()
+        source = (
+            '@mylink text="元に戻せ！" target="*A"\n'
+            '@mylink text="胸が小さいな…" target="*B"\n'
+            "[s]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_choice_mylink.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        choice_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
+        )
+        choice_segment.lines = ["Change me back!", "Your chest is kind of small..."]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn('@mylink text="Change\u202fme\u202fback!" target="*A"', rebuilt)
+        self.assertIn('@mylink text="Your\u202fchest\u202fis\u202fkind\u202fof\u202fsmall..." target="*B"', rebuilt)
+
     def test_apply_session_to_json_preserves_tyrano_choice_intentional_spaces(self) -> None:
         harness = _Harness()
         source = '[glink text="A B" target="*A"]\n'

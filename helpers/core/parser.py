@@ -944,9 +944,13 @@ def _build_tyrano_dialogue_segments(path: Path, data: dict[str, Any]) -> list[Di
     return segments
 
 
-def _is_tyrano_glink_tag_line(line: str) -> bool:
+def _is_tyrano_choice_tag_line(line: str) -> bool:
     lowered = line.strip().lower()
-    return lowered.startswith("[glink")
+    return (
+        lowered.startswith("[glink")
+        or lowered.startswith("[mylink")
+        or lowered.startswith("@mylink")
+    )
 
 
 def _normalize_tyrano_choice_text_for_editor(text: str) -> str:
@@ -976,7 +980,7 @@ def _build_tyrano_choice_segments(
 
         line_raw = chunk.get("line") if isinstance(chunk, dict) else ""
         line = line_raw if isinstance(line_raw, str) else ""
-        if not _is_tyrano_glink_tag_line(line):
+        if not _is_tyrano_choice_tag_line(line):
             chunk_index += 1
             continue
         if _extract_tyrano_tag_attribute_value(line, "text") is None:
@@ -994,7 +998,7 @@ def _build_tyrano_choice_segments(
                 break
             scan_line_raw = scan_chunk.get("line") if isinstance(scan_chunk, dict) else ""
             scan_line = scan_line_raw if isinstance(scan_line_raw, str) else ""
-            if not _is_tyrano_glink_tag_line(scan_line):
+            if not _is_tyrano_choice_tag_line(scan_line):
                 break
             attr_payload = _extract_tyrano_tag_attribute_value(scan_line, "text")
             if attr_payload is None:
