@@ -432,6 +432,54 @@ class ParserTests(unittest.TestCase):
             ("[r]", "[p]"),
         )
 
+    def test_parse_tyrano_script_file_accepts_bracket_prefixed_variable_dialogue_lines(self) -> None:
+        source = (
+            "#兄\n"
+            "[兄]はキョトンとしながら部屋を見回した。[p]\n"
+            "#妹\n"
+            "My, my, [兄]-chan.[p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_bracket_prefix.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(len(dialogue_segments), 2)
+        self.assertEqual(dialogue_segments[0].speaker_name, "兄")
+        self.assertEqual(
+            dialogue_segments[0].lines,
+            ["[兄]はキョトンとしながら部屋を見回した。"],
+        )
+        self.assertEqual(dialogue_segments[1].speaker_name, "妹")
+        self.assertEqual(
+            dialogue_segments[1].lines,
+            ["My, my, [兄]-chan."],
+        )
+
+    def test_parse_tyrano_script_file_keeps_command_tag_lines_out_of_dialogue(self) -> None:
+        source = (
+            "[cm]\n"
+            "#妹\n"
+            "Hello[p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_command_prefix.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(len(dialogue_segments), 1)
+        self.assertEqual(dialogue_segments[0].lines, ["Hello"])
+
     def test_tyrano_script_source_from_data_round_trip_plain_hash_speaker_dialogue(self) -> None:
         source = (
             "#妹\n"

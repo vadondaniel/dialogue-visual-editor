@@ -260,7 +260,29 @@ def _is_tyrano_dialogue_text_line(line: str) -> bool:
     stripped = line.strip()
     if not stripped:
         return False
-    if stripped.startswith(("#", ";", "[", "*", "@", "//")):
+    if stripped.startswith("["):
+        closing_index = stripped.find("]")
+        if closing_index <= 1:
+            return False
+        bracket_payload = stripped[1:closing_index].strip()
+        if not bracket_payload:
+            return False
+        # Tag-style prefixes such as `[if exp=...]`, `[emb exp=...]` and
+        # `[chara_* ...]` are control commands, not dialogue text.
+        if (" " in bracket_payload) or ("=" in bracket_payload):
+            return False
+        remainder = stripped[closing_index + 1:].strip()
+        # Non-ASCII bracket tokens (e.g. `[兄]`) are variable-like inline
+        # text prefixes used in dialogue and should be treated as text even
+        # when they occupy the whole line.
+        if any(ord(char) > 127 for char in bracket_payload):
+            return True
+        # ASCII-only bracket tokens are treated as dialogue only when they
+        # clearly prefix actual text content.
+        if remainder and (not remainder.startswith(("[", ";", "*", "@", "//"))):
+            return True
+        return False
+    if stripped.startswith(("#", ";", "*", "@", "//")):
         return False
     return True
 
