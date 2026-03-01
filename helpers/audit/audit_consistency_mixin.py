@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import copy
 import hashlib
 from pathlib import Path
 import re
@@ -256,6 +257,274 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         ):
             return actor_translated
         return tl_text
+
+    def _consistency_logical_entry_rows_for_session(
+        self,
+        session: FileSession,
+        dialogue_only: bool,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        leading_translation_only: list[DialogueSegment] = []
+        for idx, segment in enumerate(session.segments, start=1):
+            if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
+                continue
+            if bool(getattr(segment, "translation_only", False)):
+                if rows:
+                    cast(list[DialogueSegment], rows[-1]["segments"]).append(segment)
+                else:
+                    leading_translation_only.append(segment)
+                continue
+            entry_segments: list[DialogueSegment] = [segment]
+            if leading_translation_only:
+                entry_segments.extend(leading_translation_only)
+                leading_translation_only = []
+            rows.append(
+                {
+                    "anchor_segment": segment,
+                    "anchor_index": idx,
+                    "segments": entry_segments,
+                }
+            )
+        if leading_translation_only and rows:
+            cast(list[DialogueSegment], rows[0]["segments"]).extend(leading_translation_only)
+        return rows
+
+    def _consistency_translation_chunks_for_entry(
+        self,
+        session: FileSession,
+        segments: list[DialogueSegment],
+    ) -> list[str]:
+        chunks: list[str] = []
+        for segment in segments:
+            chunk = "\n".join(self._consistency_translation_lines_for_segment(segment)).strip()
+            chunks.append(chunk)
+        if len(segments) == 1 and chunks and not chunks[0].strip():
+            alias_fallback = self._consistency_effective_translation_text(
+                session,
+                segments[0],
+            )
+            if alias_fallback.strip():
+                chunks[0] = alias_fallback.strip()
+        return chunks
+
+    def _consistency_translation_text_for_chunks(
+        self,
+        chunks: list[str],
+    ) -> str:
+        return "\n".join(chunks).strip()
+
+    def _consistency_chunk_line_counts_from_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> list[int]:
+        counts_raw = payload.get("chunk_line_counts")
+        if isinstance(counts_raw, list):
+            parsed_counts: list[int] = []
+            for raw_count in counts_raw:
+                if isinstance(raw_count, int):
+                    parsed_counts.append(max(1, raw_count))
+            if parsed_counts:
+                return parsed_counts
+
+        chunks_raw = payload.get("translation_chunks")
+        if isinstance(chunks_raw, list):
+            parsed_counts = []
+            for raw_chunk in chunks_raw:
+                if isinstance(raw_chunk, str):
+                    parsed_counts.append(
+                        max(1, len(self._normalize_translation_lines(raw_chunk)))
+                    )
+            if parsed_counts:
+                return parsed_counts
+        return []
+
+    def _consistency_split_target_lines_for_chain(
+        self,
+        target_lines: list[str],
+        segment_count: int,
+        selected_pattern_counts: list[int],
+    ) -> list[list[str]]:
+        if segment_count <= 0:
+            return []
+        remaining = list(target_lines)
+        split_lines: list[list[str]] = []
+        pattern_non_last_count = max(0, len(selected_pattern_counts) - 1)
+        for segment_index in range(segment_count):
+            if segment_index == segment_count - 1:
+                chunk = list(remaining) if remaining else [""]
+                remaining = []
+            else:
+                preferred = (
+                    selected_pattern_counts[segment_index]
+                    if segment_index < pattern_non_last_count
+                    else 1
+                )
+                keep_count = max(1, int(preferred))
+                if remaining:
+                    chunk = list(remaining[:keep_count])
+                    remaining = list(remaining[keep_count:])
+                    if not chunk:
+                        chunk = [""]
+                else:
+                    chunk = [""]
+            split_lines.append(self._normalize_translation_lines(chunk))
+        return split_lines
+
+    def _consistency_remove_segment_from_session(
+        self,
+        session: FileSession,
+        uid: str,
+    ) -> bool:
+        remove_resolver = getattr(self, "_remove_segment_by_uid", None)
+        if callable(remove_resolver):
+            try:
+                removed = bool(remove_resolver(session, uid))
+            except Exception:
+                removed = False
+            if removed:
+                return True
+        for idx, segment in enumerate(session.segments):
+            if segment.uid == uid:
+                del session.segments[idx]
+                return True
+        return False
+
+    def _consistency_build_translation_only_segment(
+        self,
+        session: FileSession,
+        anchor_segment: DialogueSegment,
+    ) -> DialogueSegment:
+        new_segment_uid_resolver = getattr(self, "_new_segment_uid", None)
+        if callable(new_segment_uid_resolver):
+            try:
+                uid = str(new_segment_uid_resolver(session.path))
+            except Exception:
+                uid = f"{session.path.name}:I:consistency"
+        else:
+            uid = f"{session.path.name}:I:consistency"
+
+        new_tl_uid_resolver = getattr(self, "_new_translation_uid", None)
+        if callable(new_tl_uid_resolver):
+            try:
+                tl_uid = str(new_tl_uid_resolver())
+            except Exception:
+                tl_uid = ""
+        else:
+            tl_uid = ""
+
+        base_source_lines = [""]
+        inferred_marker = ""
+        inferred_marker_resolver = getattr(self, "_inferred_line1_speaker_marker", None)
+        if callable(inferred_marker_resolver):
+            try:
+                inferred_marker_raw = inferred_marker_resolver(anchor_segment)
+            except Exception:
+                inferred_marker_raw = ""
+            if isinstance(inferred_marker_raw, str):
+                inferred_marker = inferred_marker_raw
+        with_marker_resolver = getattr(self, "_with_inferred_line1_marker", None)
+        if callable(with_marker_resolver):
+            try:
+                base_source_lines = self._normalize_translation_lines(
+                    with_marker_resolver([""], inferred_marker)
+                )
+            except Exception:
+                base_source_lines = [""]
+
+        return DialogueSegment(
+            uid=uid,
+            context=anchor_segment.context,
+            code101=copy.deepcopy(anchor_segment.code101),
+            lines=list(base_source_lines),
+            original_lines=list(base_source_lines),
+            source_lines=list(base_source_lines),
+            code401_template=copy.deepcopy(anchor_segment.code401_template),
+            segment_kind=anchor_segment.segment_kind,
+            line_entry_code=anchor_segment.line_entry_code,
+            choice_branch_entries=copy.deepcopy(anchor_segment.choice_branch_entries),
+            script_entries_template=copy.deepcopy(anchor_segment.script_entries_template),
+            script_entry_roles=list(anchor_segment.script_entry_roles),
+            script_entry_quotes=list(anchor_segment.script_entry_quotes),
+            script_entry_expression_templates=copy.deepcopy(
+                anchor_segment.script_entry_expression_templates
+            ),
+            tl_uid=tl_uid,
+            translation_lines=list(base_source_lines),
+            original_translation_lines=list(base_source_lines),
+            translation_speaker=anchor_segment.translation_speaker,
+            original_translation_speaker=anchor_segment.translation_speaker,
+            disable_line1_speaker_inference=anchor_segment.disable_line1_speaker_inference,
+            original_disable_line1_speaker_inference=anchor_segment.disable_line1_speaker_inference,
+            force_line1_speaker_inference=anchor_segment.force_line1_speaker_inference,
+            original_force_line1_speaker_inference=anchor_segment.force_line1_speaker_inference,
+            inserted=True,
+            translation_only=True,
+        )
+
+    def _consistency_align_entry_chain_segments(
+        self,
+        session: FileSession,
+        anchor_uid: str,
+        segment_uids: list[str],
+        desired_count: int,
+        lookup: dict[str, DialogueSegment],
+    ) -> tuple[list[DialogueSegment], bool]:
+        if desired_count <= 0:
+            desired_count = 1
+        anchor_segment = lookup.get(anchor_uid)
+        if anchor_segment is None:
+            return [], False
+
+        resolved_uids: list[str] = []
+        for uid in segment_uids:
+            if uid in lookup and uid not in resolved_uids:
+                resolved_uids.append(uid)
+        if not resolved_uids:
+            resolved_uids = [anchor_uid]
+        elif resolved_uids[0] != anchor_uid:
+            resolved_uids = [anchor_uid] + [uid for uid in resolved_uids if uid != anchor_uid]
+
+        changed = False
+        if len(resolved_uids) > desired_count:
+            remove_uids = list(resolved_uids[desired_count:])
+            for remove_uid in remove_uids:
+                removed = self._consistency_remove_segment_from_session(session, remove_uid)
+                if removed:
+                    lookup.pop(remove_uid, None)
+                    changed = True
+            resolved_uids = list(resolved_uids[:desired_count])
+
+        while len(resolved_uids) < desired_count:
+            anchor_index = next(
+                (idx for idx, segment in enumerate(session.segments) if segment.uid == anchor_uid),
+                -1,
+            )
+            if anchor_index < 0:
+                break
+            insert_after_uid = resolved_uids[-1] if resolved_uids else anchor_uid
+            insert_after_index = next(
+                (
+                    idx
+                    for idx, segment in enumerate(session.segments)
+                    if segment.uid == insert_after_uid
+                ),
+                anchor_index,
+            )
+            new_segment = self._consistency_build_translation_only_segment(
+                session,
+                anchor_segment,
+            )
+            session.segments.insert(insert_after_index + 1, new_segment)
+            lookup[new_segment.uid] = new_segment
+            resolved_uids.append(new_segment.uid)
+            changed = True
+
+        resolved_segments = [
+            lookup[uid]
+            for uid in resolved_uids
+            if uid in lookup
+        ]
+        return resolved_segments, changed
 
     def _find_consistency_entry_segment(
         self,
@@ -809,9 +1078,27 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             session = self.sessions.get(path)
             if session is None:
                 continue
-            for idx, segment in enumerate(session.segments, start=1):
-                if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
+            for entry_row in self._consistency_logical_entry_rows_for_session(
+                session,
+                dialogue_only,
+            ):
+                segment = entry_row.get("anchor_segment")
+                idx_raw = entry_row.get("anchor_index")
+                segments_raw = entry_row.get("segments")
+                if not isinstance(segment, DialogueSegment):
                     continue
+                if not isinstance(idx_raw, int):
+                    continue
+                if not isinstance(segments_raw, list):
+                    continue
+                member_segments = [
+                    candidate
+                    for candidate in segments_raw
+                    if isinstance(candidate, DialogueSegment)
+                ]
+                if not member_segments:
+                    continue
+                idx = idx_raw
                 source_text = "\n".join(
                     self._consistency_source_lines_for_segment(segment))
                 if not source_text.strip():
@@ -822,15 +1109,29 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 group_label = self._consistency_group_label_for_session(session)
                 if group_label:
                     group_labels.setdefault(source_text, set()).add(group_label)
-                tl_text = self._consistency_effective_translation_text(
+                translation_chunks = self._consistency_translation_chunks_for_entry(
                     session,
-                    segment,
+                    member_segments,
                 )
+                tl_text = self._consistency_translation_text_for_chunks(
+                    translation_chunks,
+                )
+                segment_uids = [
+                    member.uid
+                    for member in member_segments
+                    if isinstance(member.uid, str) and member.uid
+                ]
                 entry = {
                     "path": str(path),
                     "uid": segment.uid,
                     "entry": self._consistency_entry_label(session, segment, idx),
                     "translation": tl_text,
+                    "segment_uids": segment_uids,
+                    "translation_chunks": list(translation_chunks),
+                    "chunk_line_counts": [
+                        max(1, len(self._normalize_translation_lines(chunk)))
+                        for chunk in translation_chunks
+                    ],
                 }
                 speaker_jp, speaker_en = self._consistency_speakers_for_segment(segment)
                 entry["speaker_jp"] = speaker_jp
@@ -841,16 +1142,39 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         for source_text, entries in grouped.items():
             if len(entries) < 2:
                 continue
-            variants = Counter(str(entry.get("translation", "")) for entry in entries)
+            variants: Counter[tuple[str, ...]] = Counter()
+            variant_text_by_key: dict[tuple[str, ...], str] = {}
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                chunks_raw = entry.get("translation_chunks")
+                chunks: list[str] = []
+                if isinstance(chunks_raw, list):
+                    for raw_chunk in chunks_raw:
+                        if isinstance(raw_chunk, str):
+                            chunks.append(raw_chunk)
+                if not chunks:
+                    chunks.append(str(entry.get("translation", "")))
+                variant_key = tuple(chunks)
+                variants[variant_key] += 1
+                variant_text_by_key.setdefault(
+                    variant_key,
+                    str(entry.get("translation", "")),
+                )
             unique_count = len(variants)
             if only_inconsistent and unique_count <= 1:
                 continue
             most_common_text = ""
             if variants:
-                most_common_text = max(
+                most_common_variant = max(
                     variants.items(),
-                    key=lambda kv: (kv[1], bool(str(kv[0]).strip()), len(str(kv[0]))),
+                    key=lambda kv: (
+                        kv[1],
+                        bool(variant_text_by_key.get(kv[0], "").strip()),
+                        len(variant_text_by_key.get(kv[0], "")),
+                    ),
                 )[0]
+                most_common_text = variant_text_by_key.get(most_common_variant, "")
             groups.append(
                 {
                     "source_text": source_text,
@@ -941,7 +1265,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         }
         color_map = self._consistency_variant_color_map(variants)
         foreground = self._consistency_variant_fg()
-        parsed_entries: list[dict[str, str]] = []
+        parsed_entries: list[dict[str, Any]] = []
         max_locator_width = 0
         for entry in entries:
             if not isinstance(entry, dict):
@@ -960,6 +1284,33 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 translation = ""
             speaker_jp = str(entry.get("speaker_jp", "")).strip()
             speaker_en = str(entry.get("speaker_en", "")).strip()
+            segment_uids_raw = entry.get("segment_uids")
+            segment_uids: list[str] = []
+            if isinstance(segment_uids_raw, list):
+                for raw_uid in segment_uids_raw:
+                    if isinstance(raw_uid, str) and raw_uid:
+                        segment_uids.append(raw_uid)
+            if not segment_uids:
+                segment_uids = [uid_raw]
+            translation_chunks_raw = entry.get("translation_chunks")
+            translation_chunks: list[str] = []
+            if isinstance(translation_chunks_raw, list):
+                for raw_chunk in translation_chunks_raw:
+                    if isinstance(raw_chunk, str):
+                        translation_chunks.append(raw_chunk)
+            if not translation_chunks:
+                translation_chunks = [translation]
+            chunk_line_counts_raw = entry.get("chunk_line_counts")
+            chunk_line_counts: list[int] = []
+            if isinstance(chunk_line_counts_raw, list):
+                for raw_count in chunk_line_counts_raw:
+                    if isinstance(raw_count, int):
+                        chunk_line_counts.append(max(1, raw_count))
+            if not chunk_line_counts:
+                chunk_line_counts = [
+                    max(1, len(self._normalize_translation_lines(chunk)))
+                    for chunk in translation_chunks
+                ]
             locator = self._consistency_entry_locator(path_raw, entry_label)
             max_locator_width = max(max_locator_width, len(locator))
             parsed_entries.append(
@@ -970,6 +1321,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     "translation": translation,
                     "speaker_jp": speaker_jp,
                     "speaker_en": speaker_en,
+                    "segment_uids": segment_uids,
+                    "translation_chunks": translation_chunks,
+                    "chunk_line_counts": chunk_line_counts,
                 }
             )
 
@@ -980,6 +1334,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             translation = entry["translation"]
             speaker_jp = entry["speaker_jp"]
             speaker_en = entry["speaker_en"]
+            segment_uids = entry["segment_uids"]
+            translation_chunks = entry["translation_chunks"]
+            chunk_line_counts = entry["chunk_line_counts"]
             label = self._consistency_entry_display_label(
                 path_raw,
                 entry_label,
@@ -1005,6 +1362,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     "translation": translation,
                     "speaker_jp": speaker_jp,
                     "speaker_en": speaker_en,
+                    "segment_uids": segment_uids,
+                    "translation_chunks": translation_chunks,
+                    "chunk_line_counts": chunk_line_counts,
                 },
             )
             self.audit_consistency_entries_list.addItem(item)
@@ -1218,6 +1578,25 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
 
         target_text = self.audit_consistency_target_edit.toPlainText()
         target_lines = self._normalize_translation_lines(target_text)
+        selected_pattern_counts: list[int] = []
+        selected_entry_payload: Optional[dict[str, Any]] = None
+        if self.audit_consistency_entries_list is not None:
+            selected_entry_payload = self._audit_consistency_entry_payload(
+                self.audit_consistency_entries_list.currentItem()
+            )
+        if isinstance(selected_entry_payload, dict):
+            selected_pattern_counts = self._consistency_chunk_line_counts_from_payload(
+                selected_entry_payload
+            )
+        if not selected_pattern_counts and entries:
+            first_entry = entries[0]
+            if isinstance(first_entry, dict):
+                selected_pattern_counts = self._consistency_chunk_line_counts_from_payload(
+                    first_entry
+                )
+        if not selected_pattern_counts:
+            selected_pattern_counts = [max(1, len(target_lines))]
+
         touched_paths: set[Path] = set()
         touched_current = False
         changed_entries = 0
@@ -1235,6 +1614,14 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 continue
             if not isinstance(uid_raw, str) or not uid_raw:
                 continue
+            segment_uids_raw = entry.get("segment_uids")
+            segment_uids: list[str] = []
+            if isinstance(segment_uids_raw, list):
+                for raw_uid in segment_uids_raw:
+                    if isinstance(raw_uid, str) and raw_uid:
+                        segment_uids.append(raw_uid)
+            if not segment_uids:
+                segment_uids = [uid_raw]
             path = Path(path_raw)
             session = self.sessions.get(path)
             if session is None:
@@ -1243,36 +1630,57 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             if lookup is None:
                 lookup = {segment.uid: segment for segment in session.segments}
                 segment_lookup_by_path[path] = lookup
-            target_segment = lookup.get(uid_raw)
-            if target_segment is None:
-                continue
-            current_lines = self._consistency_translation_lines_for_segment(
-                target_segment
+            target_segments, structure_changed = self._consistency_align_entry_chain_segments(
+                session,
+                uid_raw,
+                segment_uids,
+                len(selected_pattern_counts),
+                lookup,
             )
-            if callable(normalize_for_segment):
-                try:
-                    target_lines_for_segment_raw = normalize_for_segment(
-                        target_segment,
-                        target_lines,
-                    )
-                except Exception:
-                    target_lines_for_segment_raw = list(target_lines)
-            else:
-                target_lines_for_segment_raw = list(target_lines)
-            target_lines_for_segment = self._normalize_translation_lines(
-                target_lines_for_segment_raw
-            )
-            if current_lines == target_lines_for_segment:
+            if not target_segments:
                 continue
-            stored_lines = list(target_lines_for_segment)
-            if callable(compose_resolver):
-                try:
-                    composed = compose_resolver(target_segment, target_lines_for_segment)
-                except Exception:
-                    composed = stored_lines
-                if isinstance(composed, list):
-                    stored_lines = self._normalize_translation_lines(composed)
-            target_segment.translation_lines = list(stored_lines)
+            target_lines_for_entry = self._consistency_split_target_lines_for_chain(
+                target_lines,
+                len(target_segments),
+                selected_pattern_counts,
+            )
+            changed_this_entry = bool(structure_changed)
+            for segment_index, target_segment in enumerate(target_segments):
+                segment_target_lines = (
+                    target_lines_for_entry[segment_index]
+                    if segment_index < len(target_lines_for_entry)
+                    else [""]
+                )
+                current_lines = self._consistency_translation_lines_for_segment(
+                    target_segment
+                )
+                if callable(normalize_for_segment):
+                    try:
+                        target_lines_for_segment_raw = normalize_for_segment(
+                            target_segment,
+                            segment_target_lines,
+                        )
+                    except Exception:
+                        target_lines_for_segment_raw = list(segment_target_lines)
+                else:
+                    target_lines_for_segment_raw = list(segment_target_lines)
+                target_lines_for_segment = self._normalize_translation_lines(
+                    target_lines_for_segment_raw
+                )
+                if current_lines == target_lines_for_segment:
+                    continue
+                stored_lines = list(target_lines_for_segment)
+                if callable(compose_resolver):
+                    try:
+                        composed = compose_resolver(target_segment, target_lines_for_segment)
+                    except Exception:
+                        composed = stored_lines
+                    if isinstance(composed, list):
+                        stored_lines = self._normalize_translation_lines(composed)
+                target_segment.translation_lines = list(stored_lines)
+                changed_this_entry = True
+            if not changed_this_entry:
+                continue
             changed_entries += 1
             touched_paths.add(path)
             if self.current_path is not None and path == self.current_path:
