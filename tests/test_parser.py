@@ -449,6 +449,44 @@ class ParserTests(unittest.TestCase):
         rebuilt_source = tyrano_script_source_from_data(session.data)
         self.assertEqual(rebuilt_source, source)
 
+    def test_parse_tyrano_script_file_ignores_plain_code_without_dialogue_markers(self) -> None:
+        source = (
+            "tf.page = 0;\n"
+            "tf.selected = \"\";\n"
+            "if(flag) {\n"
+            "    doWork();\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_code.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(dialogue_segments, [])
+
+    def test_parse_tyrano_script_file_ignores_hash_speaker_without_dialogue_markers(self) -> None:
+        source = (
+            "#function_like\n"
+            "const value = 1;\n"
+            "return value;\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_hash_code.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(dialogue_segments, [])
+
     def test_parse_tyrano_script_file_splits_dialogue_by_page_break(self) -> None:
         source = (
             "[tb_start_text mode=3 ]\n"

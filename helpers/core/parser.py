@@ -265,6 +265,13 @@ def _line_has_tyrano_page_break(line: str) -> bool:
     return bool(_TYRANO_PAGE_BREAK_TAG_RE.search(line))
 
 
+def _line_has_tyrano_dialogue_marker(line: str) -> bool:
+    return bool(
+        _TYRANO_PAGE_BREAK_TAG_RE.search(line)
+        or _TYRANO_INLINE_LINE_BREAK_TAG_RE.search(line)
+    )
+
+
 def split_tyrano_dialogue_line_and_suffix(line: str) -> tuple[str, str]:
     if not isinstance(line, str):
         return "", ""
@@ -334,28 +341,34 @@ def _collect_tyrano_implicit_dialogue_block(
     # lines without wrapping `[tb_start_text]` tags.
     if stripped_start.startswith("#"):
         body_items: list[dict[str, str]] = [{"kind": "speaker", "line": start_line}]
+        has_dialogue_marker = False
         next_index = start_index + 1
         while next_index < len(source_lines):
             candidate = source_lines[next_index]
             if not _is_tyrano_dialogue_text_line(candidate):
                 break
             body_items.append({"kind": "text", "line": candidate})
+            if _line_has_tyrano_dialogue_marker(candidate):
+                has_dialogue_marker = True
             next_index += 1
-        if len(body_items) <= 1:
+        if len(body_items) <= 1 or not has_dialogue_marker:
             return None
         return body_items, next_index
 
     if not _is_tyrano_dialogue_text_line(start_line):
         return None
     body_items = []
+    has_dialogue_marker = False
     next_index = start_index
     while next_index < len(source_lines):
         candidate = source_lines[next_index]
         if not _is_tyrano_dialogue_text_line(candidate):
             break
         body_items.append({"kind": "text", "line": candidate})
+        if _line_has_tyrano_dialogue_marker(candidate):
+            has_dialogue_marker = True
         next_index += 1
-    if not body_items:
+    if not body_items or not has_dialogue_marker:
         return None
     return body_items, next_index
 
