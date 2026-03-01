@@ -319,6 +319,47 @@ def _group_tyrano_text_items_by_page_break(
     return groups
 
 
+def _collect_tyrano_implicit_dialogue_block(
+    source_lines: list[str],
+    start_index: int,
+) -> tuple[list[dict[str, str]], int] | None:
+    if start_index < 0 or start_index >= len(source_lines):
+        return None
+    start_line = source_lines[start_index]
+    stripped_start = start_line.strip()
+    if not stripped_start:
+        return None
+
+    # Standard Tyrano scripts often use `#speaker` followed by plain text
+    # lines without wrapping `[tb_start_text]` tags.
+    if stripped_start.startswith("#"):
+        body_items: list[dict[str, str]] = [{"kind": "speaker", "line": start_line}]
+        next_index = start_index + 1
+        while next_index < len(source_lines):
+            candidate = source_lines[next_index]
+            if not _is_tyrano_dialogue_text_line(candidate):
+                break
+            body_items.append({"kind": "text", "line": candidate})
+            next_index += 1
+        if len(body_items) <= 1:
+            return None
+        return body_items, next_index
+
+    if not _is_tyrano_dialogue_text_line(start_line):
+        return None
+    body_items = []
+    next_index = start_index
+    while next_index < len(source_lines):
+        candidate = source_lines[next_index]
+        if not _is_tyrano_dialogue_text_line(candidate):
+            break
+        body_items.append({"kind": "text", "line": candidate})
+        next_index += 1
+    if not body_items:
+        return None
+    return body_items, next_index
+
+
 def _parse_tyrano_script_source(source: str) -> dict[str, Any]:
     newline = "\r\n" if "\r\n" in source else "\n"
     has_trailing_newline = source.endswith(("\n", "\r"))
@@ -329,6 +370,20 @@ def _parse_tyrano_script_source(source: str) -> dict[str, Any]:
     while index < len(source_lines):
         line = source_lines[index]
         if not _is_tyrano_dialogue_block_start(line):
+            implicit_dialogue = _collect_tyrano_implicit_dialogue_block(
+                source_lines,
+                index,
+            )
+            if implicit_dialogue is not None:
+                body_items, next_index = implicit_dialogue
+                chunks.append(
+                    {
+                        "kind": "dialogue_block",
+                        "body_items": body_items,
+                    }
+                )
+                index = next_index
+                continue
             chunks.append({"kind": "raw_line", "line": line})
             index += 1
             continue
@@ -505,9 +560,10 @@ def tyrano_script_source_from_data(data: Any) -> str:
         if kind == "dialogue_block":
             start_line_raw = chunk.get("start_line")
             end_line_raw = chunk.get("end_line")
-            start_line = start_line_raw if isinstance(start_line_raw, str) else ""
-            end_line = end_line_raw if isinstance(end_line_raw, str) else ""
-            rebuilt_lines.append(start_line)
+            start_line = start_line_raw if isinstance(start_line_raw, str) else None
+            end_line = end_line_raw if isinstance(end_line_raw, str) else None
+            if start_line is not None:
+                rebuilt_lines.append(start_line)
             body_items_raw = chunk.get("body_items")
             if isinstance(body_items_raw, list):
                 for body_item in body_items_raw:
@@ -516,7 +572,8 @@ def tyrano_script_source_from_data(data: Any) -> str:
                     body_line_raw = body_item.get("line")
                     body_line = body_line_raw if isinstance(body_line_raw, str) else ""
                     rebuilt_lines.append(body_line)
-            rebuilt_lines.append(end_line)
+            if end_line is not None:
+                rebuilt_lines.append(end_line)
             continue
 
         line_raw = chunk.get("line")

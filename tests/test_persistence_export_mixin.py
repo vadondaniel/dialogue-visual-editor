@@ -596,6 +596,35 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertIn('text="Choice\u202FA"', rebuilt)
         self.assertIn('text="Label B"', rebuilt)
 
+    def test_apply_session_to_json_updates_plain_tyrano_hash_speaker_dialogue(self) -> None:
+        harness = _Harness()
+        source = (
+            "#NPC\n"
+            "こんにちは[r]\n"
+            "よろしくね[p]\n"
+            "@jump target=\"*A\"\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_plain.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        )
+        dialogue_segment.lines = ["Hello", "World"]
+
+        harness._apply_session_to_json(session)
+        rebuilt = tyrano_script_source_from_data(session.data)
+
+        self.assertIn("#NPC", rebuilt)
+        self.assertIn("Hello[r]", rebuilt)
+        self.assertIn("World[p]", rebuilt)
+        self.assertNotIn("[tb_start_text", rebuilt)
+        self.assertNotIn("[_tb_end_text]", rebuilt)
+
     def test_apply_session_to_json_updates_tyrano_multi_page_chunk(self) -> None:
         harness = _Harness()
         source = (

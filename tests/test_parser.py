@@ -397,6 +397,58 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(len(tag_segments), 1)
         self.assertEqual(tag_segments[0].lines, ["補助テキスト"])
 
+    def test_parse_tyrano_script_file_extracts_plain_hash_speaker_dialogue(self) -> None:
+        source = (
+            "#妹\n"
+            "こんにちは[r]\n"
+            "よろしくね[p]\n"
+            "@jump target=\"*NEXT\"\n"
+            "地の文です[r]\n"
+            "続きです[p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_plain.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(len(dialogue_segments), 2)
+
+        self.assertEqual(dialogue_segments[0].speaker_name, "妹")
+        self.assertEqual(dialogue_segments[0].lines, ["こんにちは", "よろしくね"])
+        self.assertEqual(
+            getattr(dialogue_segments[0], "tyrano_line_suffixes", ()),
+            ("[r]", "[p]"),
+        )
+
+        self.assertEqual(dialogue_segments[1].speaker_name, NO_SPEAKER_KEY)
+        self.assertEqual(dialogue_segments[1].lines, ["地の文です", "続きです"])
+        self.assertEqual(
+            getattr(dialogue_segments[1], "tyrano_line_suffixes", ()),
+            ("[r]", "[p]"),
+        )
+
+    def test_tyrano_script_source_from_data_round_trip_plain_hash_speaker_dialogue(self) -> None:
+        source = (
+            "#妹\n"
+            "こんにちは[r]\n"
+            "よろしくね[p]\n"
+            "@jump target=\"*NEXT\"\n"
+            "地の文です[r]\n"
+            "続きです[p]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_plain_roundtrip.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        rebuilt_source = tyrano_script_source_from_data(session.data)
+        self.assertEqual(rebuilt_source, source)
+
     def test_parse_tyrano_script_file_splits_dialogue_by_page_break(self) -> None:
         source = (
             "[tb_start_text mode=3 ]\n"
