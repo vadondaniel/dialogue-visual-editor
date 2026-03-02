@@ -1793,8 +1793,82 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             segment.lines = list(lines)
             segment.source_lines = list(segment.lines)
         self._refresh_dirty_state(session)
-        if self._is_translator_mode() and self.selected_segment_uid == uid:
-            self._refresh_translator_detail_panel()
+        if self._is_translator_mode():
+            self._refresh_translation_chain_widget_statuses(
+                session,
+                segment,
+            )
+            if self._selected_segment_in_translation_chain(
+                session,
+                segment,
+            ):
+                self._refresh_translator_detail_panel()
+
+    def _translation_chain_uids_for_segment(
+        self,
+        segment: DialogueSegment,
+        *,
+        session: Optional[FileSession] = None,
+    ) -> set[str]:
+        chain_resolver = getattr(
+            self,
+            "_logical_translation_chain_for_segment",
+            None,
+        )
+        if not callable(chain_resolver):
+            return {segment.uid}
+        chain_value: Any = None
+        try:
+            chain_value = chain_resolver(segment, session=session)
+        except TypeError:
+            try:
+                chain_value = chain_resolver(segment)
+            except Exception:
+                chain_value = None
+        except Exception:
+            chain_value = None
+        if not isinstance(chain_value, list):
+            return {segment.uid}
+        uids = {
+            candidate.uid
+            for candidate in chain_value
+            if isinstance(getattr(candidate, "uid", None), str)
+        }
+        if not uids:
+            return {segment.uid}
+        return uids
+
+    def _selected_segment_in_translation_chain(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> bool:
+        selected_uid = getattr(self, "selected_segment_uid", None)
+        if not isinstance(selected_uid, str) or (not selected_uid):
+            return False
+        return selected_uid in self._translation_chain_uids_for_segment(
+            segment,
+            session=session,
+        )
+
+    def _refresh_translation_chain_widget_statuses(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> None:
+        for chain_uid in self._translation_chain_uids_for_segment(
+            segment,
+            session=session,
+        ):
+            widget = self.block_widgets.get(chain_uid)
+            if widget is None:
+                continue
+            refresh_status = getattr(widget, "_refresh_status", None)
+            if callable(refresh_status):
+                try:
+                    refresh_status()
+                except Exception:
+                    continue
 
     def _line1_inference_match_key(self, segment: DialogueSegment) -> str:
         if not segment.is_structural_dialogue:

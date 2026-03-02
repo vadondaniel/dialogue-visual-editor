@@ -24,6 +24,10 @@ class _StatusBarHarness:
 class _DummyWidget:
     def __init__(self, block_number: int = 1) -> None:
         self.block_number = block_number
+        self.refresh_status_calls = 0
+
+    def _refresh_status(self) -> None:
+        self.refresh_status_calls += 1
 
 
 class _StructuralResetHarness(StructuralEditingMixin):
@@ -40,6 +44,7 @@ class _StructuralResetHarness(StructuralEditingMixin):
         self._status_bar = _StatusBarHarness()
 
         self.current_path: Path | None = None
+        self.selected_segment_uid: str | None = None
         self.sessions: dict[Path, FileSession] = {}
         self.current_segment_lookup: dict[str, DialogueSegment] = {}
         self.block_widgets: dict[str, _DummyWidget] = {}
@@ -277,6 +282,72 @@ class StructuralEditingResetFastPathTests(unittest.TestCase):
             harness.statusBar().messages[-1],
             "Reset block and restored 1 merged block.",
         )
+
+    def test_block_text_changed_refreshes_chain_widget_statuses_for_translator_mode(self) -> None:
+        harness = _StructuralResetHarness(translator_mode=True)
+        anchor = _dialogue_segment("A:1", "jp anchor")
+        followup = _dialogue_segment("A:2", "")
+        followup.translation_only = True
+        session = FileSession(
+            path=Path("A.json"),
+            data={},
+            bundles=[],
+            segments=[anchor, followup],
+        )
+        harness.current_path = session.path
+        harness.sessions[session.path] = session
+        harness.current_segment_lookup = {
+            anchor.uid: anchor,
+            followup.uid: followup,
+        }
+        anchor_widget = _DummyWidget()
+        followup_widget = _DummyWidget()
+        harness.block_widgets = {
+            anchor.uid: anchor_widget,
+            followup.uid: followup_widget,
+        }
+        setattr(
+            harness,
+            "_logical_translation_chain_for_segment",
+            lambda segment, session=None: [anchor, followup],
+        )
+
+        harness._on_block_text_changed(followup.uid, ["translated followup"])
+
+        self.assertEqual(anchor_widget.refresh_status_calls, 1)
+        self.assertEqual(followup_widget.refresh_status_calls, 1)
+
+    def test_block_text_changed_refreshes_translator_panel_when_selected_uid_in_chain(self) -> None:
+        harness = _StructuralResetHarness(translator_mode=True)
+        anchor = _dialogue_segment("A:1", "jp anchor")
+        followup = _dialogue_segment("A:2", "")
+        followup.translation_only = True
+        session = FileSession(
+            path=Path("A.json"),
+            data={},
+            bundles=[],
+            segments=[anchor, followup],
+        )
+        harness.current_path = session.path
+        harness.selected_segment_uid = anchor.uid
+        harness.sessions[session.path] = session
+        harness.current_segment_lookup = {
+            anchor.uid: anchor,
+            followup.uid: followup,
+        }
+        harness.block_widgets = {
+            anchor.uid: _DummyWidget(),
+            followup.uid: _DummyWidget(),
+        }
+        setattr(
+            harness,
+            "_logical_translation_chain_for_segment",
+            lambda segment, session=None: [anchor, followup],
+        )
+
+        harness._on_block_text_changed(followup.uid, ["translated followup"])
+
+        self.assertEqual(harness.refresh_detail_calls, 1)
 
 
 if __name__ == "__main__":
