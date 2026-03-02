@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTreeWidget,
     QTreeWidgetItem,
     QToolTip,
@@ -2012,6 +2013,11 @@ class DialogueBlockWidget(QFrame):
         footer_row.setSpacing(8)
         self.status_label = QLabel("")
         self.status_label.setObjectName("MetaDim")
+        self.status_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
+        self.status_label.setMinimumWidth(0)
         footer_row.addWidget(self.status_label, 1)
         self.line1_not_speaker_button = QPushButton("Line1 Not Speaker")
         self.line1_not_speaker_button.setCheckable(True)
@@ -3721,6 +3727,10 @@ class DialogueBlockWidget(QFrame):
         selections.extend(self._control_mismatch_selections())
         self.editor.setExtraSelections(selections)
 
+    def _set_status_text(self, text: str) -> None:
+        self.status_label.setText(text)
+        self.status_label.setToolTip(text)
+
     def _refresh_status(self) -> None:
         lines = self._current_lines()
         if self.editor is None:
@@ -3740,7 +3750,7 @@ class DialogueBlockWidget(QFrame):
             char_count = sum(len(line) for line in lines)
             line_label = "line" if len(lines) == 1 else "lines"
             char_label = "char" if char_count == 1 else "chars"
-            self.status_label.setText(
+            self._set_status_text(
                 f"{len(lines)} {line_label}, {char_count} {char_label}")
             self._has_warning = False
             self.status_label.setStyleSheet(f"color: {self._status_ok_color};")
@@ -3787,7 +3797,7 @@ class DialogueBlockWidget(QFrame):
                 text += ", control mismatch"
             if japanese_text_problem:
                 text += ", contains Japanese"
-            self.status_label.setText(text)
+            self._set_status_text(text)
             has_warning = control_mismatch_problem or japanese_text_problem
             self._has_warning = has_warning
             if has_warning:
@@ -3827,7 +3837,7 @@ class DialogueBlockWidget(QFrame):
             return
 
         width_chars = self._width_chars()
-        width_mode = self._width_mode_name()
+        line_char_counts = [visible_length(line) for line in lines]
 
         over_width = []
         for idx, line in enumerate(lines, start=1):
@@ -3835,10 +3845,17 @@ class DialogueBlockWidget(QFrame):
                 over_width.append(idx)
 
         line_label = "line" if len(lines) == 1 else "lines"
-        text = f"{len(lines)} {line_label}, width limit: {width_chars} chars ({width_mode})"
+        text = f"{len(lines)} {line_label}"
+        if line_char_counts:
+            char_count_preview = ", ".join(
+                str(count) for count in line_char_counts[:6]
+            )
+            if len(line_char_counts) > 6:
+                char_count_preview += "..."
+            text += f", chars: {char_count_preview}"
         if over_width:
             over_width_label = "line" if len(over_width) == 1 else "lines"
-            text += f", over width on {over_width_label}: {', '.join(str(i) for i in over_width[:6])}"
+            text += f", over width {over_width_label}: {', '.join(str(i) for i in over_width[:6])}"
             if len(over_width) > 6:
                 text += "..."
         kept_storage_lines, moved_storage_lines = split_lines_by_row_budget(
@@ -3853,18 +3870,17 @@ class DialogueBlockWidget(QFrame):
         max_lines_over = overflow_count > 0
         if max_lines_over:
             used_rows = total_display_rows(storage_lines)
-            text += f", exceeds max lines ({int(max_rows_budget)}, row-aware {used_rows:.2f} rows)"
+            text += f", rows {used_rows:.2f}/{int(max_rows_budget)}"
             if self._line1_inference_active() and moved_storage_lines:
-                text += " incl. inferred speaker line budget"
+                text += " (+line1)"
             if self.allow_structural_actions:
-                overflow_line_label = "line" if overflow_count == 1 else "lines"
-                text += f" -> move {overflow_count} {overflow_line_label} below"
+                text += f", move {overflow_count} down"
         if control_mismatch_problem:
             text += ", control mismatch"
         if japanese_text_problem:
             text += ", contains Japanese"
 
-        self.status_label.setText(text)
+        self._set_status_text(text)
         has_warning = (
             bool(over_width)
             or max_lines_over

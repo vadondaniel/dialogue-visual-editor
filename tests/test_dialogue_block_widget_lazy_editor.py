@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFocusEvent, QKeyEvent
-from PySide6.QtWidgets import QApplication, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from dialogue_visual_editor.helpers.core.models import DialogueSegment
 from dialogue_visual_editor.helpers.ui.ui_components import DialogueBlockWidget
@@ -849,7 +849,19 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         widget.refresh_metadata()
 
         self.assertTrue(widget._has_warning)
-        self.assertIn("exceeds max lines", widget.status_label.text())
+        self.assertIn("chars:", widget.status_label.text())
+        self.assertIn("rows ", widget.status_label.text())
+        self.assertNotIn("c-", widget.status_label.text())
+        widget.deleteLater()
+
+    def test_status_label_allows_horizontal_shrink(self) -> None:
+        segment = _segment(["line"])
+        widget = _widget(segment)
+
+        self.assertEqual(
+            widget.status_label.sizePolicy().horizontalPolicy(),
+            QSizePolicy.Policy.Ignored,
+        )
         widget.deleteLater()
 
 
