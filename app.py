@@ -3155,8 +3155,8 @@ class DialogueVisualEditor(
         if not self.problem_control_mismatch_check.isChecked():
             self.translator_source_view.setExtraSelections([])
             return
-        source_lines = self._segment_source_lines_for_translation(segment)
-        tl_lines = self._segment_translation_lines_for_translation(segment)
+        source_lines = self._logical_translation_source_lines_for_segment(segment)
+        tl_lines = self._logical_translation_lines_for_segment(segment)
         source_text = "\n".join(source_lines)
         tl_text = "\n".join(tl_lines)
         if not tl_text.strip():
@@ -3399,7 +3399,7 @@ class DialogueVisualEditor(
             self._translator_source_initial_active_color_code(segment)
         )
         self.translator_source_view.setPlainText(
-            "\n".join(self._segment_source_lines_for_translation(segment))
+            "\n".join(self._logical_translation_source_lines_for_segment(segment))
         )
         self.translator_source_highlighter.rehighlight()
         self.translator_copy_quick_prompt_btn.setEnabled(True)
@@ -3488,9 +3488,17 @@ class DialogueVisualEditor(
         self,
         segment: DialogueSegment,
     ) -> int:
-        if not self._segment_has_inferred_line1_speaker(segment):
+        anchor = next(
+            (
+                candidate
+                for candidate in self._logical_translation_chain_for_segment(segment)
+                if not bool(getattr(candidate, "translation_only", False))
+            ),
+            segment,
+        )
+        if not self._segment_has_inferred_line1_speaker(anchor):
             return 0
-        source_lines = self._segment_source_lines_for_display(segment)
+        source_lines = self._segment_source_lines_for_display(anchor)
         if len(source_lines) <= 1:
             return 0
         first_line = source_lines[0] if isinstance(source_lines[0], str) else ""
@@ -3982,6 +3990,127 @@ class DialogueVisualEditor(
                 return list(lines[1:])
             return [""]
         return list(lines) if lines else [""]
+
+    def _session_for_segment(
+        self,
+        segment: DialogueSegment,
+    ) -> Optional[FileSession]:
+        for session in self.sessions.values():
+            for candidate in session.segments:
+                if candidate is segment:
+                    return session
+        segment_uid = segment.uid if isinstance(segment.uid, str) else ""
+        if not segment_uid:
+            return None
+        for session in self.sessions.values():
+            for candidate in session.segments:
+                if candidate.uid == segment_uid and candidate.context == segment.context:
+                    return session
+        return None
+
+    def _logical_translation_chain_for_segment(
+        self,
+        segment: DialogueSegment,
+        *,
+        session: Optional[FileSession] = None,
+    ) -> list[DialogueSegment]:
+        owner_session = session or self._session_for_segment(segment)
+        if owner_session is None:
+            return [segment]
+        segments = owner_session.segments
+        if not segments:
+            return [segment]
+
+        segment_index = -1
+        for idx, candidate in enumerate(segments):
+            if candidate is segment:
+                segment_index = idx
+                break
+        if segment_index < 0:
+            for idx, candidate in enumerate(segments):
+                if candidate.uid == segment.uid:
+                    segment_index = idx
+                    break
+        if segment_index < 0:
+            return [segment]
+
+        if not bool(getattr(segment, "translation_only", False)):
+            anchor_index = segment_index
+        else:
+            anchor_index = -1
+            for idx in range(segment_index - 1, -1, -1):
+                if not bool(getattr(segments[idx], "translation_only", False)):
+                    anchor_index = idx
+                    break
+            if anchor_index < 0:
+                for idx in range(segment_index + 1, len(segments)):
+                    if not bool(getattr(segments[idx], "translation_only", False)):
+                        anchor_index = idx
+                        break
+            if anchor_index < 0:
+                return [segment]
+
+        has_source_before = any(
+            not bool(getattr(segments[idx], "translation_only", False))
+            for idx in range(anchor_index)
+        )
+        chain_start = anchor_index if has_source_before else 0
+
+        chain: list[DialogueSegment] = []
+        for idx in range(chain_start, len(segments)):
+            candidate = segments[idx]
+            if idx != anchor_index and not bool(getattr(candidate, "translation_only", False)):
+                break
+            if idx == anchor_index or bool(getattr(candidate, "translation_only", False)):
+                chain.append(candidate)
+        if not chain:
+            return [segments[anchor_index]]
+        return chain
+
+    def _logical_translation_source_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        *,
+        session: Optional[FileSession] = None,
+        infer_speaker_enabled: Optional[bool] = None,
+    ) -> list[str]:
+        chain = self._logical_translation_chain_for_segment(
+            segment,
+            session=session,
+        )
+        anchor = next(
+            (
+                candidate
+                for candidate in chain
+                if not bool(getattr(candidate, "translation_only", False))
+            ),
+            segment,
+        )
+        return self._segment_source_lines_for_translation(
+            anchor,
+            infer_speaker_enabled=infer_speaker_enabled,
+        )
+
+    def _logical_translation_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        *,
+        session: Optional[FileSession] = None,
+        infer_speaker_enabled: Optional[bool] = None,
+    ) -> list[str]:
+        chain = self._logical_translation_chain_for_segment(
+            segment,
+            session=session,
+        )
+        lines: list[str] = []
+        for candidate in chain:
+            lines.extend(
+                self._segment_translation_lines_for_translation(
+                    candidate,
+                    infer_speaker_enabled=infer_speaker_enabled,
+                )
+            )
+        return lines if lines else [""]
 
     def _compose_translation_lines_for_segment(
         self,

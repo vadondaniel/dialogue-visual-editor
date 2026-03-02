@@ -877,6 +877,72 @@ class RenderMixin(_RenderHostTypingFallback):
                 self._on_line1_inference_override_changed
             )
 
+    def _translator_source_hint_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+    ) -> list[str]:
+        def normalize_lines(value: Any) -> list[str]:
+            if isinstance(value, list):
+                lines = [
+                    line if isinstance(line, str) else ("" if line is None else str(line))
+                    for line in value
+                ]
+                return lines if lines else [""]
+            if isinstance(value, str):
+                return value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            return [""]
+
+        logical_source_resolver = getattr(
+            self,
+            "_logical_translation_source_lines_for_segment",
+            None,
+        )
+        if callable(logical_source_resolver):
+            try:
+                resolved = logical_source_resolver(segment)
+            except Exception:
+                resolved = None
+            if isinstance(resolved, list):
+                normalized = normalize_lines(resolved)
+                return normalized if normalized else [""]
+        source_lines = (
+            segment.source_lines
+            or segment.original_lines
+            or segment.lines
+            or [""]
+        )
+        normalized_fallback = normalize_lines(source_lines)
+        return normalized_fallback if normalized_fallback else [""]
+
+    def _configure_dialogue_widget_translation_context(
+        self,
+        widget: DialogueBlockWidget,
+        segment: DialogueSegment,
+    ) -> None:
+        logical_source_resolver = getattr(
+            self,
+            "_logical_translation_source_lines_for_segment",
+            None,
+        )
+        widget.source_hint_lines_resolver = (
+            logical_source_resolver if callable(logical_source_resolver) else None
+        )
+        widget.control_mismatch_source_lines_resolver = (
+            logical_source_resolver if callable(logical_source_resolver) else None
+        )
+        logical_translation_resolver = getattr(
+            self,
+            "_logical_translation_lines_for_segment",
+            None,
+        )
+        widget.control_mismatch_translation_lines_resolver = (
+            logical_translation_resolver if callable(logical_translation_resolver) else None
+        )
+        if widget.translator_mode:
+            widget._source_hint_lines = self._translator_source_hint_lines_for_segment(
+                segment
+            )
+
     def _create_block_widget(
         self,
         segment: DialogueSegment,
@@ -950,6 +1016,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 inferred_speaker_name_resolver=self._inferred_speaker_from_segment_line1,
                 segment_prompt_type_resolver=getattr(self, "_segment_prompt_type", None),
             )
+            self._configure_dialogue_widget_translation_context(widget, segment)
         self._bind_block_widget_signals(widget)
         return widget
 
@@ -1082,10 +1149,7 @@ class RenderMixin(_RenderHostTypingFallback):
         widget._actor_id = widget._actor_id_from_uid()
         widget._name_index_field = widget._name_index_field_from_uid()
         widget._load_editor_lines_from_segment()
-        if widget.translator_mode:
-            source_lines = segment.source_lines or segment.original_lines or segment.lines or [
-                ""]
-            widget._source_hint_lines = list(source_lines)
+        self._configure_dialogue_widget_translation_context(widget, segment)
         widget.context_label.setText(segment.context)
         widget._apply_editor_width()
         widget.set_hide_control_codes_when_unfocused(

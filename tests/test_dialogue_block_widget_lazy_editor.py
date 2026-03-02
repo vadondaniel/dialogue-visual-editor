@@ -564,6 +564,57 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertNotIn("Hero", overlay.text())
         widget.deleteLater()
 
+    def test_translator_mode_source_hint_can_use_shared_source_resolver(self) -> None:
+        segment = _segment([""])
+        segment.translation_only = True
+        segment.source_lines = [""]
+        segment.original_lines = [""]
+        segment.translation_lines = [""]
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=None,
+        )
+        widget.source_hint_lines_resolver = lambda _segment: ["Shared source line"]
+        widget.set_editor_active(True)
+        self._app.processEvents()
+
+        overlay = widget._source_hint_overlay
+        self.assertIsNotNone(overlay)
+        assert overlay is not None
+        self.assertFalse(overlay.isHidden())
+        self.assertIn("Shared source line", overlay.text())
+        widget.deleteLater()
+
+    def test_translator_mode_control_mismatch_can_use_chain_resolvers(self) -> None:
+        segment = _segment([r"\C[14]Press\C[0]"])
+        segment.translation_lines = [r"\C[14]Press"]
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=None,
+        )
+        widget.set_control_mismatch_highlighting_enabled(True)
+        self.assertTrue(widget._has_control_mismatch_problem())
+
+        widget.control_mismatch_source_lines_resolver = (
+            lambda _segment: [r"\C[14]Press\C[0]"]
+        )
+        widget.control_mismatch_translation_lines_resolver = (
+            lambda _segment: [r"\C[14]Press", r"\C[0]"]
+        )
+
+        self.assertFalse(widget._has_control_mismatch_problem())
+        widget.deleteLater()
+
     def test_translator_mode_speaker_html_resolver_applies_to_translated_name(self) -> None:
         segment = _segment(["Hero", "こんにちは"])
         segment.translation_lines = [""]

@@ -1869,6 +1869,15 @@ class DialogueBlockWidget(QFrame):
         self.allow_structural_actions = allow_structural_actions
         self.inferred_speaker_name_resolver = inferred_speaker_name_resolver
         self.segment_prompt_type_resolver = segment_prompt_type_resolver
+        self.source_hint_lines_resolver: Optional[
+            Callable[[DialogueSegment], list[str]]
+        ] = None
+        self.control_mismatch_source_lines_resolver: Optional[
+            Callable[[DialogueSegment], list[str]]
+        ] = None
+        self.control_mismatch_translation_lines_resolver: Optional[
+            Callable[[DialogueSegment], list[str]]
+        ] = None
         self._actor_id = self._actor_id_from_uid()
         self._name_index_field = self._name_index_field_from_uid()
         self._suppress_text_changed = False
@@ -2471,6 +2480,18 @@ class DialogueBlockWidget(QFrame):
     def _source_hint_lines_for_overlay(self) -> list[str]:
         if not self._uses_translation_storage():
             return list(self._source_hint_lines)
+        source_hint_resolver = self.source_hint_lines_resolver
+        if callable(source_hint_resolver):
+            try:
+                resolved_hint = source_hint_resolver(self.segment)
+            except Exception:
+                resolved_hint = None
+            if isinstance(resolved_hint, list):
+                normalized_hint = [
+                    line if isinstance(line, str) else ("" if line is None else str(line))
+                    for line in resolved_hint
+                ]
+                return normalized_hint if normalized_hint else [""]
         source_lines = self._line1_inference_source_lines()
         return self._editor_lines_from_storage_lines(source_lines)
 
@@ -3166,6 +3187,18 @@ class DialogueBlockWidget(QFrame):
         self._refresh_status()
 
     def _source_lines_for_control_mismatch(self) -> list[str]:
+        source_resolver = self.control_mismatch_source_lines_resolver
+        if self._uses_translation_storage() and callable(source_resolver):
+            try:
+                resolved_source = source_resolver(self.segment)
+            except Exception:
+                resolved_source = None
+            if isinstance(resolved_source, list):
+                normalized = [
+                    line if isinstance(line, str) else ("" if line is None else str(line))
+                    for line in resolved_source
+                ]
+                return normalized if normalized else [""]
         source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
             ""
         ]
@@ -3177,6 +3210,18 @@ class DialogueBlockWidget(QFrame):
         return resolved
 
     def _translation_lines_for_control_mismatch(self) -> list[str]:
+        translation_resolver = self.control_mismatch_translation_lines_resolver
+        if self._uses_translation_storage() and callable(translation_resolver):
+            try:
+                resolved_translation = translation_resolver(self.segment)
+            except Exception:
+                resolved_translation = None
+            if isinstance(resolved_translation, list):
+                normalized = [
+                    line if isinstance(line, str) else ("" if line is None else str(line))
+                    for line in resolved_translation
+                ]
+                return normalized if normalized else [""]
         translation_lines = (
             self.segment.translation_lines
             if self.segment.translation_lines
