@@ -411,19 +411,32 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
 
     def test_collect_inferred_speaker_candidates_ranks_by_occurrence(self) -> None:
         harness = _SpeakerInferenceCandidateHarness()
+        harness.sessions[harness.path_a].segments[1].disable_line1_speaker_inference = True
 
         rows = cast(
             list[dict[str, Any]],
             _call_editor_method("_collect_inferred_speaker_candidates_for_manager", harness),
         )
 
-        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["speaker_key"], "Hero")
         self.assertEqual(rows[0]["count"], 2)
+        self.assertEqual(rows[0]["inferred_count"], 1)
+        self.assertEqual(rows[0]["unresolved_count"], 1)
         self.assertEqual(rows[0]["suggested_translation"], "Aki")
         self.assertEqual(rows[0]["sample_path"], str(harness.path_a))
         self.assertEqual(rows[0]["sample_uid"], "Map001:1")
         self.assertIn("inferred_count", rows[0])
+
+    def test_collect_candidates_omits_fully_inferred_keys(self) -> None:
+        harness = _SpeakerInferenceCandidateHarness()
+
+        rows = cast(
+            list[dict[str, Any]],
+            _call_editor_method("_collect_inferred_speaker_candidates_for_manager", harness),
+        )
+
+        self.assertEqual(rows, [])
 
     def test_collect_candidates_includes_non_inferred_first_lines(self) -> None:
         harness = _SpeakerInferenceCandidateHarness()

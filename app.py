@@ -4883,6 +4883,11 @@ class DialogueVisualEditor(
 
         rows: list[dict[str, Any]] = []
         for speaker_key, row in rows_by_key.items():
+            total_count = int(row.get("count", 0))
+            inferred_count = int(row.get("inferred_count", 0))
+            unresolved_count = max(0, total_count - inferred_count)
+            if unresolved_count <= 0:
+                continue
             suggested_translation = self._speaker_translation_for_key(speaker_key).strip()
             translations_raw = row.get("translations")
             translations = (
@@ -4899,8 +4904,9 @@ class DialogueVisualEditor(
             rows.append(
                 {
                     "speaker_key": speaker_key,
-                    "count": int(row.get("count", 0)),
-                    "inferred_count": int(row.get("inferred_count", 0)),
+                    "count": total_count,
+                    "inferred_count": inferred_count,
+                    "unresolved_count": unresolved_count,
                     "sample_path": str(row.get("sample_path", "")).strip(),
                     "sample_uid": str(row.get("sample_uid", "")).strip(),
                     "sample_context": str(row.get("sample_context", "")).strip(),

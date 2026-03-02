@@ -897,7 +897,7 @@ class InferredSpeakerCandidatesDialog(QDialog):
         root = QVBoxLayout(self)
         info = QLabel(
             f"Candidates are collected from first lines of entries without explicit speakers.\n"
-            "Use 'Accept as Speaker' to force line1 speaker inference for matching entries."
+            "Only entries that are not already inferred are shown."
         )
         info.setWordWrap(True)
         root.addWidget(info)
