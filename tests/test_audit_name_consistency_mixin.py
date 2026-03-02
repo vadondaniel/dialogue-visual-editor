@@ -16,6 +16,7 @@ def _segment(
     tl_text: str,
     *,
     segment_kind: str = "dialogue",
+    translation_only: bool = False,
 ) -> DialogueSegment:
     source_lines = source_text.split("\n") if source_text else [""]
     tl_lines = tl_text.split("\n") if tl_text else [""]
@@ -29,6 +30,7 @@ def _segment(
         segment_kind=segment_kind,
         translation_lines=list(tl_lines),
         original_translation_lines=list(tl_lines),
+        translation_only=translation_only,
     )
 
 
@@ -333,6 +335,43 @@ class AuditNameConsistencyMixinTests(unittest.TestCase):
             data=[],
             bundles=[],
             segments=[dialogue],
+        )
+        harness.file_paths = [misc_path, map_path]
+        harness.sessions[misc_path] = misc_session
+        harness.sessions[map_path] = map_session
+
+        groups = harness._collect_audit_name_consistency_groups(dialogue_only=True)
+
+        self.assertEqual(groups, [])
+
+    def test_collect_groups_uses_translation_only_followups_as_same_dialogue_block(self) -> None:
+        harness = _Harness()
+        misc_path = Path("Items.json")
+        misc_session = FileSession(
+            path=misc_path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("Items.json:I:1:name", "魔王", "Demon Lord", segment_kind="name_index"),
+            ],
+        )
+        setattr(misc_session, "is_name_index_session", True)
+        setattr(misc_session, "name_index_label", "Item")
+
+        map_path = Path("Map099.json")
+        map_session = FileSession(
+            path=map_path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("Map099.json:L0:0", "魔王が現れた", "Demon"),
+                _segment(
+                    "Map099.json:TI:1",
+                    "",
+                    "Lord",
+                    translation_only=True,
+                ),
+            ],
         )
         harness.file_paths = [misc_path, map_path]
         harness.sessions[misc_path] = misc_session

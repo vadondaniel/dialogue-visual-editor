@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QListWidgetItem
@@ -151,6 +151,121 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             tl_lines_raw = self._normalize_translation_lines(segment.translation_lines)
         return self._normalize_translation_lines(tl_lines_raw)
 
+    def _name_consistency_scan_groups(
+        self,
+        session: FileSession,
+    ) -> list[dict[str, Any]]:
+        groups: list[dict[str, Any]] = []
+        leading_translation_only: list[DialogueSegment] = []
+        for idx, segment in enumerate(list(session.segments), start=1):
+            if bool(getattr(segment, "translation_only", False)):
+                if groups:
+                    cast(list[DialogueSegment], groups[-1]["segments"]).append(segment)
+                else:
+                    leading_translation_only.append(segment)
+                continue
+
+            group_segments: list[DialogueSegment] = [segment]
+            if leading_translation_only:
+                group_segments.extend(leading_translation_only)
+                leading_translation_only = []
+            groups.append(
+                {
+                    "anchor_segment": segment,
+                    "anchor_index": idx,
+                    "segments": group_segments,
+                }
+            )
+
+        if leading_translation_only:
+            if groups:
+                cast(list[DialogueSegment], groups[0]["segments"]).extend(
+                    leading_translation_only
+                )
+            else:
+                anchor_segment = leading_translation_only[0]
+                groups.append(
+                    {
+                        "anchor_segment": anchor_segment,
+                        "anchor_index": 1,
+                        "segments": list(leading_translation_only),
+                    }
+                )
+        return groups
+
+    def _name_consistency_source_lines_for_group(
+        self,
+        session: FileSession,
+        anchor_segment: DialogueSegment,
+    ) -> list[str]:
+        logical_source_resolver = getattr(
+            self,
+            "_logical_translation_source_lines_for_segment",
+            None,
+        )
+        if callable(logical_source_resolver):
+            resolved_source: Any = None
+            try:
+                resolved_source = logical_source_resolver(
+                    anchor_segment,
+                    session=session,
+                )
+            except TypeError:
+                try:
+                    resolved_source = logical_source_resolver(anchor_segment)
+                except Exception:
+                    resolved_source = None
+            except Exception:
+                resolved_source = None
+            if isinstance(resolved_source, list):
+                return self._normalize_translation_lines(resolved_source) or [""]
+        return self._name_consistency_source_lines_for_segment(anchor_segment)
+
+    def _name_consistency_translation_lines_for_group(
+        self,
+        session: FileSession,
+        anchor_segment: DialogueSegment,
+        group_segments: list[DialogueSegment],
+    ) -> list[str]:
+        logical_translation_resolver = getattr(
+            self,
+            "_logical_translation_lines_for_segment",
+            None,
+        )
+        if callable(logical_translation_resolver):
+            resolved_translation: Any = None
+            try:
+                resolved_translation = logical_translation_resolver(
+                    anchor_segment,
+                    session=session,
+                )
+            except TypeError:
+                try:
+                    resolved_translation = logical_translation_resolver(
+                        anchor_segment
+                    )
+                except Exception:
+                    resolved_translation = None
+            except Exception:
+                resolved_translation = None
+            if isinstance(resolved_translation, list):
+                normalized = self._normalize_translation_lines(resolved_translation)
+                normalize_for_segment = getattr(
+                    self, "_normalize_audit_translation_lines_for_segment", None
+                )
+                if callable(normalize_for_segment):
+                    try:
+                        normalized_raw = normalize_for_segment(anchor_segment, normalized)
+                    except Exception:
+                        normalized_raw = normalized
+                    return self._normalize_translation_lines(normalized_raw) or [""]
+                return normalized or [""]
+
+        lines: list[str] = []
+        for segment in group_segments:
+            lines.extend(self._name_consistency_translation_lines_for_segment(segment))
+        return lines if lines else [""]
+
     def _collect_misc_glossary_entries(self) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str, str]] = set()
@@ -215,11 +330,21 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
         for path, session in self._audit_path_sessions_snapshot():
             if self._is_name_index_session(session):
                 continue
-            for block_index, segment in enumerate(session.segments, start=1):
+            for group in self._name_consistency_scan_groups(session):
+                segment = cast(DialogueSegment, group["anchor_segment"])
+                block_index = int(group["anchor_index"])
+                group_segments = cast(list[DialogueSegment], group["segments"])
                 if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
                     continue
-                source_lines = self._name_consistency_source_lines_for_segment(segment)
-                tl_lines = self._name_consistency_translation_lines_for_segment(segment)
+                source_lines = self._name_consistency_source_lines_for_group(
+                    session,
+                    segment,
+                )
+                tl_lines = self._name_consistency_translation_lines_for_group(
+                    session,
+                    segment,
+                    group_segments,
+                )
                 if not isinstance(source_lines, list) or not source_lines:
                     continue
                 if not isinstance(tl_lines, list):

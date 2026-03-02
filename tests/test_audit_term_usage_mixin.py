@@ -15,6 +15,8 @@ def _segment(
     source_text: str,
     tl_text: str,
     segment_kind: str = "dialogue",
+    *,
+    translation_only: bool = False,
 ) -> DialogueSegment:
     return DialogueSegment(
         uid=uid,
@@ -26,6 +28,7 @@ def _segment(
         segment_kind=segment_kind,
         translation_lines=[tl_text],
         original_translation_lines=[tl_text],
+        translation_only=translation_only,
     )
 
 
@@ -164,6 +167,36 @@ class _RefreshHarness(AuditTermUsageMixin):
 
 
 class AuditTermUsageMixinTests(unittest.TestCase):
+    def test_term_groups_match_candidates_across_translation_only_followups(self) -> None:
+        harness = _Harness()
+        path = Path("scene_split.ks")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("scene_split.ks:K:1", "魔王が現れた", "Demon"),
+                _segment(
+                    "scene_split.ks:TI:1",
+                    "",
+                    "Lord",
+                    translation_only=True,
+                ),
+            ],
+        )
+
+        groups = harness._compute_audit_term_groups_worker(
+            [(path, harness.sessions[path])],
+            term="魔王",
+            candidates_text="Demon Lord",
+            dialogue_only=True,
+        )
+
+        keys = [str(group["group_key"]) for group in groups]
+        self.assertIn("Demon Lord", keys)
+        self.assertNotIn("__unmatched__", keys)
+
     def test_term_groups_match_tyrano_inline_r_candidate_text(self) -> None:
         harness = _Harness()
         path = Path("scene.ks")

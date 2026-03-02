@@ -475,36 +475,181 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             return f"{name_index_label} ID {actor_id}"
         return f"{name_index_label} {block_index}"
 
+    def _audit_term_scan_groups(
+        self,
+        session: FileSession,
+    ) -> list[dict[str, Any]]:
+        groups: list[dict[str, Any]] = []
+        leading_translation_only: list[DialogueSegment] = []
+        for idx, segment in enumerate(list(session.segments), start=1):
+            if bool(getattr(segment, "translation_only", False)):
+                if groups:
+                    cast(list[DialogueSegment], groups[-1]["segments"]).append(segment)
+                else:
+                    leading_translation_only.append(segment)
+                continue
+
+            group_segments: list[DialogueSegment] = [segment]
+            if leading_translation_only:
+                group_segments.extend(leading_translation_only)
+                leading_translation_only = []
+            groups.append(
+                {
+                    "anchor_segment": segment,
+                    "anchor_index": idx,
+                    "segments": group_segments,
+                }
+            )
+
+        if leading_translation_only:
+            if groups:
+                cast(list[DialogueSegment], groups[0]["segments"]).extend(
+                    leading_translation_only
+                )
+            else:
+                anchor_segment = leading_translation_only[0]
+                groups.append(
+                    {
+                        "anchor_segment": anchor_segment,
+                        "anchor_index": 1,
+                        "segments": list(leading_translation_only),
+                    }
+                )
+        return groups
+
+    def _resolve_audit_term_group_source_lines(
+        self,
+        session: FileSession,
+        anchor_segment: DialogueSegment,
+    ) -> list[str]:
+        logical_source_resolver = getattr(
+            self,
+            "_logical_translation_source_lines_for_segment",
+            None,
+        )
+        if callable(logical_source_resolver):
+            resolved_source: Any = None
+            try:
+                resolved_source = logical_source_resolver(
+                    anchor_segment,
+                    session=session,
+                )
+            except TypeError:
+                try:
+                    resolved_source = logical_source_resolver(anchor_segment)
+                except Exception:
+                    resolved_source = None
+            except Exception:
+                resolved_source = None
+            if isinstance(resolved_source, list):
+                return self._normalize_translation_lines(resolved_source) or [""]
+
+        source_resolver = getattr(self, "_segment_source_lines_for_translation", None)
+        if callable(source_resolver):
+            try:
+                resolved_source = source_resolver(anchor_segment)
+            except Exception:
+                resolved_source = None
+            if isinstance(resolved_source, list):
+                return self._normalize_translation_lines(resolved_source) or [""]
+        return self._segment_source_lines_for_display(anchor_segment)
+
+    def _resolve_audit_term_group_translation_lines(
+        self,
+        session: FileSession,
+        anchor_segment: DialogueSegment,
+        group_segments: list[DialogueSegment],
+    ) -> list[str]:
+        logical_translation_resolver = getattr(
+            self,
+            "_logical_translation_lines_for_segment",
+            None,
+        )
+        if callable(logical_translation_resolver):
+            resolved_translation: Any = None
+            try:
+                resolved_translation = logical_translation_resolver(
+                    anchor_segment,
+                    session=session,
+                )
+            except TypeError:
+                try:
+                    resolved_translation = logical_translation_resolver(anchor_segment)
+                except Exception:
+                    resolved_translation = None
+            except Exception:
+                resolved_translation = None
+            if isinstance(resolved_translation, list):
+                candidate_lines = self._normalize_translation_lines(
+                    resolved_translation
+                )
+                normalize_for_segment = getattr(
+                    self, "_normalize_audit_translation_lines_for_segment", None
+                )
+                if callable(normalize_for_segment):
+                    try:
+                        normalized_raw = normalize_for_segment(
+                            anchor_segment,
+                            candidate_lines,
+                        )
+                    except Exception:
+                        normalized_raw = candidate_lines
+                    return self._normalize_translation_lines(normalized_raw) or [""]
+                return candidate_lines or [""]
+
+        tl_resolver = getattr(self, "_segment_translation_lines_for_translation", None)
+        lines: list[str] = []
+        normalize_for_segment = getattr(
+            self, "_normalize_audit_translation_lines_for_segment", None
+        )
+        for segment in group_segments:
+            if callable(tl_resolver):
+                try:
+                    resolved_tl = tl_resolver(segment)
+                except Exception:
+                    resolved_tl = None
+                segment_lines = (
+                    self._normalize_translation_lines(resolved_tl)
+                    if isinstance(resolved_tl, list)
+                    else self._normalize_translation_lines(segment.translation_lines)
+                )
+            else:
+                segment_lines = self._normalize_translation_lines(segment.translation_lines)
+            if callable(normalize_for_segment):
+                try:
+                    segment_lines = self._normalize_translation_lines(
+                        normalize_for_segment(segment, segment_lines)
+                    )
+                except Exception:
+                    segment_lines = self._normalize_translation_lines(segment_lines)
+            lines.extend(segment_lines)
+        return lines if lines else [""]
+
     def _collect_audit_term_hits(
         self,
         term: str,
         dialogue_only: bool,
         path_sessions: Optional[list[tuple[Path, FileSession]]] = None,
     ) -> list[dict[str, Any]]:
-        source_resolver = getattr(self, "_segment_source_lines_for_translation", None)
-        tl_resolver = getattr(self, "_segment_translation_lines_for_translation", None)
         hits: list[dict[str, Any]] = []
         rows = path_sessions if isinstance(path_sessions, list) else self._audit_path_sessions_snapshot()
         for path, session in rows:
-            for block_index, segment in enumerate(session.segments, start=1):
+            groups = self._audit_term_scan_groups(session)
+            for group in groups:
+                segment = cast(DialogueSegment, group["anchor_segment"])
+                block_index = int(group["anchor_index"])
+                group_segments = cast(list[DialogueSegment], group["segments"])
                 if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
                     continue
-                if callable(source_resolver):
-                    source_lines = source_resolver(segment)
-                else:
-                    source_lines = self._segment_source_lines_for_display(segment)
-                if callable(tl_resolver):
-                    tl_lines = tl_resolver(segment)
-                else:
-                    tl_lines = self._normalize_translation_lines(segment.translation_lines)
-                normalize_for_segment = getattr(
-                    self, "_normalize_audit_translation_lines_for_segment", None
+                source_lines = self._resolve_audit_term_group_source_lines(
+                    session,
+                    segment,
                 )
-                if callable(normalize_for_segment):
-                    try:
-                        tl_lines = normalize_for_segment(segment, tl_lines)
-                    except Exception:
-                        tl_lines = self._normalize_translation_lines(tl_lines)
+                tl_lines = self._resolve_audit_term_group_translation_lines(
+                    session,
+                    segment,
+                    group_segments,
+                )
                 if not isinstance(source_lines, list) or not source_lines:
                     continue
                 if not isinstance(tl_lines, list):
