@@ -1532,6 +1532,51 @@ class PersistenceExportMixinTests(unittest.TestCase):
             )
         )
 
+    def test_layout_problem_control_mismatch_prefers_problem_chain_resolver(self) -> None:
+        harness = _Harness()
+        harness.problem_control_mismatch_check = _BoolControl(True)
+        anchor = _dialogue_segment("Map001.json:L0:0", r"\C[2]JP\C[0]")
+        anchor.translation_lines = [r"\C[2]JP\C[0]"]
+        followup = _dialogue_segment("Map001.json:TI:T0001", "")
+        followup.translation_only = True
+        followup.translation_lines = [r"\C[2]JP\C[0]"]
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[anchor, followup],
+        )
+        setattr(
+            harness,
+            "_logical_translation_source_lines_for_segment",
+            lambda _segment, session=None: [r"\C[2]JP\C[0]"],
+        )
+        setattr(
+            harness,
+            "_logical_translation_lines_for_segment",
+            lambda _segment, session=None: [r"\C[2]JP\C[0]", r"\C[2]JP\C[0]"],
+        )
+        setattr(
+            harness,
+            "_logical_translation_lines_for_problem_checks",
+            lambda _segment, session=None: [r"\C[2]JP\C[0]"],
+        )
+
+        self.assertFalse(
+            harness._segment_has_layout_problem(
+                session,
+                anchor,
+                translator_mode=True,
+            )
+        )
+        self.assertFalse(
+            harness._segment_has_layout_problem(
+                session,
+                followup,
+                translator_mode=True,
+            )
+        )
+
     def test_layout_problem_trailing_color_uses_logical_chain_for_split_translation(self) -> None:
         harness = _Harness()
         harness.problem_trailing_color_code_check = _BoolControl(True)

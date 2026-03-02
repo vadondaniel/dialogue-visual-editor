@@ -932,9 +932,15 @@ class RenderMixin(_RenderHostTypingFallback):
         )
         logical_translation_resolver = getattr(
             self,
-            "_logical_translation_lines_for_segment",
+            "_logical_translation_lines_for_problem_checks",
             None,
         )
+        if not callable(logical_translation_resolver):
+            logical_translation_resolver = getattr(
+                self,
+                "_logical_translation_lines_for_segment",
+                None,
+            )
         widget.control_mismatch_translation_lines_resolver = (
             logical_translation_resolver if callable(logical_translation_resolver) else None
         )

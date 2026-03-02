@@ -183,6 +183,33 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         prefer_logical_chain: bool = False,
     ) -> list[str]:
         if translator_mode and prefer_logical_chain:
+            logical_problem_translation_resolver = getattr(
+                self,
+                "_logical_translation_lines_for_problem_checks",
+                None,
+            )
+            if callable(logical_problem_translation_resolver):
+                resolved_problem_logical: Any = None
+                try:
+                    resolved_problem_logical = logical_problem_translation_resolver(
+                        segment,
+                        session=session,
+                    )
+                except TypeError:
+                    try:
+                        resolved_problem_logical = logical_problem_translation_resolver(
+                            segment
+                        )
+                    except Exception:
+                        resolved_problem_logical = None
+                except Exception:
+                    resolved_problem_logical = None
+                if isinstance(resolved_problem_logical, list):
+                    return self._normalize_problem_lines_for_segment(
+                        segment,
+                        resolved_problem_logical,
+                    )
+
             logical_translation_resolver = getattr(
                 self,
                 "_logical_translation_lines_for_segment",

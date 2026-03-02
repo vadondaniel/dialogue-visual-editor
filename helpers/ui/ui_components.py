@@ -3286,7 +3286,9 @@ class DialogueBlockWidget(QFrame):
             return []
         if self._displaying_masked_text:
             return []
-        translation_text = "\n".join(self._raw_lines or [""])
+        translation_text = "\n".join(
+            self._translation_lines_for_control_mismatch()
+        )
         if not translation_text.strip():
             return []
         source_text = "\n".join(self._source_lines_for_control_mismatch())

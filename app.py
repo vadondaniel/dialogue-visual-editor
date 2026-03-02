@@ -228,6 +228,8 @@ _JS_SYSTEM_ADVANCED_FONT_RE = re.compile(
 )
 _VARIABLE_TOKEN_RE = re.compile(r"\\[Vv]\[(\d+)\]")
 _INLINE_COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]")
+_LEADING_COLOR_CODE_PREFIX_RE = re.compile(r"^\s*(?:\\[Cc]\[\d+\])+")
+_TRAILING_RESET_COLOR_RE = re.compile(r"\\[Cc]\[0\]\s*$")
 _DEFAULT_VARIABLE_LENGTH_ESTIMATE = 4
 _MAX_VARIABLE_LENGTH_ESTIMATE = 64
 _DEFAULT_SMART_COLLAPSE_SOFT_RATIO_PERCENT = 50
@@ -3156,7 +3158,7 @@ class DialogueVisualEditor(
             self.translator_source_view.setExtraSelections([])
             return
         source_lines = self._logical_translation_source_lines_for_segment(segment)
-        tl_lines = self._logical_translation_lines_for_segment(segment)
+        tl_lines = self._logical_translation_lines_for_problem_checks(segment)
         source_text = "\n".join(source_lines)
         tl_text = "\n".join(tl_lines)
         if not tl_text.strip():
@@ -4131,6 +4133,62 @@ class DialogueVisualEditor(
                 )
             )
         return lines if lines else [""]
+
+    def _logical_translation_lines_for_problem_checks(
+        self,
+        segment: DialogueSegment,
+        *,
+        session: Optional[FileSession] = None,
+        infer_speaker_enabled: Optional[bool] = None,
+    ) -> list[str]:
+        chain = self._logical_translation_chain_for_segment(
+            segment,
+            session=session,
+        )
+        if not chain:
+            return [""]
+
+        base_lines_raw = self._segment_translation_lines_for_translation(
+            chain[0],
+            infer_speaker_enabled=infer_speaker_enabled,
+        )
+        normalized_base_lines = self._normalize_translation_lines(base_lines_raw)
+        anchor_first_line = ""
+        for line in normalized_base_lines:
+            if line.strip():
+                anchor_first_line = line.strip()
+                break
+
+        normalized_lines: list[str] = list(normalized_base_lines)
+        for candidate in chain[1:]:
+            candidate_lines_raw = self._segment_translation_lines_for_translation(
+                candidate,
+                infer_speaker_enabled=infer_speaker_enabled,
+            )
+            candidate_lines = self._normalize_translation_lines(candidate_lines_raw)
+            if not candidate_lines:
+                continue
+
+            # Ignore repeated translated speaker header line on split followups.
+            if (
+                anchor_first_line
+                and candidate_lines
+                and candidate_lines[0].strip()
+                and candidate_lines[0].strip() == anchor_first_line
+            ):
+                candidate_lines = list(candidate_lines[1:]) or [""]
+
+            if candidate_lines:
+                first_line = candidate_lines[0]
+                leading_match = _LEADING_COLOR_CODE_PREFIX_RE.match(first_line)
+                if leading_match is not None:
+                    candidate_lines[0] = first_line[leading_match.end():]
+
+            if candidate_lines:
+                candidate_lines[-1] = _TRAILING_RESET_COLOR_RE.sub("", candidate_lines[-1])
+
+            normalized_lines.extend(candidate_lines)
+        return normalized_lines if normalized_lines else [""]
 
     def _compose_translation_lines_for_segment(
         self,
