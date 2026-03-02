@@ -223,6 +223,65 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             lines.extend(self._normalize_translation_lines(segment.translation_lines))
         return lines if lines else [""]
 
+    def _resolve_control_mismatch_group_source_lines(
+        self,
+        session: FileSession,
+        anchor_segment: DialogueSegment,
+    ) -> list[str]:
+        logical_source_resolver = getattr(
+            self,
+            "_logical_translation_source_lines_for_segment",
+            None,
+        )
+        if callable(logical_source_resolver):
+            resolved_source: Any = None
+            try:
+                resolved_source = logical_source_resolver(
+                    anchor_segment,
+                    session=session,
+                )
+            except TypeError:
+                try:
+                    resolved_source = logical_source_resolver(anchor_segment)
+                except Exception:
+                    resolved_source = None
+            except Exception:
+                resolved_source = None
+            if isinstance(resolved_source, list):
+                return self._normalize_translation_lines(resolved_source) or [""]
+        return self._segment_source_lines_for_display(anchor_segment)
+
+    def _resolve_control_mismatch_group_translation_lines(
+        self,
+        session: FileSession,
+        anchor_segment: DialogueSegment,
+        group_segments: list[DialogueSegment],
+    ) -> list[str]:
+        logical_problem_translation_resolver = getattr(
+            self,
+            "_logical_translation_lines_for_problem_checks",
+            None,
+        )
+        if callable(logical_problem_translation_resolver):
+            resolved_problem_lines: Any = None
+            try:
+                resolved_problem_lines = logical_problem_translation_resolver(
+                    anchor_segment,
+                    session=session,
+                )
+            except TypeError:
+                try:
+                    resolved_problem_lines = logical_problem_translation_resolver(
+                        anchor_segment
+                    )
+                except Exception:
+                    resolved_problem_lines = None
+            except Exception:
+                resolved_problem_lines = None
+            if isinstance(resolved_problem_lines, list):
+                return self._normalize_translation_lines(resolved_problem_lines) or [""]
+        return self._control_mismatch_group_translation_lines(group_segments)
+
     def _control_mismatch_group_entry_text(
         self,
         session: FileSession,
@@ -404,8 +463,15 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
                 anchor_segment = cast(DialogueSegment, group["anchor_segment"])
                 anchor_index = int(group["anchor_index"])
                 group_segments = cast(list[DialogueSegment], group["segments"])
-                source_lines = self._segment_source_lines_for_display(anchor_segment)
-                tl_lines = self._control_mismatch_group_translation_lines(group_segments)
+                source_lines = self._resolve_control_mismatch_group_source_lines(
+                    session,
+                    anchor_segment,
+                )
+                tl_lines = self._resolve_control_mismatch_group_translation_lines(
+                    session,
+                    anchor_segment,
+                    group_segments,
+                )
                 if only_translated and not any(line.strip() for line in tl_lines):
                     continue
                 scanned_blocks += 1

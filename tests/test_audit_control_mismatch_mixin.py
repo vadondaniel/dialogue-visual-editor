@@ -114,6 +114,68 @@ class AuditControlMismatchMixinTests(unittest.TestCase):
         self.assertEqual(records[0]["uid"], "Map001.json:L0:0")
         self.assertIn("TL split", records[0]["entry_text"])
 
+    def test_worker_prefers_problem_check_translation_resolver_for_split_followups(self) -> None:
+        harness = _Harness()
+        anchor = _segment("Map001.json:L0:0", r"\C[2]JP\C[0]", r"\C[2]TL\C[0]")
+        followup = _segment(
+            "Map001.json:I:1",
+            "",
+            r"\C[2]TL\C[0]",
+            translation_only=True,
+        )
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[anchor, followup],
+        )
+        setattr(
+            harness,
+            "_logical_translation_lines_for_problem_checks",
+            lambda _segment, session=None: [r"\C[2]TL\C[0]"],
+        )
+        setattr(
+            harness,
+            "_logical_translation_source_lines_for_segment",
+            lambda _segment, session=None: [r"\C[2]JP\C[0]"],
+        )
+
+        payload = harness._compute_audit_control_mismatch_worker(
+            [(Path("Map001.json"), session)],
+            only_translated=True,
+        )
+
+        self.assertEqual(payload["scanned_blocks"], 1)
+        self.assertEqual(payload["records"], [])
+
+    def test_worker_prefers_logical_source_resolver(self) -> None:
+        harness = _Harness()
+        anchor = _segment("Map001.json:L0:0", r"\C[2]JP\C[0]", "TL")
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[anchor],
+        )
+        setattr(
+            harness,
+            "_logical_translation_source_lines_for_segment",
+            lambda _segment, session=None: ["JP"],
+        )
+        setattr(
+            harness,
+            "_logical_translation_lines_for_problem_checks",
+            lambda _segment, session=None: ["TL"],
+        )
+
+        payload = harness._compute_audit_control_mismatch_worker(
+            [(Path("Map001.json"), session)],
+            only_translated=True,
+        )
+
+        self.assertEqual(payload["scanned_blocks"], 1)
+        self.assertEqual(payload["records"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
