@@ -3309,7 +3309,8 @@ class DialogueBlockWidget(QFrame):
 
     def _source_lines_for_control_mismatch(self) -> list[str]:
         source_resolver = self.control_mismatch_source_lines_resolver
-        if self._uses_translation_storage() and callable(source_resolver):
+        use_local_only = bool(self._uses_translation_storage() and self.segment.translation_only)
+        if (not use_local_only) and self._uses_translation_storage() and callable(source_resolver):
             try:
                 resolved_source = source_resolver(self.segment)
             except Exception:
@@ -3332,7 +3333,8 @@ class DialogueBlockWidget(QFrame):
 
     def _translation_lines_for_control_mismatch(self) -> list[str]:
         translation_resolver = self.control_mismatch_translation_lines_resolver
-        if self._uses_translation_storage() and callable(translation_resolver):
+        use_local_only = bool(self._uses_translation_storage() and self.segment.translation_only)
+        if (not use_local_only) and self._uses_translation_storage() and callable(translation_resolver):
             try:
                 resolved_translation = translation_resolver(self.segment)
             except Exception:

@@ -637,7 +637,6 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
 
     def test_control_mismatch_highlight_uses_chain_translation_resolver(self) -> None:
         segment = _segment([r"\C[2]Speaker\C[0]", r"\C[27]Source text\C[0]"])
-        segment.translation_only = True
         segment.translation_lines = [
             r"\C[2]Yuki\C[0]",
             r"\C[27]We'll be waiting with a feast for you♡\C[0]",
@@ -662,6 +661,36 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
 
         self.assertFalse(widget._has_control_mismatch_problem())
         self.assertEqual(len(widget._control_mismatch_selections()), 0)
+        widget.deleteLater()
+
+    def test_translation_only_control_mismatch_uses_local_lines_not_chain_resolver(self) -> None:
+        segment = _segment([r"\C[2]Name\C[0]", r"\C[27]Line\C[0]"])
+        segment.translation_only = True
+        segment.translation_lines = [r"\C[2]Name\C[0]", r"\C[27]Line\C[0]"]
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=None,
+        )
+        widget.set_editor_active(True)
+        widget.set_control_mismatch_highlighting_enabled(True)
+
+        # Chain-level resolver payload intentionally mismatches local text.
+        widget.control_mismatch_source_lines_resolver = (
+            lambda _segment: [r"\C[2]Name\C[0]", r"\C[27]Line\C[0]"]
+        )
+        widget.control_mismatch_translation_lines_resolver = (
+            lambda _segment: [r"\C[2]Name\C[0]", r"\C[27]Line"]
+        )
+
+        self.assertFalse(widget._has_control_mismatch_problem())
+        # Selections include matched control-code tokens. If resolver were used,
+        # this would be 3 (missing trailing \C[0]); local lines produce 4.
+        self.assertEqual(len(widget._control_mismatch_selections()), 4)
         widget.deleteLater()
 
     def test_translator_mode_speaker_html_resolver_applies_to_translated_name(self) -> None:
