@@ -463,6 +463,27 @@ class RenderMixin(_RenderHostTypingFallback):
             next_number += 1
         return numbers
 
+    def _display_entry_indices(
+        self,
+        segments: list[DialogueSegment],
+        *,
+        actor_mode: bool,
+    ) -> dict[str, int]:
+        indices: dict[str, int] = {}
+        if actor_mode:
+            for idx, segment in enumerate(segments, start=1):
+                indices[segment.uid] = idx
+            return indices
+
+        next_index = 1
+        for segment in segments:
+            if self._is_map_display_name_segment(segment):
+                indices[segment.uid] = 0
+                continue
+            indices[segment.uid] = next_index
+            next_index += 1
+        return indices
+
     def _segment_allows_structural_actions(
         self,
         segment: DialogueSegment,
@@ -602,6 +623,10 @@ class RenderMixin(_RenderHostTypingFallback):
             display_segments,
             actor_mode=actor_mode,
         )
+        entry_indices = self._display_entry_indices(
+            display_segments,
+            actor_mode=actor_mode,
+        )
         segment_lookup = {segment.uid: segment for segment in display_segments}
         name_index_label = self._name_index_label(session)
         viewport = self.scroll_area.viewport()
@@ -621,6 +646,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 widget,
                 segment=segment,
                 block_number=block_numbers.get(uid, 1),
+                entry_index=entry_indices.get(uid, 1),
                 name_index_label=name_index_label,
             )
             self._apply_block_visual_state(uid, widget)
@@ -1272,9 +1298,11 @@ class RenderMixin(_RenderHostTypingFallback):
         widget: DialogueBlockWidget,
         segment: DialogueSegment,
         block_number: int,
+        entry_index: int,
     ) -> None:
         widget.segment = segment
         widget.block_number = block_number
+        widget.entry_index = max(0, int(entry_index))
         widget.thin_width = max(1, self.thin_width_spin.value())
         widget.wide_width = max(1, self.wide_width_spin.value())
         widget.max_lines = max(1, self.max_lines_spin.value())
@@ -1345,6 +1373,7 @@ class RenderMixin(_RenderHostTypingFallback):
         widget: BlockWidgetType,
         segment: DialogueSegment,
         block_number: int,
+        entry_index: int,
         name_index_label: str,
     ) -> None:
         if isinstance(widget, ItemNameDescriptionWidget):
@@ -1360,6 +1389,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 widget,
                 segment,
                 block_number,
+                entry_index,
             )
 
     def _can_fast_refresh_session_widgets(
@@ -1414,6 +1444,7 @@ class RenderMixin(_RenderHostTypingFallback):
         pool: dict[str, BlockWidgetType],
         *,
         block_numbers: dict[str, int],
+        entry_indices: dict[str, int],
         translator_mode: bool,
         actor_mode: bool,
         name_index_label: str,
@@ -1462,6 +1493,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 widget,
                 segment=segment,
                 block_number=block_numbers.get(segment.uid, idx + 1),
+                entry_index=entry_indices.get(segment.uid, idx + 1),
                 name_index_label=name_index_label,
             )
             self.blocks_layout.addWidget(widget)
@@ -1615,6 +1647,10 @@ class RenderMixin(_RenderHostTypingFallback):
             all_display_segments,
             actor_mode=actor_mode,
         )
+        entry_indices = self._display_entry_indices(
+            all_display_segments,
+            actor_mode=actor_mode,
+        )
         page_segment_uids = {segment.uid for segment in display_segments}
         self.current_segment_lookup = {
             segment.uid: segment for segment in all_display_segments}
@@ -1729,6 +1765,7 @@ class RenderMixin(_RenderHostTypingFallback):
                     widget,
                     segment=segment,
                     block_number=block_numbers.get(segment.uid, idx),
+                    entry_index=entry_indices.get(segment.uid, idx),
                     name_index_label=name_index_label,
                 )
                 self._apply_block_visual_state(segment.uid, widget)
@@ -1821,6 +1858,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 display_segments,
                 cached_pool,
                 block_numbers=block_numbers,
+                entry_indices=entry_indices,
                 translator_mode=translator_mode,
                 actor_mode=actor_mode,
                 name_index_label=name_index_label,
@@ -1932,6 +1970,7 @@ class RenderMixin(_RenderHostTypingFallback):
                     widget,
                     segment=segment,
                     block_number=block_numbers.get(segment.uid, idx + 1),
+                    entry_index=entry_indices.get(segment.uid, idx + 1),
                     name_index_label=name_index_label,
                 )
             else:
@@ -1945,6 +1984,11 @@ class RenderMixin(_RenderHostTypingFallback):
                     name_index_kind=name_index_kind,
                     name_index_label=name_index_label,
                 )
+                if isinstance(widget, DialogueBlockWidget):
+                    widget.entry_index = max(
+                        0,
+                        int(entry_indices.get(segment.uid, idx + 1)),
+                    )
             self.blocks_layout.addWidget(widget)
             widget.show()
             self.block_widgets[segment.uid] = widget

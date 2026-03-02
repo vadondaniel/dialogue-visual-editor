@@ -1918,11 +1918,14 @@ class DialogueBlockWidget(QFrame):
         allow_structural_actions: bool,
         inferred_speaker_name_resolver: Optional[Callable[[DialogueSegment], str]],
         segment_prompt_type_resolver: Optional[Callable[..., str]] = None,
+        entry_index: int = 0,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
         self.segment = segment
         self.block_number = block_number
+        resolved_entry_index = int(entry_index) if int(entry_index) > 0 else int(block_number)
+        self.entry_index = max(0, resolved_entry_index)
         self.thin_width = max(1, thin_width)
         self.wide_width = max(1, wide_width)
         self.max_lines = max(1, max_lines)
@@ -2932,10 +2935,13 @@ class DialogueBlockWidget(QFrame):
             escaped_base = html.escape(base_text)
             if self._selected and context_text:
                 escaped_context = html.escape(context_text)
+                context_suffix = ""
+                if (not self.actor_mode) and int(self.entry_index) > 0:
+                    context_suffix = f" · #{int(self.entry_index)}"
                 self.title_label.setTextFormat(Qt.TextFormat.RichText)
                 self.title_label.setText(
                     f"<b>{escaped_base}</b>"
-                    f"<span style=\"font-weight:400;\"> | {escaped_context}</span>"
+                    f"<span style=\"font-weight:400;\"> | {escaped_context}{context_suffix}</span>"
                 )
                 return
             self.title_label.setTextFormat(Qt.TextFormat.RichText)

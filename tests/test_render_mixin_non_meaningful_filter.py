@@ -566,6 +566,24 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
 
         self.assertEqual(count, 2)
 
+    def test_display_entry_indices_count_each_followup(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        segments = [
+            _segment("Map001:1", "A1"),
+            _segment("Map001:1:f1", "A1-f1", translation_only=True),
+            _segment("map_name", "Town", segment_kind="map_display_name"),
+            _segment("Map001:2", "A2"),
+            _segment("Map001:2:f1", "A2-f1", translation_only=True),
+        ]
+
+        indices = harness._display_entry_indices(segments, actor_mode=False)
+
+        self.assertEqual(indices["Map001:1"], 1)
+        self.assertEqual(indices["Map001:1:f1"], 2)
+        self.assertEqual(indices["map_name"], 0)
+        self.assertEqual(indices["Map001:2"], 3)
+        self.assertEqual(indices["Map001:2:f1"], 4)
+
     def test_paginate_segments_selects_page_for_focus_uid(self) -> None:
         harness = _Harness(hide_non_meaningful=False)
         segments = [_segment(f"Map001:{idx}", f"line {idx}") for idx in range(1, 121)]

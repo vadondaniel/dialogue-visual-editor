@@ -515,6 +515,17 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertIn("font-weight:400", widget.title_label.text())
         widget.deleteLater()
 
+    def test_selected_context_title_includes_compact_entry_index(self) -> None:
+        segment = _segment(["Hello"])
+        segment.context = "scene.ks > dialogue line 42"
+        widget = _widget(segment)
+        widget.entry_index = 42
+
+        widget.set_selected_state(True)
+
+        self.assertIn("#42", widget.title_label.text())
+        widget.deleteLater()
+
     def test_translation_only_block_title_shows_cont_tag(self) -> None:
         segment = _segment(["followup"])
         segment.translation_only = True
