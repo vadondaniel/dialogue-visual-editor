@@ -625,6 +625,9 @@ class RenderMixin(_RenderHostTypingFallback):
         actor_mode: bool,
         name_index_kind: str,
         name_index_label: str,
+        current_page: int,
+        total_pages: int,
+        page_size: int,
     ) -> tuple[Any, ...]:
         return (
             translator_mode,
@@ -634,10 +637,112 @@ class RenderMixin(_RenderHostTypingFallback):
             self.thin_width_spin.value(),
             self.wide_width_spin.value(),
             self.max_lines_spin.value(),
+            int(current_page),
+            int(total_pages),
+            int(page_size),
             bool(self.hide_control_codes_check.isChecked()),
             bool(self.infer_speaker_check.isChecked()),
             bool(self._hide_non_meaningful_entries_enabled()),
         )
+
+    def _pagination_page_size_value(self) -> int:
+        page_size_resolver = getattr(self, "_pagination_page_size", None)
+        if callable(page_size_resolver):
+            try:
+                value = int(page_size_resolver())
+            except Exception:
+                value = 50
+            return max(1, value)
+        return 50
+
+    def _pagination_state_key(
+        self,
+        session: FileSession,
+        *,
+        actor_mode: bool,
+    ) -> tuple[Path, str]:
+        scope = "misc" if actor_mode else "dialogue"
+        normalizer = getattr(self, "_normalized_view_scope_for_path", None)
+        if callable(normalizer):
+            try:
+                normalized_scope = normalizer(session.path, session, scope)
+            except Exception:
+                normalized_scope = scope
+            if isinstance(normalized_scope, str) and normalized_scope.strip():
+                scope = normalized_scope.strip().lower()
+        return session.path, scope
+
+    def _pagination_page_map(self) -> dict[tuple[Path, str], int]:
+        raw = getattr(self, "_pagination_page_by_scope_key", None)
+        if isinstance(raw, dict):
+            return cast(dict[tuple[Path, str], int], raw)
+        created: dict[tuple[Path, str], int] = {}
+        setattr(self, "_pagination_page_by_scope_key", created)
+        return created
+
+    def _paginate_segments_for_render(
+        self,
+        session: FileSession,
+        display_segments: list[DialogueSegment],
+        *,
+        actor_mode: bool,
+        focus_uid: Optional[str],
+    ) -> tuple[list[DialogueSegment], dict[str, Any]]:
+        page_size = self._pagination_page_size_value()
+        total_entries = len(display_segments)
+        total_pages = max(1, (total_entries + page_size - 1) // page_size)
+        state_key = self._pagination_state_key(session, actor_mode=actor_mode)
+        page_map = self._pagination_page_map()
+        stored_page = int(page_map.get(state_key, 1))
+        target_page = max(1, min(stored_page, total_pages))
+
+        def page_for_uid(uid: str) -> Optional[int]:
+            for idx, segment in enumerate(display_segments):
+                if segment.uid == uid:
+                    return (idx // page_size) + 1
+            return None
+
+        if isinstance(focus_uid, str) and focus_uid:
+            focus_page = page_for_uid(focus_uid)
+            if focus_page is not None:
+                target_page = focus_page
+        else:
+            selected_uid = getattr(self, "selected_segment_uid", None)
+            if isinstance(selected_uid, str) and selected_uid:
+                selected_page = page_for_uid(selected_uid)
+                if selected_page is not None:
+                    target_page = selected_page
+
+        target_page = max(1, min(target_page, total_pages))
+        page_map[state_key] = target_page
+        start_index = (target_page - 1) * page_size
+        end_index = min(total_entries, start_index + page_size)
+        paged_segments = display_segments[start_index:end_index]
+        return paged_segments, {
+            "state_key": state_key,
+            "current_page": target_page,
+            "total_pages": total_pages,
+            "total_entries": total_entries,
+            "page_size": page_size,
+            "page_start_index": start_index + 1 if total_entries > 0 else 0,
+            "page_end_index": end_index if total_entries > 0 else 0,
+        }
+
+    def _apply_pagination_render_state(self, payload: dict[str, Any]) -> None:
+        state_key = payload.get("state_key")
+        if isinstance(state_key, tuple) and len(state_key) == 2:
+            setattr(self, "_pagination_active_scope_key", state_key)
+        else:
+            setattr(self, "_pagination_active_scope_key", None)
+        setattr(self, "_pagination_current_page", int(payload.get("current_page", 1)))
+        setattr(self, "_pagination_total_pages", int(payload.get("total_pages", 1)))
+        setattr(self, "_pagination_total_entries", int(payload.get("total_entries", 0)))
+        setattr(self, "_pagination_active_page_size", int(payload.get("page_size", 50)))
+        setattr(self, "_pagination_page_start_index", int(payload.get("page_start_index", 0)))
+        setattr(self, "_pagination_page_end_index", int(payload.get("page_end_index", 0)))
+        refresh_controls = getattr(self, "_refresh_pagination_controls", None)
+        if callable(refresh_controls):
+            refresh_controls()
 
     def _display_segments_for_session(
         self,
@@ -1243,6 +1348,7 @@ class RenderMixin(_RenderHostTypingFallback):
         display_segments: list[DialogueSegment],
         pool: dict[str, BlockWidgetType],
         *,
+        block_numbers: dict[str, int],
         translator_mode: bool,
         actor_mode: bool,
         name_index_label: str,
@@ -1250,10 +1356,6 @@ class RenderMixin(_RenderHostTypingFallback):
     ) -> None:
         self.block_widgets = {}
         segment_count = len(display_segments)
-        block_numbers = self._display_block_numbers(
-            display_segments,
-            actor_mode=actor_mode,
-        )
         plugin_group_members: dict[str, list[QWidget]] = {}
         plugin_group_count_labels: dict[str, QLabel] = {}
         plugin_group_description_hints: dict[str, str] = {}
@@ -1433,22 +1535,33 @@ class RenderMixin(_RenderHostTypingFallback):
         name_index_kind = self._name_index_kind(session) if actor_mode else ""
         name_index_label = self._name_index_label(session)
         translator_mode = self._is_translator_mode()
-        display_segments = self._display_segments_for_session(
+        all_display_segments = self._display_segments_for_session(
             session,
             translator_mode=translator_mode,
             actor_mode=actor_mode,
         )
+        display_segments, pagination_state = self._paginate_segments_for_render(
+            session,
+            all_display_segments,
+            actor_mode=actor_mode,
+            focus_uid=focus_uid,
+        )
         block_numbers = self._display_block_numbers(
-            display_segments,
+            all_display_segments,
             actor_mode=actor_mode,
         )
+        page_segment_uids = {segment.uid for segment in display_segments}
         self.current_segment_lookup = {
-            segment.uid: segment for segment in display_segments}
+            segment.uid: segment for segment in all_display_segments}
+        self._apply_pagination_render_state(pagination_state)
         view_meta = self._block_view_meta(
             translator_mode=translator_mode,
             actor_mode=actor_mode,
             name_index_kind=name_index_kind,
             name_index_label=name_index_label,
+            current_page=int(pagination_state.get("current_page", 1)),
+            total_pages=int(pagination_state.get("total_pages", 1)),
+            page_size=int(pagination_state.get("page_size", 50)),
         )
         if translator_mode:
             cached_reference_map = self.reference_summary_cache_by_path.get(
@@ -1464,11 +1577,16 @@ class RenderMixin(_RenderHostTypingFallback):
             self.selected_segment_uid = None
         if focus_uid and focus_uid in self.current_segment_lookup:
             self.selected_segment_uid = focus_uid
+        elif (
+            self.selected_segment_uid is not None
+            and self.selected_segment_uid not in page_segment_uids
+        ):
+            self.selected_segment_uid = None
         self._sync_translator_mode_ui()
         source_dirty, tl_dirty = self._session_dirty_flags_cached(session)
 
         if actor_mode:
-            entry_count = len(display_segments)
+            entry_count = len(all_display_segments)
             entry_label = "entry" if entry_count == 1 else "entries"
             header = (
                 f"{session.path.name} | {entry_count} "
@@ -1476,11 +1594,16 @@ class RenderMixin(_RenderHostTypingFallback):
             )
         else:
             block_count = self._display_block_count(
-                display_segments,
+                all_display_segments,
                 actor_mode=False,
             )
             block_label = "dialogue block" if block_count == 1 else "dialogue blocks"
             header = f"{session.path.name} | {block_count} {block_label}"
+        total_pages = int(pagination_state.get("total_pages", 1))
+        if total_pages > 1:
+            header += (
+                f" | Page {int(pagination_state.get('current_page', 1))}/{total_pages}"
+            )
         if source_dirty and tl_dirty:
             header += " | UNSAVED SOURCE+TL"
         elif source_dirty:
@@ -1632,6 +1755,7 @@ class RenderMixin(_RenderHostTypingFallback):
                 session,
                 display_segments,
                 cached_pool,
+                block_numbers=block_numbers,
                 translator_mode=translator_mode,
                 actor_mode=actor_mode,
                 name_index_label=name_index_label,

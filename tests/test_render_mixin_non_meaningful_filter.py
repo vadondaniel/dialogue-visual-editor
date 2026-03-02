@@ -19,10 +19,23 @@ class _Harness(RenderMixin):
     def __init__(self, *, hide_non_meaningful: bool) -> None:
         self.hide_non_meaningful_entries_check = _CheckBoxStub(hide_non_meaningful)
         self.block_widgets: dict[str, object] = {}
+        self._pagination_page_by_scope_key: dict[tuple[Path, str], int] = {}
+        self.selected_segment_uid: str | None = None
+        self._page_size = 50
 
     @staticmethod
     def _is_actor_index_session(session: FileSession) -> bool:
         return bool(getattr(session, "is_actor_index_session", False))
+
+    @staticmethod
+    def _normalized_view_scope_for_path(
+        _path: Path,
+        _session: FileSession,
+        requested_scope: str | None = None,
+    ) -> str:
+        if isinstance(requested_scope, str) and requested_scope.strip().lower() == "misc":
+            return "misc"
+        return "dialogue"
 
     @staticmethod
     def _name_index_field_from_uid(uid: str) -> str:
@@ -32,6 +45,9 @@ class _Harness(RenderMixin):
         if tail.isdigit():
             return "name"
         return tail
+
+    def _pagination_page_size(self) -> int:
+        return int(self._page_size)
 
 
 def _segment(
@@ -497,6 +513,58 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
         )
 
         self.assertEqual(hint, "EN translated description")
+
+    def test_paginate_segments_uses_default_first_page(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        segments = [_segment(f"Map001:{idx}", f"line {idx}") for idx in range(1, 121)]
+        session = _session_with_segments(segments)
+
+        paged, state = harness._paginate_segments_for_render(
+            session,
+            segments,
+            actor_mode=False,
+            focus_uid=None,
+        )
+
+        self.assertEqual(len(paged), 50)
+        self.assertEqual(paged[0].uid, "Map001:1")
+        self.assertEqual(paged[-1].uid, "Map001:50")
+        self.assertEqual(state["current_page"], 1)
+        self.assertEqual(state["total_pages"], 3)
+
+    def test_paginate_segments_selects_page_for_focus_uid(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        segments = [_segment(f"Map001:{idx}", f"line {idx}") for idx in range(1, 121)]
+        session = _session_with_segments(segments)
+
+        paged, state = harness._paginate_segments_for_render(
+            session,
+            segments,
+            actor_mode=False,
+            focus_uid="Map001:115",
+        )
+
+        self.assertEqual(state["current_page"], 3)
+        self.assertEqual(len(paged), 20)
+        self.assertEqual(paged[0].uid, "Map001:101")
+        self.assertEqual(paged[-1].uid, "Map001:120")
+
+    def test_paginate_segments_uses_selected_uid_when_focus_uid_missing(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        segments = [_segment(f"Map001:{idx}", f"line {idx}") for idx in range(1, 121)]
+        session = _session_with_segments(segments)
+        harness.selected_segment_uid = "Map001:79"
+
+        paged, state = harness._paginate_segments_for_render(
+            session,
+            segments,
+            actor_mode=False,
+            focus_uid=None,
+        )
+
+        self.assertEqual(state["current_page"], 2)
+        self.assertEqual(paged[0].uid, "Map001:51")
+        self.assertEqual(paged[-1].uid, "Map001:100")
 
 
 if __name__ == "__main__":

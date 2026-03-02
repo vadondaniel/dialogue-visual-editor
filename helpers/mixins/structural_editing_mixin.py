@@ -107,6 +107,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
     _TRAILING_RESET_COLOR_RE = re.compile(r"\\[Cc]\[0\]\s*$")
 
+    def _structure_fast_rerender_supported(self) -> bool:
+        # Structural fast-refresh logic predates pagination and assumes that
+        # rendered UID order mirrors the full display list. With pagination
+        # enabled this assumption breaks, so fall back to the canonical
+        # paginated render path for correctness.
+        return not hasattr(self, "_pagination_page_by_scope_key")
+
     def _refresh_after_text_reset_without_full_rerender(
         self,
         session: FileSession,
@@ -1068,6 +1075,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         focus_uid: Optional[str] = None,
         preserve_scroll: bool = True,
     ) -> bool:
+        if not self._structure_fast_rerender_supported():
+            return False
         if self.current_path != session.path:
             return False
         if self._pending_render_state is not None:
@@ -1251,6 +1260,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         focus_uid: Optional[str] = None,
         preserve_scroll: bool = True,
     ) -> bool:
+        if not self._structure_fast_rerender_supported():
+            return False
         if self.current_path != session.path:
             return False
         if self._pending_render_state is not None:
@@ -1461,6 +1472,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         focus_uid: Optional[str] = None,
         preserve_scroll: bool = True,
     ) -> bool:
+        if not self._structure_fast_rerender_supported():
+            return False
         if self.current_path != session.path:
             return False
         if self._pending_render_state is not None:
@@ -2722,6 +2735,15 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if bundle is not None and token_index >= 0:
             del bundle.tokens[token_index]
         del session.segments[segment_index]
+        focus_uid_after_delete: Optional[str] = None
+        if segment_index < len(session.segments):
+            candidate_uid = getattr(session.segments[segment_index], "uid", None)
+            if isinstance(candidate_uid, str) and candidate_uid:
+                focus_uid_after_delete = candidate_uid
+        elif segment_index > 0:
+            candidate_uid = getattr(session.segments[segment_index - 1], "uid", None)
+            if isinstance(candidate_uid, str) and candidate_uid:
+                focus_uid_after_delete = candidate_uid
 
         self.structural_undo_stack.append(
             StructuralAction(kind="delete", path=session.path, data=action)
@@ -2732,13 +2754,19 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if not self._refresh_after_remove_without_full_rerender(
             session,
             removed_uid=uid,
+            focus_uid=focus_uid_after_delete,
             preserve_scroll=True,
         ):
             if not self._refresh_after_structure_change_without_full_rerender(
                 session,
+                focus_uid=focus_uid_after_delete,
                 preserve_scroll=True,
             ):
-                self._render_session(session)
+                self._render_session(
+                    session,
+                    focus_uid=focus_uid_after_delete,
+                    preserve_scroll=True,
+                )
         self.statusBar().showMessage("Deleted dialogue block.")
 
     def _apply_undo_delete(self, action: DeletedBlockAction) -> bool:

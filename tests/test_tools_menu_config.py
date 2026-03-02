@@ -52,6 +52,20 @@ class ToolsMenuConfigTests(unittest.TestCase):
         self.assertEqual(shortcuts_by_label["Audit..."], "F4")
         self.assertEqual(shortcuts_by_label["Translations..."], "F6")
 
+    def test_pagination_buttons_show_all_pages_when_total_is_small(self) -> None:
+        harness = _ToolsMenuHarness()
+
+        tokens = _call_editor_method("_pagination_visible_page_buttons", harness, 6, 7)
+
+        self.assertEqual(tokens, ["1", "2", "3", "4", "5", "6", "7"])
+
+    def test_pagination_buttons_show_ellipsis_when_total_is_large(self) -> None:
+        harness = _ToolsMenuHarness()
+
+        tokens = _call_editor_method("_pagination_visible_page_buttons", harness, 8, 20)
+
+        self.assertEqual(tokens, ["1", "...", "6", "7", "8", "9", "10", "...", "20"])
+
 
 if __name__ == "__main__":
     unittest.main()

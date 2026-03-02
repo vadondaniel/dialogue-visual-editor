@@ -3,6 +3,9 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
+
+from PySide6.QtWidgets import QMessageBox
 
 from dialogue_visual_editor.helpers.core.models import (
     DialogueSegment,
@@ -148,6 +151,89 @@ class _UidGenerationHarness(StructuralEditingMixin):
     def __init__(self, session: FileSession, *, counter: int = 0) -> None:
         self.sessions: dict[Path, FileSession] = {session.path: session}
         self.segment_uid_counter = counter
+
+
+class _DeleteFallbackHarness(StructuralEditingMixin):
+    def __init__(self, session: FileSession) -> None:
+        self.current_path: Path | None = session.path
+        self.sessions: dict[Path, FileSession] = {session.path: session}
+        self.structural_undo_stack: list[Any] = []
+        self.structural_redo_stack: list[Any] = []
+        self._status_bar = _StatusBarHarness()
+        self.remove_refresh_calls: list[dict[str, Any]] = []
+        self.structure_refresh_calls: list[dict[str, Any]] = []
+        self.render_calls: list[dict[str, Any]] = []
+
+    def _is_translator_mode(self) -> bool:
+        return False
+
+    def _find_segment_index_by_uid(self, session: FileSession, uid: str) -> int:
+        for idx, segment in enumerate(session.segments):
+            if segment.uid == uid:
+                return idx
+        return -1
+
+    def _find_segment_token(
+        self,
+        session: FileSession,
+        uid: str,
+    ) -> tuple[Any, int]:
+        _ = (session, uid)
+        return None, -1
+
+    def _refresh_dirty_state(self, _session: FileSession) -> None:
+        return None
+
+    def _refresh_after_remove_without_full_rerender(
+        self,
+        session: FileSession,
+        *,
+        removed_uid: str,
+        updated_uids: set[str] | None = None,
+        focus_uid: str | None = None,
+        preserve_scroll: bool = True,
+    ) -> bool:
+        _ = (session, updated_uids)
+        self.remove_refresh_calls.append(
+            {
+                "removed_uid": removed_uid,
+                "focus_uid": focus_uid,
+                "preserve_scroll": preserve_scroll,
+            }
+        )
+        return False
+
+    def _refresh_after_structure_change_without_full_rerender(
+        self,
+        session: FileSession,
+        *,
+        focus_uid: str | None = None,
+        preserve_scroll: bool = True,
+    ) -> bool:
+        _ = session
+        self.structure_refresh_calls.append(
+            {
+                "focus_uid": focus_uid,
+                "preserve_scroll": preserve_scroll,
+            }
+        )
+        return False
+
+    def _render_session(
+        self,
+        session: FileSession,
+        *,
+        focus_uid: str | None = None,
+        preserve_scroll: bool = False,
+        start_at_top: bool = False,
+    ) -> None:
+        _ = (session, start_at_top)
+        self.render_calls.append(
+            {"focus_uid": focus_uid, "preserve_scroll": preserve_scroll}
+        )
+
+    def statusBar(self) -> _StatusBarHarness:
+        return self._status_bar
 
 
 def _dialogue_segment(uid: str, text: str, *, speaker: str = "") -> DialogueSegment:
@@ -348,6 +434,44 @@ class StructuralEditingResetFastPathTests(unittest.TestCase):
         harness._on_block_text_changed(followup.uid, ["translated followup"])
 
         self.assertEqual(harness.refresh_detail_calls, 1)
+
+    def test_delete_fallback_focuses_next_segment_and_preserves_scroll(self) -> None:
+        s1 = _dialogue_segment("A:1", "one")
+        s2 = _dialogue_segment("A:2", "two")
+        s3 = _dialogue_segment("A:3", "three")
+        session = FileSession(path=Path("A.json"), data={}, bundles=[], segments=[s1, s2, s3])
+        harness = _DeleteFallbackHarness(session)
+
+        with patch(
+            "dialogue_visual_editor.helpers.mixins.structural_editing_mixin.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            harness._on_delete_requested("A:2")
+
+        self.assertEqual([segment.uid for segment in session.segments], ["A:1", "A:3"])
+        self.assertEqual(harness.remove_refresh_calls[-1]["focus_uid"], "A:3")
+        self.assertTrue(harness.remove_refresh_calls[-1]["preserve_scroll"])
+        self.assertEqual(harness.structure_refresh_calls[-1]["focus_uid"], "A:3")
+        self.assertTrue(harness.structure_refresh_calls[-1]["preserve_scroll"])
+        self.assertEqual(harness.render_calls[-1]["focus_uid"], "A:3")
+        self.assertTrue(harness.render_calls[-1]["preserve_scroll"])
+
+    def test_delete_fallback_focuses_previous_when_deleting_last_segment(self) -> None:
+        s1 = _dialogue_segment("A:1", "one")
+        s2 = _dialogue_segment("A:2", "two")
+        s3 = _dialogue_segment("A:3", "three")
+        session = FileSession(path=Path("A.json"), data={}, bundles=[], segments=[s1, s2, s3])
+        harness = _DeleteFallbackHarness(session)
+
+        with patch(
+            "dialogue_visual_editor.helpers.mixins.structural_editing_mixin.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            harness._on_delete_requested("A:3")
+
+        self.assertEqual([segment.uid for segment in session.segments], ["A:1", "A:2"])
+        self.assertEqual(harness.render_calls[-1]["focus_uid"], "A:2")
+        self.assertTrue(harness.render_calls[-1]["preserve_scroll"])
 
 
 if __name__ == "__main__":

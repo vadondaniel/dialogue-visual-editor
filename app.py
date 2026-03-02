@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QSpinBox,
     QSplitter,
+    QSizePolicy,
     QTabBar,
     QTabWidget,
     QTextEdit,
@@ -212,6 +213,7 @@ class FileListItemDelegate(QStyledItemDelegate):
 DEFAULT_THIN_WIDTH = 47
 DEFAULT_WIDE_WIDTH = 60
 DEFAULT_MAX_LINES = 4
+DEFAULT_PAGE_SIZE = 50
 DB_FILENAME = ".dialogue_editor_index.sqlite3"
 VERSION_DB_FILENAME = ".dialogue_version_state.sqlite3"
 TRANSLATION_STATE_FILENAME = ".dialogue_translation_state.json"
@@ -273,6 +275,23 @@ class DialogueVisualEditor(
         self.main_render_progress_overlay: Optional[QLabel] = None
         self.rendered_blocks_path: Optional[Path] = None
         self.rendered_block_uid_order: list[str] = []
+        self._pagination_page_by_scope_key: dict[tuple[Path, str], int] = {}
+        self._pagination_active_scope_key: Optional[tuple[Path, str]] = None
+        self._pagination_current_page = 1
+        self._pagination_total_pages = 1
+        self._pagination_total_entries = 0
+        self._pagination_active_page_size = DEFAULT_PAGE_SIZE
+        self._pagination_page_start_index = 0
+        self._pagination_page_end_index = 0
+        self.pagination_bar_widget: Optional[QWidget] = None
+        self.pagination_first_btn: Optional[QPushButton] = None
+        self.pagination_prev_btn: Optional[QPushButton] = None
+        self.pagination_pages_widget: Optional[QWidget] = None
+        self.pagination_pages_layout: Optional[QHBoxLayout] = None
+        self.pagination_next_btn: Optional[QPushButton] = None
+        self.pagination_last_btn: Optional[QPushButton] = None
+        self.pagination_summary_label: Optional[QLabel] = None
+        self.pagination_page_size_spin: Optional[QSpinBox] = None
         self.selected_segment_uid: Optional[str] = None
         self.current_reference_map: dict[str, tuple[str, str]] = {}
         self._translator_other_selected_profile_id = ""
@@ -591,12 +610,18 @@ class DialogueVisualEditor(
             self._on_layout_constraints_changed)
         self.max_lines_spin.valueChanged.connect(
             self._on_layout_constraints_changed)
+        self.pagination_page_size_spin.valueChanged.connect(
+            self._on_pagination_page_size_changed
+        )
         self.thin_width_spin.valueChanged.connect(
             self._sync_settings_limits_menu_labels)
         self.wide_width_spin.valueChanged.connect(
             self._sync_settings_limits_menu_labels)
         self.max_lines_spin.valueChanged.connect(
             self._sync_settings_limits_menu_labels)
+        self.pagination_page_size_spin.valueChanged.connect(
+            self._sync_settings_pagination_menu_labels
+        )
         self.infer_speaker_check.toggled.connect(self._rerender_current_file)
         self.hide_control_codes_check.toggled.connect(
             self._on_hide_control_codes_toggled)
@@ -612,6 +637,9 @@ class DialogueVisualEditor(
             self._on_project_setting_changed)
         self.max_lines_spin.valueChanged.connect(
             self._on_project_setting_changed)
+        self.pagination_page_size_spin.valueChanged.connect(
+            self._on_project_setting_changed
+        )
         self.auto_split_check.toggled.connect(self._on_project_setting_changed)
         self.infer_speaker_check.toggled.connect(
             self._on_project_setting_changed)
@@ -909,12 +937,260 @@ class DialogueVisualEditor(
         self.editor_splitter.setStretchFactor(1, 3)
         self.editor_splitter.setSizes([70, 30])
         right_layout.addWidget(self.editor_splitter, 1)
+        self._build_pagination_bar(right_layout)
 
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 4)
 
         self._sync_translator_mode_ui()
+        self._refresh_pagination_controls()
+
+    def _build_pagination_bar(self, parent_layout: QVBoxLayout) -> None:
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+
+        self.pagination_first_btn = QPushButton("<<")
+        self.pagination_first_btn.setFixedWidth(36)
+        self.pagination_first_btn.setToolTip("First page")
+        self.pagination_first_btn.clicked.connect(
+            lambda _checked=False: self._on_pagination_jump_to(1)
+        )
+        row_layout.addWidget(self.pagination_first_btn)
+
+        self.pagination_prev_btn = QPushButton("<")
+        self.pagination_prev_btn.setFixedWidth(32)
+        self.pagination_prev_btn.setToolTip("Previous page")
+        self.pagination_prev_btn.clicked.connect(
+            self._on_pagination_prev_page
+        )
+        row_layout.addWidget(self.pagination_prev_btn)
+
+        self.pagination_pages_widget = QWidget()
+        self.pagination_pages_layout = QHBoxLayout(self.pagination_pages_widget)
+        self.pagination_pages_layout.setContentsMargins(0, 0, 0, 0)
+        self.pagination_pages_layout.setSpacing(4)
+        self.pagination_pages_widget.setMinimumWidth(0)
+        self.pagination_pages_widget.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.pagination_pages_widget.installEventFilter(self)
+        row_layout.addWidget(self.pagination_pages_widget, 1)
+
+        self.pagination_next_btn = QPushButton(">")
+        self.pagination_next_btn.setFixedWidth(32)
+        self.pagination_next_btn.setToolTip("Next page")
+        self.pagination_next_btn.clicked.connect(self._on_pagination_next_page)
+        row_layout.addWidget(self.pagination_next_btn)
+
+        self.pagination_last_btn = QPushButton(">>")
+        self.pagination_last_btn.setFixedWidth(36)
+        self.pagination_last_btn.setToolTip("Last page")
+        self.pagination_last_btn.clicked.connect(self._on_pagination_last_page)
+        row_layout.addWidget(self.pagination_last_btn)
+
+        self.pagination_summary_label = QLabel("Page 1 / 1")
+        row_layout.addWidget(self.pagination_summary_label)
+        row.installEventFilter(self)
+
+        self.pagination_bar_widget = row
+        parent_layout.addWidget(row)
+
+    def _pagination_page_size(self) -> int:
+        return max(1, int(self.pagination_page_size_spin.value()))
+
+    def _set_pagination_controls_enabled(self, enabled: bool) -> None:
+        for control in (
+            self.pagination_first_btn,
+            self.pagination_prev_btn,
+            self.pagination_next_btn,
+            self.pagination_last_btn,
+        ):
+            if control is not None:
+                control.setEnabled(enabled)
+
+    def _pagination_max_visible_tokens(self) -> int:
+        strip_width = self.pagination_pages_widget.width() if self.pagination_pages_widget is not None else 0
+        if strip_width <= 0:
+            return 9
+        approx_button_px = 42
+        return max(5, int(strip_width // approx_button_px))
+
+    @staticmethod
+    def _pagination_centered_window(
+        *,
+        start: int,
+        end: int,
+        current_page: int,
+        size: int,
+    ) -> tuple[int, int]:
+        if size <= 0 or end < start:
+            return start, start - 1
+        span = (end - start) + 1
+        size = min(size, span)
+        current = max(start, min(end, current_page))
+        left = current - ((size - 1) // 2)
+        right = left + size - 1
+        if left < start:
+            right += start - left
+            left = start
+        if right > end:
+            left -= right - end
+            right = end
+        left = max(start, left)
+        right = min(end, right)
+        return left, right
+
+    def _pagination_visible_page_buttons(
+        self,
+        current_page: int,
+        total_pages: int,
+        *,
+        max_tokens: Optional[int] = None,
+    ) -> list[str]:
+        if total_pages <= 1:
+            return ["1"]
+        token_budget = max(5, int(max_tokens) if isinstance(max_tokens, int) else 9)
+        if total_pages <= token_budget:
+            return [str(page) for page in range(1, total_pages + 1)]
+
+        first_page = 1
+        last_page = total_pages
+        middle_start = 2
+        middle_end = total_pages - 1
+        available_for_middle_and_gaps = max(0, token_budget - 2)
+
+        best_tokens: list[str] = [str(first_page), "...", str(last_page)]
+        for middle_count in range(available_for_middle_and_gaps, -1, -1):
+            left, right = DialogueVisualEditor._pagination_centered_window(
+                start=middle_start,
+                end=middle_end,
+                current_page=current_page,
+                size=middle_count,
+            )
+            middle_pages = list(range(left, right + 1)) if right >= left else []
+            left_gap = bool(middle_pages) and middle_pages[0] > middle_start
+            right_gap = bool(middle_pages) and middle_pages[-1] < middle_end
+            ellipsis_count = int(left_gap) + int(right_gap)
+            token_count = 2 + len(middle_pages) + ellipsis_count
+            if token_count > token_budget:
+                continue
+            tokens: list[str] = [str(first_page)]
+            if left_gap:
+                tokens.append("...")
+            for page in middle_pages:
+                tokens.append(str(page))
+            if right_gap:
+                tokens.append("...")
+            tokens.append(str(last_page))
+            best_tokens = tokens
+            break
+        return best_tokens
+
+    def _clear_pagination_buttons(self) -> None:
+        layout = self.pagination_pages_layout
+        if layout is None:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _refresh_pagination_controls(self) -> None:
+        current_page = max(1, int(self._pagination_current_page))
+        total_pages = max(1, int(self._pagination_total_pages))
+        total_entries = max(0, int(self._pagination_total_entries))
+        page_start = max(0, int(self._pagination_page_start_index))
+        page_end = max(0, int(self._pagination_page_end_index))
+        self._set_pagination_controls_enabled(total_entries > 0)
+
+        if self.pagination_summary_label is not None:
+            if total_entries <= 0:
+                self.pagination_summary_label.setText("Page 0 / 0 (0 entries)")
+            else:
+                self.pagination_summary_label.setText(
+                    f"Page {current_page} / {total_pages} ({page_start}-{page_end} of {total_entries})"
+                )
+
+        self._clear_pagination_buttons()
+        layout = self.pagination_pages_layout
+        if layout is None:
+            return
+
+        max_tokens = self._pagination_max_visible_tokens()
+        for token in self._pagination_visible_page_buttons(
+            current_page,
+            total_pages,
+            max_tokens=max_tokens,
+        ):
+            if token == "...":
+                label = QLabel("...")
+                layout.addWidget(label)
+                continue
+            page = int(token)
+            button = QPushButton(token)
+            button.setCheckable(True)
+            button.setChecked(page == current_page)
+            button.setEnabled((total_entries > 0) and (page != current_page))
+            button.clicked.connect(
+                lambda _checked=False, target_page=page: self._on_pagination_jump_to(target_page)
+            )
+            layout.addWidget(button)
+
+    def _on_pagination_jump_to(self, target_page: int) -> None:
+        if self.current_path is None:
+            return
+        session = self.sessions.get(self.current_path)
+        if session is None:
+            return
+        state_key = self._pagination_active_scope_key
+        if state_key is None:
+            return
+        total_pages = max(1, int(self._pagination_total_pages))
+        clamped_page = max(1, min(int(target_page), total_pages))
+        self._pagination_page_by_scope_key[state_key] = clamped_page
+        self.selected_segment_uid = None
+        self._render_session(session, start_at_top=True)
+
+    def _on_pagination_prev_page(self) -> None:
+        self._on_pagination_jump_to(self._pagination_current_page - 1)
+
+    def _on_pagination_next_page(self) -> None:
+        self._on_pagination_jump_to(self._pagination_current_page + 1)
+
+    def _on_pagination_last_page(self) -> None:
+        self._on_pagination_jump_to(self._pagination_total_pages)
+
+    def _on_pagination_page_size_changed(self, _value: int) -> None:
+        if self.current_path is None:
+            self._refresh_pagination_controls()
+            return
+        session = self.sessions.get(self.current_path)
+        if session is None:
+            return
+        self._clear_cached_block_views()
+        focus_uid = self.selected_segment_uid
+        self._render_session(
+            session,
+            focus_uid=focus_uid,
+            start_at_top=(focus_uid is None),
+        )
+
+    def _schedule_pagination_controls_refresh(self) -> None:
+        timer = cast(
+            Optional[QTimer],
+            getattr(self, "_pagination_controls_refresh_timer", None),
+        )
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._refresh_pagination_controls)
+            setattr(self, "_pagination_controls_refresh_timer", timer)
+        timer.start(20)
 
     def _init_hidden_settings_controls(self) -> None:
         self.remember_folder_check = QCheckBox(self)
@@ -942,6 +1218,11 @@ class DialogueVisualEditor(
         self.max_lines_spin = QSpinBox(self)
         self.max_lines_spin.setRange(1, 20)
         self.max_lines_spin.setValue(DEFAULT_MAX_LINES)
+
+        self.pagination_page_size_spin = QSpinBox(self)
+        self.pagination_page_size_spin.setRange(10, 500)
+        self.pagination_page_size_spin.setSingleStep(10)
+        self.pagination_page_size_spin.setValue(DEFAULT_PAGE_SIZE)
 
         self.auto_split_check = QCheckBox(self)
         self.auto_split_check.setChecked(True)
@@ -1023,6 +1304,7 @@ class DialogueVisualEditor(
         self._settings_thin_width_action: Optional[QAction] = None
         self._settings_wide_width_action: Optional[QAction] = None
         self._settings_max_lines_action: Optional[QAction] = None
+        self._settings_pagination_page_size_action: Optional[QAction] = None
         self._settings_smart_collapse_soft_rule_action: Optional[QAction] = None
         self._settings_smart_collapse_allow_comma_action: Optional[QAction] = None
         self._settings_smart_collapse_allow_colon_triplet_action: Optional[QAction] = None
@@ -1038,6 +1320,7 @@ class DialogueVisualEditor(
             self.thin_width_spin,
             self.wide_width_spin,
             self.max_lines_spin,
+            self.pagination_page_size_spin,
             self.auto_split_check,
             self.infer_speaker_check,
             self.hide_control_codes_check,
@@ -1176,6 +1459,13 @@ class DialogueVisualEditor(
         )
         limits_menu.addAction(self._settings_max_lines_action)
         self._sync_settings_limits_menu_labels()
+
+        self._settings_pagination_page_size_action = QAction("", self)
+        self._settings_pagination_page_size_action.triggered.connect(
+            self._set_pagination_page_size_from_menu
+        )
+        settings_menu.addAction(self._settings_pagination_page_size_action)
+        self._sync_settings_pagination_menu_labels()
 
         smart_collapse_menu = settings_menu.addMenu("Smart Collapse")
         self._settings_smart_collapse_soft_rule_action = QAction(
@@ -2298,6 +2588,13 @@ class DialogueVisualEditor(
                 f"Max Lines: {int(self.max_lines_spin.value())}..."
             )
 
+    def _sync_settings_pagination_menu_labels(self, *_args: Any) -> None:
+        page_size_action = self._settings_pagination_page_size_action
+        if page_size_action is not None:
+            page_size_action.setText(
+                f"Page Size: {int(self.pagination_page_size_spin.value())}..."
+            )
+
     def _smart_collapse_min_soft_ratio(self) -> float:
         percent = int(self.smart_collapse_soft_ratio_percent)
         clamped = max(0, min(100, percent))
@@ -2448,6 +2745,13 @@ class DialogueVisualEditor(
             self.max_lines_spin,
             "Max Lines",
             "Maximum dialogue lines per block:",
+        )
+
+    def _set_pagination_page_size_from_menu(self) -> None:
+        self._prompt_int_for_spin(
+            self.pagination_page_size_spin,
+            "Pagination Page Size",
+            "Entries per page:",
         )
 
     def _normalize_control_codes_in_lines(self, lines: list[str]) -> tuple[list[str], int]:
@@ -3038,6 +3342,11 @@ class DialogueVisualEditor(
         ):
             self._schedule_block_width_constraints_refresh()
             self._schedule_dialogue_editor_visibility_update()
+        if watched in (self, self.pagination_bar_widget, self.pagination_pages_widget) and event_type in (
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+        ):
+            self._schedule_pagination_controls_refresh()
 
         if event_type == QEvent.Type.MouseButtonPress:
             if not isinstance(event, QMouseEvent):
@@ -5101,6 +5410,7 @@ class DialogueVisualEditor(
             "thin_width": int(self.thin_width_spin.value()),
             "wide_width": int(self.wide_width_spin.value()),
             "max_lines": int(self.max_lines_spin.value()),
+            "pagination_page_size": int(self._pagination_page_size()),
             "auto_split": bool(self.auto_split_check.isChecked()),
             "infer_speaker": bool(self.infer_speaker_check.isChecked()),
             "smart_collapse_soft_rule_enabled": bool(
@@ -5170,6 +5480,8 @@ class DialogueVisualEditor(
         self.thin_width_spin.blockSignals(True)
         self.wide_width_spin.blockSignals(True)
         self.max_lines_spin.blockSignals(True)
+        if self.pagination_page_size_spin is not None:
+            self.pagination_page_size_spin.blockSignals(True)
         self.auto_split_check.blockSignals(True)
         self.infer_speaker_check.blockSignals(True)
         self.hide_control_codes_check.blockSignals(True)
@@ -5201,6 +5513,11 @@ class DialogueVisualEditor(
             max_lines = settings.get("max_lines")
             if isinstance(max_lines, int):
                 self.max_lines_spin.setValue(max_lines)
+            pagination_page_size = settings.get("pagination_page_size")
+            if isinstance(pagination_page_size, int) and self.pagination_page_size_spin is not None:
+                self.pagination_page_size_spin.setValue(
+                    max(10, min(500, int(pagination_page_size)))
+                )
             auto_split = settings.get("auto_split")
             if isinstance(auto_split, bool):
                 self.auto_split_check.setChecked(auto_split)
@@ -5339,6 +5656,8 @@ class DialogueVisualEditor(
             self.thin_width_spin.blockSignals(False)
             self.wide_width_spin.blockSignals(False)
             self.max_lines_spin.blockSignals(False)
+            if self.pagination_page_size_spin is not None:
+                self.pagination_page_size_spin.blockSignals(False)
             self.auto_split_check.blockSignals(False)
             self.infer_speaker_check.blockSignals(False)
             self.hide_control_codes_check.blockSignals(False)
@@ -5360,6 +5679,7 @@ class DialogueVisualEditor(
         self._sync_settings_toggle_actions_from_controls()
         self._update_problem_checks_ui()
         self._sync_settings_limits_menu_labels()
+        self._sync_settings_pagination_menu_labels()
         self._sync_smart_collapse_menu_state()
         refresh_file_items = getattr(self, "_refresh_all_file_item_text", None)
         if callable(refresh_file_items):
@@ -5832,6 +6152,7 @@ class DialogueVisualEditor(
             self.file_header_label.setText(no_visible_message)
             self._update_reset_json_button(None)
             self._refresh_translator_detail_panel()
+            self._refresh_pagination_controls()
             return
 
         assert target_path is not None
@@ -6437,6 +6758,13 @@ class DialogueVisualEditor(
         self._rebuild_translation_profile_menu()
 
         self.sessions.clear()
+        self._pagination_page_by_scope_key.clear()
+        self._pagination_active_scope_key = None
+        self._pagination_current_page = 1
+        self._pagination_total_pages = 1
+        self._pagination_total_entries = 0
+        self._pagination_page_start_index = 0
+        self._pagination_page_end_index = 0
         self._update_window_title()
         self.current_path = None
         self.current_segment_lookup.clear()
@@ -6474,6 +6802,7 @@ class DialogueVisualEditor(
             self.selected_segment_uid = None
             self.current_reference_map = {}
             self._refresh_translator_detail_panel()
+            self._refresh_pagination_controls()
             self.statusBar().showMessage("No supported files found.")
             return
 
@@ -6659,6 +6988,7 @@ class DialogueVisualEditor(
             self.selected_segment_uid = None
             self.current_reference_map = {}
             self._refresh_translator_detail_panel()
+            self._refresh_pagination_controls()
             self.statusBar().showMessage("No readable supported files found.")
             logger.warning("No readable supported files were loaded from '%s'.", self.data_dir)
             return
