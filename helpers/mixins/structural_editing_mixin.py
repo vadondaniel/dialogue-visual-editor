@@ -2736,12 +2736,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             del bundle.tokens[token_index]
         del session.segments[segment_index]
         focus_uid_after_delete: Optional[str] = None
-        if segment_index < len(session.segments):
-            candidate_uid = getattr(session.segments[segment_index], "uid", None)
+        if segment_index > 0:
+            candidate_uid = getattr(session.segments[segment_index - 1], "uid", None)
             if isinstance(candidate_uid, str) and candidate_uid:
                 focus_uid_after_delete = candidate_uid
-        elif segment_index > 0:
-            candidate_uid = getattr(session.segments[segment_index - 1], "uid", None)
+        elif segment_index < len(session.segments):
+            candidate_uid = getattr(session.segments[segment_index], "uid", None)
             if isinstance(candidate_uid, str) and candidate_uid:
                 focus_uid_after_delete = candidate_uid
 

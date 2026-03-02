@@ -435,7 +435,7 @@ class StructuralEditingResetFastPathTests(unittest.TestCase):
 
         self.assertEqual(harness.refresh_detail_calls, 1)
 
-    def test_delete_fallback_focuses_next_segment_and_preserves_scroll(self) -> None:
+    def test_delete_fallback_prefers_previous_segment_and_preserves_scroll(self) -> None:
         s1 = _dialogue_segment("A:1", "one")
         s2 = _dialogue_segment("A:2", "two")
         s3 = _dialogue_segment("A:3", "three")
@@ -449,11 +449,28 @@ class StructuralEditingResetFastPathTests(unittest.TestCase):
             harness._on_delete_requested("A:2")
 
         self.assertEqual([segment.uid for segment in session.segments], ["A:1", "A:3"])
-        self.assertEqual(harness.remove_refresh_calls[-1]["focus_uid"], "A:3")
+        self.assertEqual(harness.remove_refresh_calls[-1]["focus_uid"], "A:1")
         self.assertTrue(harness.remove_refresh_calls[-1]["preserve_scroll"])
-        self.assertEqual(harness.structure_refresh_calls[-1]["focus_uid"], "A:3")
+        self.assertEqual(harness.structure_refresh_calls[-1]["focus_uid"], "A:1")
         self.assertTrue(harness.structure_refresh_calls[-1]["preserve_scroll"])
-        self.assertEqual(harness.render_calls[-1]["focus_uid"], "A:3")
+        self.assertEqual(harness.render_calls[-1]["focus_uid"], "A:1")
+        self.assertTrue(harness.render_calls[-1]["preserve_scroll"])
+
+    def test_delete_fallback_uses_next_when_deleting_first_segment(self) -> None:
+        s1 = _dialogue_segment("A:1", "one")
+        s2 = _dialogue_segment("A:2", "two")
+        s3 = _dialogue_segment("A:3", "three")
+        session = FileSession(path=Path("A.json"), data={}, bundles=[], segments=[s1, s2, s3])
+        harness = _DeleteFallbackHarness(session)
+
+        with patch(
+            "dialogue_visual_editor.helpers.mixins.structural_editing_mixin.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            harness._on_delete_requested("A:1")
+
+        self.assertEqual([segment.uid for segment in session.segments], ["A:2", "A:3"])
+        self.assertEqual(harness.render_calls[-1]["focus_uid"], "A:2")
         self.assertTrue(harness.render_calls[-1]["preserve_scroll"])
 
     def test_delete_fallback_focuses_previous_when_deleting_last_segment(self) -> None:
