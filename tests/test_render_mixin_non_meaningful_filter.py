@@ -566,6 +566,60 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
         self.assertEqual(paged[0].uid, "Map001:51")
         self.assertEqual(paged[-1].uid, "Map001:100")
 
+    def test_paginate_segments_keeps_translation_only_followups_with_anchor(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        harness._page_size = 2
+        segments = [
+            _segment("Map001:1", "A1"),
+            _segment("Map001:1:f1", "A1-f1", translation_only=True),
+            _segment("Map001:2", "A2"),
+            _segment("Map001:2:f1", "A2-f1", translation_only=True),
+            _segment("Map001:3", "A3"),
+        ]
+        session = _session_with_segments(segments)
+
+        paged, state = harness._paginate_segments_for_render(
+            session,
+            segments,
+            actor_mode=False,
+            focus_uid=None,
+        )
+
+        self.assertEqual(state["current_page"], 1)
+        self.assertEqual(state["total_pages"], 2)
+        self.assertEqual(state["total_entries"], 3)
+        self.assertEqual(state["page_start_index"], 1)
+        self.assertEqual(state["page_end_index"], 2)
+        self.assertEqual(
+            [segment.uid for segment in paged],
+            ["Map001:1", "Map001:1:f1", "Map001:2", "Map001:2:f1"],
+        )
+
+    def test_paginate_segments_focus_followup_uses_anchor_page(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        harness._page_size = 1
+        segments = [
+            _segment("Map001:1", "A1"),
+            _segment("Map001:1:f1", "A1-f1", translation_only=True),
+            _segment("Map001:2", "A2"),
+            _segment("Map001:2:f1", "A2-f1", translation_only=True),
+            _segment("Map001:3", "A3"),
+        ]
+        session = _session_with_segments(segments)
+
+        paged, state = harness._paginate_segments_for_render(
+            session,
+            segments,
+            actor_mode=False,
+            focus_uid="Map001:2:f1",
+        )
+
+        self.assertEqual(state["current_page"], 2)
+        self.assertEqual(
+            [segment.uid for segment in paged],
+            ["Map001:2", "Map001:2:f1"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

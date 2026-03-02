@@ -689,27 +689,80 @@ class RenderMixin(_RenderHostTypingFallback):
         focus_uid: Optional[str],
     ) -> tuple[list[DialogueSegment], dict[str, Any]]:
         page_size = self._pagination_page_size_value()
-        total_entries = len(display_segments)
-        total_pages = max(1, (total_entries + page_size - 1) // page_size)
         state_key = self._pagination_state_key(session, actor_mode=actor_mode)
         page_map = self._pagination_page_map()
+        if actor_mode:
+            total_entries = len(display_segments)
+            total_pages = max(1, (total_entries + page_size - 1) // page_size)
+            stored_page = int(page_map.get(state_key, 1))
+            target_page = max(1, min(stored_page, total_pages))
+
+            def page_for_uid(uid: str) -> Optional[int]:
+                for idx, segment in enumerate(display_segments):
+                    if segment.uid == uid:
+                        return (idx // page_size) + 1
+                return None
+
+            if isinstance(focus_uid, str) and focus_uid:
+                focus_page = page_for_uid(focus_uid)
+                if focus_page is not None:
+                    target_page = focus_page
+            else:
+                selected_uid = getattr(self, "selected_segment_uid", None)
+                if isinstance(selected_uid, str) and selected_uid:
+                    selected_page = page_for_uid(selected_uid)
+                    if selected_page is not None:
+                        target_page = selected_page
+
+            target_page = max(1, min(target_page, total_pages))
+            page_map[state_key] = target_page
+            start_index = (target_page - 1) * page_size
+            end_index = min(total_entries, start_index + page_size)
+            paged_segments = display_segments[start_index:end_index]
+            return paged_segments, {
+                "state_key": state_key,
+                "current_page": target_page,
+                "total_pages": total_pages,
+                "total_entries": total_entries,
+                "page_size": page_size,
+                "page_start_index": start_index + 1 if total_entries > 0 else 0,
+                "page_end_index": end_index if total_entries > 0 else 0,
+            }
+
+        logical_groups: list[list[DialogueSegment]] = []
+        current_group: list[DialogueSegment] = []
+        for segment in display_segments:
+            if bool(getattr(segment, "translation_only", False)):
+                if current_group:
+                    current_group.append(segment)
+                else:
+                    logical_groups.append([segment])
+                continue
+            if current_group:
+                logical_groups.append(current_group)
+            current_group = [segment]
+        if current_group:
+            logical_groups.append(current_group)
+
+        total_entries = len(logical_groups)
+        total_pages = max(1, (total_entries + page_size - 1) // page_size)
         stored_page = int(page_map.get(state_key, 1))
         target_page = max(1, min(stored_page, total_pages))
 
-        def page_for_uid(uid: str) -> Optional[int]:
-            for idx, segment in enumerate(display_segments):
-                if segment.uid == uid:
-                    return (idx // page_size) + 1
-            return None
+        uid_to_page: dict[str, int] = {}
+        for group_index, group in enumerate(logical_groups):
+            page_number = (group_index // page_size) + 1
+            for segment in group:
+                uid_to_page[segment.uid] = page_number
 
         if isinstance(focus_uid, str) and focus_uid:
-            focus_page = page_for_uid(focus_uid)
+            focus_page = uid_to_page.get(focus_uid)
             if focus_page is not None:
                 target_page = focus_page
         else:
             selected_uid = getattr(self, "selected_segment_uid", None)
             if isinstance(selected_uid, str) and selected_uid:
-                selected_page = page_for_uid(selected_uid)
+                selected_page = uid_to_page.get(selected_uid)
                 if selected_page is not None:
                     target_page = selected_page
 
@@ -717,7 +770,10 @@ class RenderMixin(_RenderHostTypingFallback):
         page_map[state_key] = target_page
         start_index = (target_page - 1) * page_size
         end_index = min(total_entries, start_index + page_size)
-        paged_segments = display_segments[start_index:end_index]
+        page_groups = logical_groups[start_index:end_index]
+        paged_segments: list[DialogueSegment] = [
+            segment for group in page_groups for segment in group
+        ]
         return paged_segments, {
             "state_key": state_key,
             "current_page": target_page,
