@@ -3924,6 +3924,22 @@ class DialogueVisualEditor(
         normalized = normalized.strip()
         return normalized if normalized else NO_SPEAKER_KEY
 
+    def _flatten_embedded_newlines(self, lines: list[str]) -> list[str]:
+        flattened: list[str] = []
+        for raw_line in lines:
+            line = raw_line if isinstance(raw_line, str) else ("" if raw_line is None else str(raw_line))
+            normalized = line.replace("\r\n", "\n").replace("\r", "\n")
+            parts = normalized.split("\n")
+            if parts:
+                flattened.extend(parts)
+            else:
+                flattened.append("")
+        return flattened or [""]
+
+    def _source_lines_for_line1_inference(self, segment: DialogueSegment) -> list[str]:
+        source_lines = self._segment_source_lines_for_display(segment)
+        return self._flatten_embedded_newlines(source_lines)
+
     def _inferred_speaker_from_segment_line1(
         self,
         segment: DialogueSegment,
@@ -3943,7 +3959,14 @@ class DialogueVisualEditor(
             return ""
         if bool(getattr(segment, "disable_line1_speaker_inference", False)):
             return ""
-        lines = self._segment_source_lines_for_display(segment)
+        source_lines_resolver = getattr(self, "_source_lines_for_line1_inference", None)
+        if callable(source_lines_resolver):
+            try:
+                lines = source_lines_resolver(segment)
+            except Exception:
+                lines = self._segment_source_lines_for_display(segment)
+        else:
+            lines = self._segment_source_lines_for_display(segment)
         if not lines:
             return ""
         if len(lines) <= 1:
@@ -3987,7 +4010,14 @@ class DialogueVisualEditor(
         *,
         infer_speaker_enabled: Optional[bool] = None,
     ) -> list[str]:
-        lines = self._segment_source_lines_for_display(segment)
+        source_lines_resolver = getattr(self, "_source_lines_for_line1_inference", None)
+        if callable(source_lines_resolver):
+            try:
+                lines = source_lines_resolver(segment)
+            except Exception:
+                lines = self._segment_source_lines_for_display(segment)
+        else:
+            lines = self._segment_source_lines_for_display(segment)
         if self._segment_has_inferred_line1_speaker(
             segment,
             infer_speaker_enabled=infer_speaker_enabled,
@@ -4003,7 +4033,9 @@ class DialogueVisualEditor(
         *,
         infer_speaker_enabled: Optional[bool] = None,
     ) -> list[str]:
-        lines = self._normalize_translation_lines(segment.translation_lines)
+        lines = self._flatten_embedded_newlines(
+            self._normalize_translation_lines(segment.translation_lines)
+        )
         if self._segment_has_inferred_line1_speaker(
             segment,
             infer_speaker_enabled=infer_speaker_enabled,
@@ -4201,13 +4233,20 @@ class DialogueVisualEditor(
         *,
         infer_speaker_enabled: Optional[bool] = None,
     ) -> list[str]:
-        normalized_visible = list(visible_lines) if visible_lines else [""]
+        normalized_visible = self._flatten_embedded_newlines(visible_lines)
         if not self._segment_has_inferred_line1_speaker(
             segment,
             infer_speaker_enabled=infer_speaker_enabled,
         ):
             return normalized_visible
-        source_lines = self._segment_source_lines_for_display(segment)
+        source_lines_resolver = getattr(self, "_source_lines_for_line1_inference", None)
+        if callable(source_lines_resolver):
+            try:
+                source_lines = source_lines_resolver(segment)
+            except Exception:
+                source_lines = self._segment_source_lines_for_display(segment)
+        else:
+            source_lines = self._segment_source_lines_for_display(segment)
         speaker_line = source_lines[0] if source_lines else ""
         return [speaker_line] + normalized_visible
 

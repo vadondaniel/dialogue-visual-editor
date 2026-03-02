@@ -613,6 +613,100 @@ class TranslationStateMixinTests(unittest.TestCase):
         self.assertEqual(session.segments[0].tl_uid, "T_uid_fallback")
         self.assertEqual(session.segments[0].translation_lines, ["TL line"])
 
+    def test_apply_state_legacy_list_direct_uid_match_uses_source_preview_not_translation_text(self) -> None:
+        harness = _Harness()
+        session_segment = _segment(
+            "CommonEvents.json:L2:0",
+            "\\C[2]\\N[1]\\C[0]\n\\{なっ、なんだこの身体！？",
+            "",
+        )
+        session = FileSession(
+            path=Path("CommonEvents.json"),
+            data=[],
+            bundles=[],
+            segments=[session_segment],
+        )
+        harness.translation_state["files"] = {
+            "CommonEvents.json": {
+                "order": ["T_src_preview"],
+                "entries": {
+                    "T_src_preview": {
+                        "source_uid": "CommonEvents.json:L2:0",
+                        "source_hash": "legacy-mismatch",
+                        "source_preview": "\\\\C[2]\\\\N[1]\\\\C[0]\\\\n\\\\{なっ、なんだこの身体！？",
+                        "translation_lines": ["\\C[2]\\N[1]\\C[0]", "\\{W-What is this body!?"],
+                    }
+                },
+            }
+        }
+
+        harness._apply_translation_state_to_session(session)
+
+        self.assertEqual(session.segments[0].tl_uid, "T_src_preview")
+        self.assertEqual(
+            session.segments[0].translation_lines,
+            ["\\C[2]\\N[1]\\C[0]", "\\{W-What is this body!?"],
+        )
+
+    def test_apply_state_recovers_shifted_legacy_list_uid_entries_by_text_similarity(self) -> None:
+        harness = _Harness()
+        session_segments = [
+            _segment("Map005.json:L46:0", "EN block A", "Hero"),
+            _segment("Map005.json:L46:1", "EN inserted block", "Hero"),
+            _segment("Map005.json:L46:2", "EN block C", "Hero"),
+            _segment("Map005.json:L46:3", "EN block D", "Hero"),
+        ]
+        session = FileSession(
+            path=Path("Map005.json"),
+            data=[],
+            bundles=[],
+            segments=session_segments,
+        )
+
+        legacy_a = _segment("Map005.json:L46:0", "JP old A", "Hero")
+        legacy_b = _segment("Map005.json:L46:1", "JP old B", "Hero")
+        legacy_c = _segment("Map005.json:L46:2", "JP old C", "Hero")
+        hash_a = harness._segment_source_hash(legacy_a)
+        hash_b = harness._segment_source_hash(legacy_b)
+        hash_c = harness._segment_source_hash(legacy_c)
+
+        harness.translation_state["files"] = {
+            "Map005.json": {
+                "order": ["T0", "T1", "T2"],
+                "entries": {
+                    "T0": {
+                        "source_uid": "Map005.json:L46:0",
+                        "source_hash": hash_a,
+                        "source_preview": "EN block A",
+                        "translation_lines": ["EN block A"],
+                    },
+                    "T1": {
+                        "source_uid": "Map005.json:L46:1",
+                        "source_hash": hash_b,
+                        "source_preview": "EN block C",
+                        "translation_lines": ["EN block C"],
+                    },
+                    "T2": {
+                        "source_uid": "Map005.json:L46:2",
+                        "source_hash": hash_c,
+                        "source_preview": "EN block D",
+                        "translation_lines": ["EN block D"],
+                    },
+                },
+            }
+        }
+
+        harness._apply_translation_state_to_session(session)
+
+        self.assertEqual(session.segments[0].tl_uid, "T0")
+        self.assertEqual(session.segments[0].translation_lines, ["EN block A"])
+        self.assertEqual(session.segments[2].tl_uid, "T1")
+        self.assertEqual(session.segments[2].translation_lines, ["EN block C"])
+        self.assertEqual(session.segments[3].tl_uid, "T2")
+        self.assertEqual(session.segments[3].translation_lines, ["EN block D"])
+        self.assertNotIn(session.segments[1].tl_uid, {"T0", "T1", "T2"})
+        self.assertEqual(session.segments[1].translation_lines, [""])
+
     def test_apply_state_inserts_translation_only_segments_in_saved_order(self) -> None:
         harness = _Harness()
         seg_1 = _segment("Map001.json:L0:0", "JP 1", "Hero")

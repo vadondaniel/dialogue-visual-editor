@@ -2526,6 +2526,22 @@ class DialogueBlockWidget(QFrame):
     def _uses_translation_storage(self) -> bool:
         return self.translator_mode
 
+    def _flatten_embedded_newlines(self, lines: list[str]) -> list[str]:
+        if not lines:
+            return [""]
+        flattened: list[str] = []
+        for line in lines:
+            if not isinstance(line, str):
+                normalized_line = "" if line is None else str(line)
+            else:
+                normalized_line = line
+            split_lines = split_lines_preserve_empty(normalized_line)
+            if split_lines:
+                flattened.extend(split_lines)
+            else:
+                flattened.append("")
+        return flattened if flattened else [""]
+
     def _line1_inference_is_disabled(self) -> bool:
         return bool(getattr(self.segment, "disable_line1_speaker_inference", False))
 
@@ -2535,10 +2551,10 @@ class DialogueBlockWidget(QFrame):
         )
 
     def _segment_storage_lines(self) -> list[str]:
-        lines = self.segment.translation_lines if self._uses_translation_storage() else self.segment.lines
-        if lines:
-            return list(lines)
-        return [""]
+        raw_lines = self.segment.translation_lines if self._uses_translation_storage() else self.segment.lines
+        if not raw_lines:
+            return [""]
+        return self._flatten_embedded_newlines(list(raw_lines))
 
     def _line1_inference_active(self) -> bool:
         return bool(self._resolved_inferred_speaker_name())
@@ -2564,17 +2580,23 @@ class DialogueBlockWidget(QFrame):
         if self._uses_translation_storage():
             source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
                 ""]
-            return source_lines[0] if source_lines else ""
+            normalized_source = self._flatten_embedded_newlines(list(source_lines))
+            return normalized_source[0] if normalized_source else ""
         source_lines = self.segment.lines or [""]
-        return source_lines[0] if source_lines else ""
+        normalized_source = self._flatten_embedded_newlines(list(source_lines))
+        return normalized_source[0] if normalized_source else ""
 
     def _line1_inference_source_lines(self) -> list[str]:
         if self._uses_translation_storage():
             source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
                 ""]
-            return list(source_lines) if source_lines else [""]
+            if not source_lines:
+                return [""]
+            return self._flatten_embedded_newlines(list(source_lines))
         source_lines = self.segment.lines or [""]
-        return list(source_lines) if source_lines else [""]
+        if not source_lines:
+            return [""]
+        return self._flatten_embedded_newlines(list(source_lines))
 
     def _source_hint_lines_for_overlay(self) -> list[str]:
         if not self._uses_translation_storage():

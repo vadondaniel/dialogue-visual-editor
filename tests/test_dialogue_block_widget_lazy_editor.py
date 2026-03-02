@@ -564,6 +564,26 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertNotIn("Hero", overlay.text())
         widget.deleteLater()
 
+    def test_translator_mode_embedded_newline_translation_is_split_before_line1_inference(self) -> None:
+        segment = _segment([r"\C[2]\N[1]\C[0]", r"\{なっ、なんだこの身体！？"])
+        segment.translation_lines = [r"\C[2]\N[1]\C[0]" + "\n" + r"\{W-What is this body!?"]
+
+        def infer_speaker(_: DialogueSegment) -> str:
+            return r"\C[2]\N[1]\C[0]"
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=infer_speaker,
+        )
+
+        # Regression: embedded-newline TL line used to collapse to empty with line1 inference.
+        self.assertEqual(widget._raw_lines, [r"\{W-What is this body!?"])
+        widget.deleteLater()
+
     def test_translator_mode_source_hint_can_use_shared_source_resolver(self) -> None:
         segment = _segment([""])
         segment.translation_only = True

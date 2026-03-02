@@ -33,6 +33,7 @@ _DEFAULT_TRANSLATION_PROFILE_ID = "default"
 _DEFAULT_TRANSLATION_PROFILE_NAME = "Default"
 _DEFAULT_SOURCE_LANGUAGE_CODE = "ja"
 _DEFAULT_TARGET_LANGUAGE_CODE = "en"
+_LEGACY_LIST_UID_RE = re.compile(r"^(?P<file>[^:]+):(?P<list_id>L\d+):(?P<index>\d+)$")
 
 
 class _EditorHostTypingFallback:
@@ -422,6 +423,166 @@ class TranslationStateMixin(_EditorHostTypingFallback):
     def _segment_reference_translation_text(self, segment: DialogueSegment) -> str:
         lines = self._normalize_translation_lines(segment.translation_lines)
         return "\n".join(lines).strip()
+
+    def _legacy_list_uid_parts(
+        self,
+        uid: str,
+        *,
+        expected_file_name: str,
+    ) -> tuple[str, int] | None:
+        if not isinstance(uid, str):
+            return None
+        normalized_uid = uid.strip()
+        if not normalized_uid:
+            return None
+        match = _LEGACY_LIST_UID_RE.fullmatch(normalized_uid)
+        if match is None:
+            return None
+        file_name = match.group("file")
+        if file_name != expected_file_name:
+            return None
+        list_id = match.group("list_id")
+        index_raw = match.group("index")
+        try:
+            list_index = int(index_raw)
+        except Exception:
+            return None
+        return list_id, list_index
+
+    def _translation_entry_text_for_recovery(self, entry: dict[str, Any]) -> str:
+        translation_lines = self._normalize_translation_lines(entry.get("translation_lines"))
+        return "\n".join(translation_lines).strip()
+
+    def _translation_entry_source_text_for_recovery(self, entry: dict[str, Any]) -> str:
+        source_lines_raw = entry.get("source_lines")
+        if isinstance(source_lines_raw, list):
+            source_lines = self._normalize_translation_lines(source_lines_raw)
+            return "\n".join(source_lines).strip()
+        source_preview_raw = entry.get("source_preview")
+        source_preview = source_preview_raw if isinstance(source_preview_raw, str) else ""
+        if source_preview:
+            return source_preview.replace("\\r", "\r").replace("\\n", "\n").replace("\\t", "\t").strip()
+        return ""
+
+    def _translation_state_recovery_similarity(
+        self,
+        source_text: str,
+        candidate_text: str,
+    ) -> tuple[float, bool, bool]:
+        source_fuzzy = fuzzy_compare_text(source_text)
+        candidate_fuzzy = fuzzy_compare_text(candidate_text)
+        if not source_fuzzy and not candidate_fuzzy:
+            return 1.0, True, True
+        ratio = SequenceMatcher(None, source_fuzzy, candidate_fuzzy).ratio()
+        source_signature = similarity_signature(source_text)
+        candidate_signature = similarity_signature(candidate_text)
+        signature_match = bool(source_signature) and (source_signature == candidate_signature)
+        exact_fuzzy_match = bool(source_fuzzy) and (source_fuzzy == candidate_fuzzy)
+        return ratio, signature_match, exact_fuzzy_match
+
+    def _recover_translation_uid_from_legacy_list_shift(
+        self,
+        *,
+        session: FileSession,
+        segment: DialogueSegment,
+        entries: dict[str, dict[str, Any]],
+        unused_uids: set[str],
+        legacy_source_uid_parts_by_entry_uid: dict[str, tuple[str, int]],
+    ) -> str:
+        segment_parts = self._legacy_list_uid_parts(
+            segment.uid,
+            expected_file_name=session.path.name,
+        )
+        if segment_parts is None:
+            return ""
+        list_id, segment_index = segment_parts
+        source_text = self._segment_source_text_for_mapping(segment)
+
+        candidates: list[tuple[str, float, bool, bool, int]] = []
+        for candidate_uid in unused_uids:
+            entry_parts = legacy_source_uid_parts_by_entry_uid.get(candidate_uid)
+            if entry_parts is None:
+                continue
+            candidate_list_id, candidate_index = entry_parts
+            if candidate_list_id != list_id:
+                continue
+            entry = entries.get(candidate_uid)
+            if not isinstance(entry, dict):
+                continue
+            candidate_text = self._translation_entry_source_text_for_recovery(entry)
+            if not candidate_text:
+                candidate_text = self._translation_entry_text_for_recovery(entry)
+            ratio, signature_match, exact_fuzzy_match = self._translation_state_recovery_similarity(
+                source_text,
+                candidate_text,
+            )
+            candidates.append((candidate_uid, ratio, signature_match, exact_fuzzy_match, candidate_index))
+
+        if not candidates:
+            return ""
+
+        # Prefer strong textual matches, then nearest historical index.
+        candidates.sort(
+            key=lambda item: (
+                1 if item[2] else 0,
+                1 if item[3] else 0,
+                item[1],
+                -abs(segment_index - item[4]),
+            ),
+            reverse=True,
+        )
+        best_uid, best_ratio, best_signature_match, best_exact_fuzzy_match, best_candidate_index = candidates[0]
+        second_ratio = candidates[1][1] if len(candidates) > 1 else -1.0
+
+        if best_exact_fuzzy_match:
+            return best_uid
+        if best_signature_match and best_ratio >= 0.45:
+            return best_uid
+        if best_ratio >= 0.85:
+            return best_uid
+        if (
+            best_ratio >= 0.70
+            and (best_ratio - second_ratio) >= 0.15
+            and abs(segment_index - best_candidate_index) <= 2
+        ):
+            return best_uid
+        if len(candidates) == 1 and best_ratio >= 0.55:
+            return best_uid
+        return ""
+
+    def _should_accept_direct_source_uid_match(
+        self,
+        *,
+        session: FileSession,
+        segment: DialogueSegment,
+        entry: dict[str, Any],
+        source_hash_candidates: list[str],
+    ) -> bool:
+        segment_parts = self._legacy_list_uid_parts(
+            segment.uid,
+            expected_file_name=session.path.name,
+        )
+        if segment_parts is None:
+            return True
+
+        entry_hash_raw = entry.get("source_hash")
+        entry_hash = entry_hash_raw.strip() if isinstance(entry_hash_raw, str) else ""
+        if not entry_hash:
+            return True
+        if entry_hash in source_hash_candidates:
+            return True
+
+        source_text = self._segment_source_text_for_mapping(segment)
+        entry_text = self._translation_entry_source_text_for_recovery(entry)
+        if not entry_text:
+            return True
+        ratio, signature_match, exact_fuzzy_match = self._translation_state_recovery_similarity(
+            source_text,
+            entry_text,
+        )
+        if exact_fuzzy_match:
+            return True
+        return signature_match and ratio >= 0.65
 
     def _speaker_key_for_state(self, segment: DialogueSegment) -> str:
         resolver = getattr(self, "_speaker_key_for_segment", None)
@@ -887,6 +1048,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         unused = set(entries.keys())
         hash_buckets: dict[str, list[str]] = {}
         source_uid_buckets: dict[str, list[str]] = {}
+        legacy_source_uid_parts_by_entry_uid: dict[str, tuple[str, int]] = {}
         for uid, entry in entries.items():
             source_hash = entry.get("source_hash")
             if isinstance(source_hash, str) and source_hash:
@@ -894,6 +1056,12 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             source_uid = entry.get("source_uid")
             if isinstance(source_uid, str) and source_uid:
                 source_uid_buckets.setdefault(source_uid, []).append(uid)
+                parsed_parts = self._legacy_list_uid_parts(
+                    source_uid,
+                    expected_file_name=session.path.name,
+                )
+                if parsed_parts is not None:
+                    legacy_source_uid_parts_by_entry_uid[uid] = parsed_parts
 
         for idx, segment in enumerate(session.segments):
             segment.source_lines = list(
@@ -926,6 +1094,14 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             if not chosen_uid:
                 for candidate_uid in source_uid_buckets.get(segment.uid, []):
                     if candidate_uid in unused:
+                        candidate_entry = entries.get(candidate_uid, {})
+                        if not self._should_accept_direct_source_uid_match(
+                            session=session,
+                            segment=segment,
+                            entry=candidate_entry if isinstance(candidate_entry, dict) else {},
+                            source_hash_candidates=source_hash_candidates,
+                        ):
+                            continue
                         chosen_uid = candidate_uid
                         unused.remove(candidate_uid)
                         break
@@ -943,6 +1119,18 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                             break
                     if chosen_uid:
                         break
+
+            if not chosen_uid and (not is_name_index_session):
+                recovered_uid = self._recover_translation_uid_from_legacy_list_shift(
+                    session=session,
+                    segment=segment,
+                    entries=entries,
+                    unused_uids=unused,
+                    legacy_source_uid_parts_by_entry_uid=legacy_source_uid_parts_by_entry_uid,
+                )
+                if recovered_uid:
+                    chosen_uid = recovered_uid
+                    unused.remove(recovered_uid)
 
             # Keep positional fallback only for legacy state rows that don't have
             # source hashes; otherwise parser changes (e.g. added choice segments)

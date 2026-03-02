@@ -1875,7 +1875,14 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             return ""
         if segment.speaker_name != NO_SPEAKER_KEY:
             return ""
-        source_lines = self._segment_source_lines_for_display(segment)
+        source_lines_resolver = getattr(self, "_source_lines_for_line1_inference", None)
+        if callable(source_lines_resolver):
+            try:
+                source_lines = source_lines_resolver(segment)
+            except Exception:
+                source_lines = self._segment_source_lines_for_display(segment)
+        else:
+            source_lines = self._segment_source_lines_for_display(segment)
         if len(source_lines) <= 1:
             return ""
         first_line = source_lines[0].strip()

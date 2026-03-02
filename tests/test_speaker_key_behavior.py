@@ -88,6 +88,19 @@ class _Line1InferenceHarness:
         lines = segment.source_lines or segment.original_lines or segment.lines
         return list(lines) if lines else [""]
 
+    def _flatten_embedded_newlines(self, lines: list[str]) -> list[str]:
+        flattened: list[str] = []
+        for raw in lines:
+            text = raw if isinstance(raw, str) else ("" if raw is None else str(raw))
+            normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+            flattened.extend(normalized.split("\n"))
+        return flattened or [""]
+
+    def _source_lines_for_line1_inference(self, segment: DialogueSegment) -> list[str]:
+        return self._flatten_embedded_newlines(
+            self._segment_source_lines_for_display(segment)
+        )
+
     def _resolve_name_tokens_in_text(
         self,
         text: str,
@@ -100,6 +113,26 @@ class _Line1InferenceHarness:
 
     def _matches_name_token(self, text: str) -> bool:
         return cast(bool, _call_editor_method("_matches_name_token", self, text))
+
+    def _normalize_translation_lines(self, value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [item if isinstance(item, str) else ("" if item is None else str(item)) for item in value] or [""]
+        if isinstance(value, str):
+            return value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        return [""]
+
+    def _segment_has_inferred_line1_speaker(
+        self,
+        segment: DialogueSegment,
+        *,
+        infer_speaker_enabled: Any = None,
+    ) -> bool:
+        _ = infer_speaker_enabled
+        inferred = cast(
+            str,
+            _call_editor_method("_inferred_speaker_from_segment_line1", self, segment),
+        )
+        return bool(inferred)
 
 
 class SpeakerKeyBehaviorTests(unittest.TestCase):
@@ -177,6 +210,35 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         )
 
         self.assertEqual(inferred, "???")
+
+    def test_line1_inference_splits_embedded_newlines_in_source_line(self) -> None:
+        harness = _Line1InferenceHarness(enabled=True)
+        segment = DialogueSegment(
+            uid="seg",
+            context="ctx",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=["ユウキ\n「行こう」"],
+            original_lines=["ユウキ\n「行こう」"],
+            source_lines=["ユウキ\n「行こう」"],
+        )
+
+        inferred = cast(
+            str,
+            _call_editor_method("_inferred_speaker_from_segment_line1", harness, segment),
+        )
+        visible_source = cast(
+            list[str],
+            _call_editor_method("_segment_source_lines_for_translation", harness, segment),
+        )
+        segment.translation_lines = ["ユウキ\nLet's go"]
+        visible_tl = cast(
+            list[str],
+            _call_editor_method("_segment_translation_lines_for_translation", harness, segment),
+        )
+
+        self.assertEqual(inferred, "ユウキ")
+        self.assertEqual(visible_source, ["「行こう」"])
+        self.assertEqual(visible_tl, ["Let's go"])
 
 
 if __name__ == "__main__":
