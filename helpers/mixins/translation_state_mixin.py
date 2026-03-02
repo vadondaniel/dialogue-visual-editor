@@ -1565,6 +1565,21 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         return summaries
 
     def _prompt_source_lines_for_segment(self, segment: DialogueSegment) -> list[str]:
+        logical_source_resolver = getattr(
+            self,
+            "_logical_translation_source_lines_for_segment",
+            None,
+        )
+        if callable(logical_source_resolver):
+            try:
+                resolved_logical = logical_source_resolver(segment)
+            except Exception:
+                resolved_logical = None
+            if isinstance(resolved_logical, list):
+                normalized = self._normalize_translation_lines(resolved_logical)
+                if normalized:
+                    return normalized
+
         source_lines_resolver = getattr(self, "_segment_source_lines_for_translation", None)
         if callable(source_lines_resolver):
             try:
@@ -1661,12 +1676,26 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             indexes = range(anchor_index + 1, len(session.segments))
 
         rows: list[tuple[int, DialogueSegment]] = []
+        seen_anchor_uids: set[str] = set()
         for idx in indexes:
             segment = session.segments[idx]
-            source_text = "\n".join(self._prompt_source_lines_for_segment(segment)).strip()
+            anchor_segment = self._reference_anchor_segment_for_segment(session, segment)
+            anchor_uid = anchor_segment.uid if isinstance(anchor_segment.uid, str) else ""
+            if anchor_uid in seen_anchor_uids:
+                continue
+            anchor_position = self._reference_anchor_index_for_segment(
+                session,
+                anchor_segment,
+            )
+            if anchor_position == anchor_index:
+                continue
+
+            source_text = "\n".join(self._prompt_source_lines_for_segment(anchor_segment)).strip()
             if not source_text:
                 continue
-            rows.append((idx, segment))
+            if anchor_uid:
+                seen_anchor_uids.add(anchor_uid)
+            rows.append((anchor_position if anchor_position >= 0 else idx, anchor_segment))
             if len(rows) >= limit:
                 break
         if direction < 0:
@@ -1708,11 +1737,8 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         target_language_label = self._translation_profile_target_language_label()
         safe_neighbors = max(0, int(neighbor_count))
 
-        anchor_index = -1
-        for idx, row_segment in enumerate(session.segments):
-            if row_segment.uid == segment.uid:
-                anchor_index = idx
-                break
+        anchor_segment = self._reference_anchor_segment_for_segment(session, segment)
+        anchor_index = self._reference_anchor_index_for_segment(session, segment)
         if anchor_index < 0:
             return ""
 
@@ -1729,7 +1755,7 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             limit=safe_neighbors,
         )
 
-        transcript_rows = [*before_rows, (anchor_index, segment), *after_rows]
+        transcript_rows = [*before_rows, (anchor_index, anchor_segment), *after_rows]
         prompt_lines: list[str] = [
             f"Translate the following dialogue from {source_language_label} to {target_language_label}.",
             "Write natural, fluent game dialogue.",

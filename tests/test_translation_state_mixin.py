@@ -229,6 +229,54 @@ class TranslationStateMixinTests(unittest.TestCase):
         self.assertIn('Mage: "Current line"', prompt)
         self.assertNotIn("[CURRENT]", prompt)
 
+    def test_build_human_translation_reference_prompt_uses_anchor_for_translation_only_selection(self) -> None:
+        harness = _Harness()
+        anchor = _segment("Map001.json:L0:1", "Anchor line", "Mage")
+        followup = _segment("Map001.json:TI:T0001", "", "")
+        followup.translation_only = True
+        followup.source_lines = [""]
+        followup.original_lines = [""]
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[anchor, followup],
+        )
+
+        prompt = harness._build_human_translation_reference_prompt(
+            session,
+            followup,
+            0,
+        )
+
+        self.assertIn('Mage: "Anchor line"', prompt)
+        self.assertNotIn('(empty)', prompt)
+
+    def test_build_human_translation_reference_prompt_collapses_followups_in_neighbors(self) -> None:
+        harness = _Harness()
+        current = _segment("Map001.json:L0:1", "Current line", "Mage")
+        split_followup = _segment("Map001.json:TI:T0001", "", "")
+        split_followup.translation_only = True
+        split_followup.source_lines = ["SPLIT FOLLOWUP SHOULD NOT APPEAR"]
+        split_followup.original_lines = ["SPLIT FOLLOWUP SHOULD NOT APPEAR"]
+        next_segment = _segment("Map001.json:L0:2", "Next line", "Villain")
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[current, split_followup, next_segment],
+        )
+
+        prompt = harness._build_human_translation_reference_prompt(
+            session,
+            current,
+            1,
+        )
+
+        self.assertIn('Mage: "Current line"', prompt)
+        self.assertIn('Villain: "Next line"', prompt)
+        self.assertNotIn("SPLIT FOLLOWUP SHOULD NOT APPEAR", prompt)
+
     def test_build_human_translation_reference_prompt_returns_empty_for_missing_segment(self) -> None:
         harness = _Harness()
         current = _segment("Map001.json:L0:1", "Current line", "Mage")
