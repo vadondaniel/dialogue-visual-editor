@@ -1263,6 +1263,8 @@ class ItemNameDescriptionWidget(QFrame):
         self._showing_raw_desc = True
         self._pending_mouse_reveal_name = False
         self._pending_mouse_reveal_desc = False
+        self._masked_name_color_spans: list[list[tuple[int, int, str, float]]] = []
+        self._masked_desc_color_spans: list[list[tuple[int, int, str, float]]] = []
         self._selected = False
         self._audit_pinned = False
         self._flash_timer: Optional[QTimer] = None
@@ -1389,20 +1391,97 @@ class ItemNameDescriptionWidget(QFrame):
             merged.extend(self._raw_desc_lines)
         return merged
 
-    def _masked_lines_from_raw(self, lines: list[str]) -> list[str]:
+    def _masked_lines_and_spans_from_raw(
+        self,
+        lines: list[str],
+    ) -> tuple[list[str], list[list[tuple[int, int, str, float]]]]:
         source_lines = lines or [""]
         if self.hidden_control_colored_line_resolver is not None:
             joined = "\n".join(source_lines)
-            masked_text, _spans = self.hidden_control_colored_line_resolver(
+            masked_text, spans = self.hidden_control_colored_line_resolver(
                 joined)
-            return split_lines_preserve_empty(masked_text) or [""]
+            split_lines, spans_per_line = _split_masked_text_and_spans(
+                masked_text,
+                list(spans),
+            )
+            normalized_lines = split_lines if split_lines else [""]
+            normalized_spans = spans_per_line
+            if len(normalized_spans) < len(normalized_lines):
+                normalized_spans.extend(
+                    [[] for _ in range(len(normalized_lines) - len(normalized_spans))]
+                )
+            elif len(normalized_spans) > len(normalized_lines):
+                normalized_spans = normalized_spans[: len(normalized_lines)]
+            return normalized_lines, normalized_spans
         masked: list[str] = []
         for line in source_lines:
             if self.hidden_control_line_transform is not None:
                 masked.append(self.hidden_control_line_transform(line))
             else:
                 masked.append(strip_control_tokens(line))
-        return masked or [""]
+        normalized = masked or [""]
+        return normalized, [[] for _ in normalized]
+
+    def _masked_lines_from_raw(self, lines: list[str]) -> list[str]:
+        masked_lines, _spans = self._masked_lines_and_spans_from_raw(lines)
+        return masked_lines
+
+    def _masked_color_selections_for_editor(
+        self,
+        editor: QPlainTextEdit,
+        spans_per_line: list[list[tuple[int, int, str, float]]],
+    ) -> list[QTextEdit.ExtraSelection]:
+        if not spans_per_line:
+            return []
+        selections: list[QTextEdit.ExtraSelection] = []
+        base_point_size = editor.font().pointSizeF()
+        if base_point_size <= 0:
+            fallback_point_size = editor.font().pointSize()
+            base_point_size = float(
+                fallback_point_size if fallback_point_size > 0 else 10
+            )
+        block = editor.document().firstBlock()
+        line_idx = 0
+        while block.isValid() and line_idx < len(spans_per_line):
+            spans = spans_per_line[line_idx]
+            for start, end, color_hex, font_scale in spans:
+                if end <= start:
+                    continue
+                color = QColor(color_hex)
+                if not color.isValid():
+                    continue
+                cursor = QTextCursor(block)
+                block_start = block.position()
+                cursor.setPosition(block_start + max(0, start))
+                cursor.setPosition(
+                    block_start + max(0, end),
+                    QTextCursor.MoveMode.KeepAnchor,
+                )
+                selection = QTextEdit.ExtraSelection()
+                fmt = QTextCharFormat()
+                fmt.setForeground(color)
+                try:
+                    scale = float(font_scale)
+                except Exception:
+                    scale = 1.0
+                if abs(scale - 1.0) > 0.001:
+                    fmt.setFontPointSize(base_point_size * scale)
+                selection_any = cast(Any, selection)
+                selection_any.format = fmt
+                selection_any.cursor = cursor
+                selections.append(selection)
+            block = block.next()
+            line_idx += 1
+        return selections
+
+    def _apply_masked_color_selections(
+        self,
+        editor: QPlainTextEdit,
+        spans_per_line: list[list[tuple[int, int, str, float]]],
+    ) -> None:
+        editor.setExtraSelections(
+            self._masked_color_selections_for_editor(editor, spans_per_line)
+        )
 
     def _set_editor_lines(self, editor: QPlainTextEdit, lines: list[str], suppress_name: bool) -> None:
         text = "\n".join(lines or [""])
@@ -1492,9 +1571,16 @@ class ItemNameDescriptionWidget(QFrame):
             if (not force) and show_raw == self._showing_raw_name:
                 return
             self._showing_raw_name = show_raw
-            lines = self._raw_name_lines if show_raw else self._masked_lines_from_raw(
-                self._raw_name_lines)
+            if show_raw:
+                lines = list(self._raw_name_lines)
+                self._masked_name_color_spans = []
+                self._set_editor_lines(self.name_editor, lines, suppress_name=True)
+                self._apply_masked_color_selections(self.name_editor, [])
+                return
+            lines, spans = self._masked_lines_and_spans_from_raw(self._raw_name_lines)
+            self._masked_name_color_spans = spans
             self._set_editor_lines(self.name_editor, lines, suppress_name=True)
+            self._apply_masked_color_selections(self.name_editor, spans)
             return
 
         show_raw = (
@@ -1505,9 +1591,16 @@ class ItemNameDescriptionWidget(QFrame):
         if (not force) and show_raw == self._showing_raw_desc:
             return
         self._showing_raw_desc = show_raw
-        lines = self._raw_desc_lines if show_raw else self._masked_lines_from_raw(
-            self._raw_desc_lines)
+        if show_raw:
+            lines = list(self._raw_desc_lines)
+            self._masked_desc_color_spans = []
+            self._set_editor_lines(self.desc_editor, lines, suppress_name=False)
+            self._apply_masked_color_selections(self.desc_editor, [])
+            return
+        lines, spans = self._masked_lines_and_spans_from_raw(self._raw_desc_lines)
+        self._masked_desc_color_spans = spans
         self._set_editor_lines(self.desc_editor, lines, suppress_name=False)
+        self._apply_masked_color_selections(self.desc_editor, spans)
 
     def _sync_control_code_visibility(self, force: bool = False) -> None:
         self._sync_single_editor_visibility(self.name_editor, force=force)

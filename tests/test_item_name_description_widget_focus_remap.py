@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 import unittest
+from typing import Any, Callable, Optional, cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -25,13 +27,19 @@ def _segment() -> DialogueSegment:
     )
 
 
-def _widget(segment: DialogueSegment) -> ItemNameDescriptionWidget:
+def _widget(
+    segment: DialogueSegment,
+    *,
+    hidden_control_colored_line_resolver: Optional[
+        Callable[[str], tuple[str, list[tuple[int, int, str, float]]]]
+    ] = None,
+) -> ItemNameDescriptionWidget:
     return ItemNameDescriptionWidget(
         segment=segment,
         block_number=1,
         hide_control_codes_when_unfocused=False,
         hidden_control_line_transform=None,
-        hidden_control_colored_line_resolver=None,
+        hidden_control_colored_line_resolver=hidden_control_colored_line_resolver,
         color_code_resolver=None,
         variable_label_resolver=None,
         translator_mode=False,
@@ -142,6 +150,54 @@ class ItemNameDescriptionWidgetFocusRemapTests(unittest.TestCase):
         )
         self.assertFalse(widget._pending_mouse_reveal_desc)
         self.assertTrue(widget._showing_raw_desc)
+        widget.deleteLater()
+
+    def test_desc_editor_hidden_mode_keeps_colored_preview_spans(self) -> None:
+        color_token_re = re.compile(r"\\[Cc]\[(\d+)\]")
+
+        def colored_mask(value: str) -> tuple[str, list[tuple[int, int, str, float]]]:
+            output: list[str] = []
+            spans: list[tuple[int, int, str, float]] = []
+            cursor = 0
+            out_pos = 0
+            active_color = ""
+            for match in color_token_re.finditer(value):
+                chunk = value[cursor:match.start()]
+                if chunk:
+                    output.append(chunk)
+                    next_pos = out_pos + len(chunk)
+                    spans.append((out_pos, next_pos, active_color, 1.0))
+                    out_pos = next_pos
+                color_code = int(match.group(1))
+                active_color = "#22aa22" if color_code == 3 else ""
+                cursor = match.end()
+            tail = value[cursor:]
+            if tail:
+                output.append(tail)
+                next_pos = out_pos + len(tail)
+                spans.append((out_pos, next_pos, active_color, 1.0))
+            return "".join(output), spans
+
+        widget = _widget(
+            _segment(),
+            hidden_control_colored_line_resolver=colored_mask,
+        )
+        widget.set_hide_control_codes_when_unfocused(True)
+        widget.desc_editor.clearFocus()
+        widget._sync_control_code_visibility(force=True)
+        self._app.processEvents()
+
+        self.assertFalse(widget._showing_raw_desc)
+        self.assertNotIn(r"\C[3]", widget.desc_editor.toPlainText())
+
+        selections = widget.desc_editor.extraSelections()
+        colored = 0
+        for selection in selections:
+            selection_any = cast(Any, selection)
+            color = selection_any.format.foreground().color()
+            if color.isValid() and color.name().lower() == "#22aa22":
+                colored += 1
+        self.assertGreaterEqual(colored, 1)
         widget.deleteLater()
 
 
