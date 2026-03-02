@@ -532,6 +532,40 @@ class RenderMixinNonMeaningfulFilterTests(unittest.TestCase):
         self.assertEqual(state["current_page"], 1)
         self.assertEqual(state["total_pages"], 3)
 
+    def test_display_block_numbers_keep_translation_only_followups_on_anchor_number(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        segments = [
+            _segment("Map001:1", "A1"),
+            _segment("Map001:1:f1", "A1-f1", translation_only=True),
+            _segment("Map001:1:f2", "A1-f2", translation_only=True),
+            _segment("map_name", "Town", segment_kind="map_display_name"),
+            _segment("Map001:2", "A2"),
+            _segment("Map001:2:f1", "A2-f1", translation_only=True),
+        ]
+
+        numbers = harness._display_block_numbers(segments, actor_mode=False)
+
+        self.assertEqual(numbers["Map001:1"], 1)
+        self.assertEqual(numbers["Map001:1:f1"], 1)
+        self.assertEqual(numbers["Map001:1:f2"], 1)
+        self.assertEqual(numbers["map_name"], 0)
+        self.assertEqual(numbers["Map001:2"], 2)
+        self.assertEqual(numbers["Map001:2:f1"], 2)
+
+    def test_display_block_count_aligns_with_anchor_numbering(self) -> None:
+        harness = _Harness(hide_non_meaningful=False)
+        segments = [
+            _segment("Map001:1", "A1"),
+            _segment("Map001:1:f1", "A1-f1", translation_only=True),
+            _segment("Map001:2", "A2"),
+            _segment("Map001:2:f1", "A2-f1", translation_only=True),
+            _segment("map_name", "Town", segment_kind="map_display_name"),
+        ]
+
+        count = harness._display_block_count(segments, actor_mode=False)
+
+        self.assertEqual(count, 2)
+
     def test_paginate_segments_selects_page_for_focus_uid(self) -> None:
         harness = _Harness(hide_non_meaningful=False)
         segments = [_segment(f"Map001:{idx}", f"line {idx}") for idx in range(1, 121)]

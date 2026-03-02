@@ -2879,6 +2879,8 @@ class DialogueBlockWidget(QFrame):
 
     def _refresh_block_style(self) -> None:
         tags: list[str] = []
+        if bool(self.segment.translation_only):
+            tags.append("cont")
         if self.segment.inserted:
             tags.append("new")
         elif self._is_changed():

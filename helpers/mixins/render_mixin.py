@@ -431,7 +431,8 @@ class RenderMixin(_RenderHostTypingFallback):
     ) -> int:
         if actor_mode:
             return len(segments)
-        return sum(1 for segment in segments if not self._is_map_display_name_segment(segment))
+        numbers = self._display_block_numbers(segments, actor_mode=False)
+        return len({number for number in numbers.values() if number > 0})
 
     def _display_block_numbers(
         self,
@@ -446,11 +447,19 @@ class RenderMixin(_RenderHostTypingFallback):
             return numbers
 
         next_number = 1
+        current_chain_number: Optional[int] = None
         for segment in segments:
             if self._is_map_display_name_segment(segment):
                 numbers[segment.uid] = 0
                 continue
-            numbers[segment.uid] = next_number
+            if bool(getattr(segment, "translation_only", False)):
+                if current_chain_number is None:
+                    current_chain_number = next_number
+                    next_number += 1
+                numbers[segment.uid] = current_chain_number
+                continue
+            current_chain_number = next_number
+            numbers[segment.uid] = current_chain_number
             next_number += 1
         return numbers
 

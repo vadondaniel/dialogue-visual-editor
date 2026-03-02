@@ -515,6 +515,14 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertIn("font-weight:400", widget.title_label.text())
         widget.deleteLater()
 
+    def test_translation_only_block_title_shows_cont_tag(self) -> None:
+        segment = _segment(["followup"])
+        segment.translation_only = True
+        widget = _widget(segment)
+
+        self.assertIn("Block 1 (cont)", widget.title_label.text())
+        widget.deleteLater()
+
     def test_translator_mode_inferred_speaker_uses_translation_map(self) -> None:
         segment = _segment(["Hero", "こんにちは"])
         segment.translation_lines = [""]
