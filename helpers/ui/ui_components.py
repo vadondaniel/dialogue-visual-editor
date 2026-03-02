@@ -2468,6 +2468,12 @@ class DialogueBlockWidget(QFrame):
         source_lines = self.segment.lines or [""]
         return list(source_lines) if source_lines else [""]
 
+    def _source_hint_lines_for_overlay(self) -> list[str]:
+        if not self._uses_translation_storage():
+            return list(self._source_hint_lines)
+        source_lines = self._line1_inference_source_lines()
+        return self._editor_lines_from_storage_lines(source_lines)
+
     def _editor_lines_from_storage_lines(self, storage_lines: list[str]) -> list[str]:
         lines = list(storage_lines) if storage_lines else [""]
         if self._line1_inference_active():
@@ -3019,6 +3025,7 @@ class DialogueBlockWidget(QFrame):
         editor = self.editor
         if self._source_hint_overlay is None or editor is None:
             return
+        self._source_hint_lines = self._source_hint_lines_for_overlay()
         has_user_text = any(line.strip() for line in self._raw_lines)
         show_source_hint = (
             self._uses_translation_storage()
