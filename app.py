@@ -4178,13 +4178,17 @@ class DialogueVisualEditor(
             ):
                 candidate_lines = list(candidate_lines[1:]) or [""]
 
+            followup_had_leading_color_prefix = False
             if candidate_lines:
                 first_line = candidate_lines[0]
                 leading_match = _LEADING_COLOR_CODE_PREFIX_RE.match(first_line)
                 if leading_match is not None:
+                    followup_had_leading_color_prefix = True
                     candidate_lines[0] = first_line[leading_match.end():]
 
-            if candidate_lines:
+            # Only drop a trailing reset when we also stripped a leading color
+            # wrapper from this followup; otherwise keep meaningful final resets.
+            if candidate_lines and followup_had_leading_color_prefix:
                 candidate_lines[-1] = _TRAILING_RESET_COLOR_RE.sub("", candidate_lines[-1])
 
             normalized_lines.extend(candidate_lines)
