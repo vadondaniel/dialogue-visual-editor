@@ -84,6 +84,47 @@ class _Harness(TranslationStateMixin):
 
 
 class TranslationStateMixinTests(unittest.TestCase):
+    def test_reference_summary_collapses_translation_only_followups_into_anchor_match(self) -> None:
+        harness = _Harness()
+        session_a_path = Path("Map001.json")
+        session_b_path = Path("Map002.json")
+
+        a_anchor = _segment("Map001.json:L0:0", "同一文")
+        a_followup = _segment("Map001.json:TI:T0001", "")
+        a_followup.translation_only = True
+        a_followup.source_lines = ["同一文"]
+        a_followup.original_lines = ["同一文"]
+
+        b_anchor = _segment("Map002.json:L0:0", "同一文")
+        b_followup = _segment("Map002.json:TI:T0002", "")
+        b_followup.translation_only = True
+        b_followup.source_lines = ["同一文"]
+        b_followup.original_lines = ["同一文"]
+
+        session_a = FileSession(
+            path=session_a_path,
+            data=[],
+            bundles=[],
+            segments=[a_anchor, a_followup],
+        )
+        session_b = FileSession(
+            path=session_b_path,
+            data=[],
+            bundles=[],
+            segments=[b_anchor, b_followup],
+        )
+        harness.sessions = {
+            session_a_path: session_a,
+            session_b_path: session_b,
+        }
+
+        summary_map = harness._build_reference_summary_for_session(session_a)
+        anchor_exact, _anchor_similar = summary_map[a_anchor.uid]
+        followup_exact, _followup_similar = summary_map[a_followup.uid]
+
+        self.assertIn("1 block", anchor_exact)
+        self.assertEqual(anchor_exact, followup_exact)
+
     def test_build_human_translation_reference_prompt_marks_thoughts(self) -> None:
         harness = _Harness()
         harness.bg1_means_thoughts = True

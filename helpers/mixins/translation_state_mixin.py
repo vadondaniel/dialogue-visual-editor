@@ -354,6 +354,71 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             ""]
         return "\n".join(source_lines)
 
+    def _reference_anchor_index_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> int:
+        segments = session.segments
+        segment_index = -1
+        for idx, candidate in enumerate(segments):
+            if candidate is segment:
+                segment_index = idx
+                break
+        if segment_index < 0:
+            for idx, candidate in enumerate(segments):
+                if candidate.uid == segment.uid:
+                    segment_index = idx
+                    break
+        if segment_index < 0:
+            return -1
+        if not bool(getattr(segment, "translation_only", False)):
+            return segment_index
+        for idx in range(segment_index - 1, -1, -1):
+            if not bool(getattr(segments[idx], "translation_only", False)):
+                return idx
+        for idx in range(segment_index + 1, len(segments)):
+            if not bool(getattr(segments[idx], "translation_only", False)):
+                return idx
+        return segment_index
+
+    def _reference_anchor_segment_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> DialogueSegment:
+        anchor_index = self._reference_anchor_index_for_segment(session, segment)
+        if 0 <= anchor_index < len(session.segments):
+            return session.segments[anchor_index]
+        return segment
+
+    def _reference_source_text_for_matching(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> str:
+        logical_source_resolver = getattr(
+            self,
+            "_logical_translation_source_lines_for_segment",
+            None,
+        )
+        if callable(logical_source_resolver) and segment.is_structural_dialogue:
+            resolved_lines: Any = None
+            try:
+                resolved_lines = logical_source_resolver(segment, session=session)
+            except TypeError:
+                try:
+                    resolved_lines = logical_source_resolver(segment)
+                except Exception:
+                    resolved_lines = None
+            except Exception:
+                resolved_lines = None
+            if isinstance(resolved_lines, list):
+                normalized = self._normalize_translation_lines(resolved_lines)
+                return "\n".join(normalized)
+        anchor_segment = self._reference_anchor_segment_for_segment(session, segment)
+        return self._segment_reference_source_text(anchor_segment)
+
     def _segment_reference_translation_text(self, segment: DialogueSegment) -> str:
         lines = self._normalize_translation_lines(segment.translation_lines)
         return "\n".join(lines).strip()
@@ -1404,19 +1469,36 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         source_label = self._translation_project_source_language_label()
         target_label = self._translation_profile_target_language_label()
         for row_path, row_session in self.sessions.items():
+            emitted_anchor_uids: set[str] = set()
             for block_number, segment in enumerate(row_session.segments, start=1):
-                source_text = self._segment_reference_source_text(
-                    segment).strip()
+                anchor_segment = self._reference_anchor_segment_for_segment(
+                    row_session,
+                    segment,
+                )
+                anchor_uid = anchor_segment.uid if isinstance(anchor_segment.uid, str) else ""
+                if anchor_uid and anchor_uid in emitted_anchor_uids:
+                    continue
+                if anchor_uid:
+                    emitted_anchor_uids.add(anchor_uid)
+                source_text = self._reference_source_text_for_matching(
+                    row_session,
+                    segment,
+                ).strip()
                 if not source_text:
                     continue
                 rows.append(
                     {
                         "path": row_path,
-                        "uid": segment.uid,
+                        "uid": anchor_uid if anchor_uid else segment.uid,
                         "file": row_path.name,
-                        "block_number": block_number,
+                        "block_number": self._reference_anchor_index_for_segment(
+                            row_session,
+                            segment,
+                        ) + 1,
                         "source_text": source_text,
-                        "translation_text": self._segment_reference_translation_text(segment),
+                        "translation_text": self._segment_reference_translation_text(
+                            anchor_segment
+                        ),
                         "compare_text": fuzzy_compare_text(source_text),
                     }
                 )
@@ -1432,9 +1514,10 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
         summaries: dict[str, tuple[str, str]] = {}
         for segment in session.segments:
-            own_source = self._segment_reference_source_text(segment).strip()
+            own_source = self._reference_source_text_for_matching(session, segment).strip()
             own_path = session.path
-            own_uid = segment.uid
+            own_anchor = self._reference_anchor_segment_for_segment(session, segment)
+            own_uid = own_anchor.uid
 
             exact_summary = self._build_exact_reference_summary(
                 own_source=own_source,

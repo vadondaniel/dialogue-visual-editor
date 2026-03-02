@@ -3529,8 +3529,13 @@ class DialogueVisualEditor(
             if index < 0 or index >= len(session.segments):
                 return "", ""
             segment = session.segments[index]
-            source_text = "\n".join(self._segment_source_lines_for_translation(segment)).strip()
-            tl_text = "\n".join(self._segment_translation_lines_for_translation(segment)).strip()
+            source_text = self._reference_source_text_for_matching(session, segment).strip()
+            tl_text = "\n".join(
+                self._logical_translation_lines_for_segment(
+                    segment,
+                    session=session,
+                )
+            ).strip()
             return source_text, tl_text
 
         prev_source, prev_tl = text_for_index(segment_index - 1)
@@ -3553,34 +3558,49 @@ class DialogueVisualEditor(
         rows: list[dict[str, Any]] = []
         exact_groups: dict[str, list[dict[str, Any]]] = {}
         for row_path, row_session in self.sessions.items():
+            emitted_anchor_uids: set[str] = set()
             for segment_index, row_segment in enumerate(row_session.segments):
-                source_text = self._segment_reference_source_text(row_segment).strip()
+                anchor_segment = self._reference_anchor_segment_for_segment(
+                    row_session,
+                    row_segment,
+                )
+                anchor_uid = anchor_segment.uid if isinstance(anchor_segment.uid, str) else ""
+                if anchor_uid and anchor_uid in emitted_anchor_uids:
+                    continue
+                if anchor_uid:
+                    emitted_anchor_uids.add(anchor_uid)
+                anchor_index = self._reference_anchor_index_for_segment(
+                    row_session,
+                    row_segment,
+                )
+                source_text = self._reference_source_text_for_matching(
+                    row_session,
+                    row_segment,
+                ).strip()
                 if not source_text:
                     continue
                 row = {
                     "path": row_path,
-                    "uid": row_segment.uid,
+                    "uid": anchor_uid if anchor_uid else row_segment.uid,
                     "file": row_path.name,
-                    "block_number": segment_index + 1,
-                    "segment_index": segment_index,
+                    "block_number": (anchor_index + 1) if anchor_index >= 0 else (segment_index + 1),
+                    "segment_index": anchor_index if anchor_index >= 0 else segment_index,
                     "source_text": source_text,
                 }
                 rows.append(row)
                 exact_groups.setdefault(source_text, []).append(row)
 
-        own_source = self._segment_reference_source_text(segment).strip()
+        own_source = self._reference_source_text_for_matching(session, segment).strip()
         if not own_source:
             return []
+        own_anchor = self._reference_anchor_segment_for_segment(session, segment)
         exact_pool, _is_cross_file = self._exact_reference_candidates(
             own_source=own_source,
             own_path=session.path,
-            own_uid=segment.uid,
+            own_uid=own_anchor.uid,
             exact_groups=exact_groups,
         )
-        current_index = next(
-            (idx for idx, item in enumerate(session.segments) if item.uid == segment.uid),
-            -1,
-        )
+        current_index = self._reference_anchor_index_for_segment(session, segment)
         current_snapshot = (
             self._snapshot_for_segment_index(session, current_index)
             if current_index >= 0
