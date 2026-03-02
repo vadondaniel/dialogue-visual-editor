@@ -3307,55 +3307,86 @@ class DialogueBlockWidget(QFrame):
         self.japanese_char_problem_enabled = new_value
         self._refresh_status()
 
-    def _source_lines_for_control_mismatch(self) -> list[str]:
-        source_resolver = self.control_mismatch_source_lines_resolver
-        use_local_only = bool(self._uses_translation_storage() and self.segment.translation_only)
-        if (not use_local_only) and self._uses_translation_storage() and callable(source_resolver):
-            try:
-                resolved_source = source_resolver(self.segment)
-            except Exception:
-                resolved_source = None
-            if isinstance(resolved_source, list):
-                normalized = [
-                    line if isinstance(line, str) else ("" if line is None else str(line))
-                    for line in resolved_source
-                ]
-                return normalized if normalized else [""]
-        source_lines = self.segment.source_lines or self.segment.original_lines or self.segment.lines or [
-            ""
-        ]
-        resolved = list(source_lines) if source_lines else [""]
+    def _normalize_control_mismatch_lines(self, value: Any) -> list[str]:
+        if isinstance(value, list):
+            normalized = [
+                line if isinstance(line, str) else ("" if line is None else str(line))
+                for line in value
+            ]
+            return normalized if normalized else [""]
+        if isinstance(value, str):
+            normalized_text = value.replace("\r\n", "\n").replace("\r", "\n")
+            return normalized_text.split("\n")
+        return [""]
+
+    def _source_lines_for_control_mismatch_local(self) -> list[str]:
+        source_lines = (
+            self.segment.source_lines
+            or self.segment.original_lines
+            or self.segment.lines
+            or [""]
+        )
+        resolved = self._normalize_control_mismatch_lines(source_lines)
         if self._line1_inference_active():
             if len(resolved) > 1:
                 return list(resolved[1:])
             return [""]
         return resolved
 
-    def _translation_lines_for_control_mismatch(self) -> list[str]:
-        translation_resolver = self.control_mismatch_translation_lines_resolver
-        use_local_only = bool(self._uses_translation_storage() and self.segment.translation_only)
-        if (not use_local_only) and self._uses_translation_storage() and callable(translation_resolver):
-            try:
-                resolved_translation = translation_resolver(self.segment)
-            except Exception:
-                resolved_translation = None
-            if isinstance(resolved_translation, list):
-                normalized = [
-                    line if isinstance(line, str) else ("" if line is None else str(line))
-                    for line in resolved_translation
-                ]
-                return normalized if normalized else [""]
-        translation_lines = (
-            self.segment.translation_lines
-            if self.segment.translation_lines
-            else [""]
-        )
-        resolved = list(translation_lines) if translation_lines else [""]
+    def _translation_lines_for_control_mismatch_local(self) -> list[str]:
+        translation_lines = self.segment.translation_lines or [""]
+        resolved = self._normalize_control_mismatch_lines(translation_lines)
         if self._line1_inference_active():
             if len(resolved) > 1:
                 return list(resolved[1:])
             return [""]
         return resolved
+
+    def _source_lines_for_control_mismatch(self) -> list[str]:
+        source_resolver = self.control_mismatch_source_lines_resolver
+        if self._uses_translation_storage() and callable(source_resolver):
+            try:
+                resolved_source = source_resolver(self.segment)
+            except Exception:
+                resolved_source = None
+            normalized = self._normalize_control_mismatch_lines(resolved_source)
+            if normalized:
+                return normalized
+        return self._source_lines_for_control_mismatch_local()
+
+    def _translation_lines_for_control_mismatch(self) -> list[str]:
+        translation_resolver = self.control_mismatch_translation_lines_resolver
+        if self._uses_translation_storage() and callable(translation_resolver):
+            try:
+                resolved_translation = translation_resolver(self.segment)
+            except Exception:
+                resolved_translation = None
+            normalized = self._normalize_control_mismatch_lines(resolved_translation)
+            if normalized:
+                return normalized
+        return self._translation_lines_for_control_mismatch_local()
+
+    def _source_lines_for_control_mismatch_highlight(self) -> list[str]:
+        local = self._source_lines_for_control_mismatch_local()
+        if any(line.strip() for line in local):
+            return local
+        source_resolver = self.control_mismatch_source_lines_resolver
+        if (
+            self._uses_translation_storage()
+            and bool(self.segment.translation_only)
+            and callable(source_resolver)
+        ):
+            try:
+                resolved_source = source_resolver(self.segment)
+            except Exception:
+                resolved_source = None
+            normalized = self._normalize_control_mismatch_lines(resolved_source)
+            if normalized:
+                return normalized
+        return local
+
+    def _translation_lines_for_control_mismatch_highlight(self) -> list[str]:
+        return self._translation_lines_for_control_mismatch_local()
 
     def _has_control_mismatch_problem(self) -> bool:
         if not self.control_mismatch_highlighting_enabled:
@@ -3366,7 +3397,8 @@ class DialogueBlockWidget(QFrame):
             return False
         source_text = "\n".join(self._source_lines_for_control_mismatch())
         translation_text = "\n".join(
-            self._translation_lines_for_control_mismatch())
+            self._translation_lines_for_control_mismatch()
+        )
         if not translation_text.strip():
             return False
         source_spans, translation_spans = control_mismatch_token_spans(
@@ -3409,12 +3441,10 @@ class DialogueBlockWidget(QFrame):
             return []
         if self._displaying_masked_text:
             return []
-        translation_text = "\n".join(
-            self._translation_lines_for_control_mismatch()
-        )
+        translation_text = "\n".join(self._translation_lines_for_control_mismatch_highlight())
         if not translation_text.strip():
             return []
-        source_text = "\n".join(self._source_lines_for_control_mismatch())
+        source_text = "\n".join(self._source_lines_for_control_mismatch_highlight())
         return build_control_mismatch_selections(
             editor,
             source_text=source_text,

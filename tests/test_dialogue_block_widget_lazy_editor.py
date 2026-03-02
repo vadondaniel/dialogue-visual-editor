@@ -635,7 +635,7 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertFalse(widget._has_control_mismatch_problem())
         widget.deleteLater()
 
-    def test_control_mismatch_highlight_uses_chain_translation_resolver(self) -> None:
+    def test_control_mismatch_highlight_uses_local_text_even_with_chain_resolver(self) -> None:
         segment = _segment([r"\C[2]Speaker\C[0]", r"\C[27]Source text\C[0]"])
         segment.translation_lines = [
             r"\C[2]Yuki\C[0]",
@@ -660,10 +660,11 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         )
 
         self.assertFalse(widget._has_control_mismatch_problem())
-        self.assertEqual(len(widget._control_mismatch_selections()), 0)
+        # Status uses chain resolver, but highlight spans align to local editor text.
+        self.assertEqual(len(widget._control_mismatch_selections()), 4)
         widget.deleteLater()
 
-    def test_translation_only_control_mismatch_uses_local_lines_not_chain_resolver(self) -> None:
+    def test_translation_only_control_mismatch_uses_chain_status_and_local_highlights(self) -> None:
         segment = _segment([r"\C[2]Name\C[0]", r"\C[27]Line\C[0]"])
         segment.translation_only = True
         segment.translation_lines = [r"\C[2]Name\C[0]", r"\C[27]Line\C[0]"]
@@ -687,10 +688,39 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
             lambda _segment: [r"\C[2]Name\C[0]", r"\C[27]Line"]
         )
 
-        self.assertFalse(widget._has_control_mismatch_problem())
+        # Status is driven by chain resolver payload.
+        self.assertTrue(widget._has_control_mismatch_problem())
         # Selections include matched control-code tokens. If resolver were used,
         # this would be 3 (missing trailing \C[0]); local lines produce 4.
         self.assertEqual(len(widget._control_mismatch_selections()), 4)
+        widget.deleteLater()
+
+    def test_translation_only_control_mismatch_clears_status_when_chain_resolver_matches(self) -> None:
+        segment = _segment([r"\C[2]Name\C[0]", r"\C[27]Line\C[0]"])
+        segment.translation_only = True
+        # Local block text is mismatched; chain resolver below is matched.
+        segment.translation_lines = [r"\C[2]Name\C[0]", r"\C[27]Line"]
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=None,
+        )
+        widget.set_editor_active(True)
+        widget.set_control_mismatch_highlighting_enabled(True)
+        widget.control_mismatch_source_lines_resolver = (
+            lambda _segment: [r"\C[2]Name\C[0]", r"\C[27]Line\C[0]"]
+        )
+        widget.control_mismatch_translation_lines_resolver = (
+            lambda _segment: [r"\C[2]Name\C[0]", r"\C[27]Line\C[0]"]
+        )
+
+        self.assertFalse(widget._has_control_mismatch_problem())
+        # Local translation misses one token, so three token spans remain.
+        self.assertEqual(len(widget._control_mismatch_selections()), 3)
         widget.deleteLater()
 
     def test_translator_mode_speaker_html_resolver_applies_to_translated_name(self) -> None:
