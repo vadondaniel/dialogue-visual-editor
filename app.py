@@ -4751,6 +4751,257 @@ class DialogueVisualEditor(
                 f"Renamed speaker key '{old_name}' -> '{new_name}'.")
         return changed_blocks
 
+    def _speaker_inference_enabled_for_manager(self) -> bool:
+        return bool(self.infer_speaker_check.isChecked())
+
+    def _collect_inferred_speaker_candidates_for_manager(self) -> list[dict[str, Any]]:
+        if not self._speaker_inference_enabled_for_manager():
+            return []
+        if not self.sessions:
+            return []
+
+        rows_by_key: dict[str, dict[str, Any]] = {}
+        for path, session in self.sessions.items():
+            if self._is_name_index_session(session):
+                continue
+            for segment in session.segments:
+                if not segment.is_structural_dialogue:
+                    continue
+                if bool(getattr(segment, "translation_only", False)):
+                    continue
+                if segment.speaker_name != NO_SPEAKER_KEY:
+                    continue
+                source_lines = self._source_lines_for_line1_inference(segment)
+                if len(source_lines) <= 1:
+                    continue
+                first_line = source_lines[0].strip() if source_lines else ""
+                if not first_line:
+                    continue
+                resolved_first = self._resolve_name_tokens_in_text(
+                    first_line,
+                    prefer_translated=False,
+                ).strip()
+                speaker_key = self._normalize_speaker_key(resolved_first or first_line)
+                if speaker_key == NO_SPEAKER_KEY:
+                    continue
+
+                row = rows_by_key.get(speaker_key)
+                if row is None:
+                    row = {
+                        "speaker_key": speaker_key,
+                        "count": 0,
+                        "sample_path": str(path),
+                        "sample_uid": segment.uid,
+                        "sample_context": segment.context,
+                        "inferred_count": 0,
+                        "translations": {},
+                    }
+                    rows_by_key[speaker_key] = row
+
+                row["count"] = int(row["count"]) + 1
+                inferred = self._inferred_speaker_from_segment_line1(
+                    segment,
+                    infer_speaker_enabled=True,
+                ).strip()
+                if inferred:
+                    row["inferred_count"] = int(row.get("inferred_count", 0)) + 1
+
+        # Mine candidate translation names from all dialogue entries that map to
+        # inferred speaker keys, so suggestions work even when only per-segment
+        # speaker translations exist and no global mapping has been saved yet.
+        if rows_by_key:
+            for session in self.sessions.values():
+                if self._is_name_index_session(session):
+                    continue
+                for segment in session.segments:
+                    if not segment.is_structural_dialogue:
+                        continue
+                    if bool(getattr(segment, "translation_only", False)):
+                        continue
+
+                    explicit_key = self._normalize_speaker_key(segment.speaker_name)
+                    if explicit_key != NO_SPEAKER_KEY:
+                        segment_speaker_key = explicit_key
+                    else:
+                        source_lines = self._source_lines_for_line1_inference(segment)
+                        if len(source_lines) <= 1:
+                            continue
+                        first_line = source_lines[0].strip() if source_lines else ""
+                        if not first_line:
+                            continue
+                        resolved_first = self._resolve_name_tokens_in_text(
+                            first_line,
+                            prefer_translated=False,
+                        ).strip()
+                        segment_speaker_key = self._normalize_speaker_key(
+                            resolved_first or first_line
+                        )
+                    if segment_speaker_key == NO_SPEAKER_KEY:
+                        continue
+
+                    row = rows_by_key.get(segment_speaker_key)
+                    if row is None:
+                        continue
+
+                    translations_raw = row.get("translations")
+                    translations = (
+                        cast(dict[str, int], translations_raw)
+                        if isinstance(translations_raw, dict)
+                        else {}
+                    )
+
+                    speaker_translation = segment.translation_speaker.strip()
+                    if not speaker_translation and explicit_key == NO_SPEAKER_KEY:
+                        # Legacy fallback: if an inferred-speaker segment still
+                        # stores a translated first line, treat it as a speaker
+                        # suggestion candidate.
+                        tl_lines = self._flatten_embedded_newlines(
+                            self._normalize_translation_lines(segment.translation_lines)
+                        )
+                        src_lines = self._source_lines_for_line1_inference(segment)
+                        if len(tl_lines) > 1 and len(src_lines) > 1:
+                            first_tl = tl_lines[0].strip()
+                            first_src = src_lines[0].strip()
+                            resolved_src = self._resolve_name_tokens_in_text(
+                                first_src,
+                                prefer_translated=False,
+                            ).strip()
+                            if (
+                                first_tl
+                                and first_tl != first_src
+                                and (not resolved_src or first_tl != resolved_src)
+                            ):
+                                normalized_tl = self._normalize_speaker_key(first_tl)
+                                if normalized_tl != NO_SPEAKER_KEY:
+                                    speaker_translation = first_tl
+
+                    if speaker_translation:
+                        translations[speaker_translation] = (
+                            int(translations.get(speaker_translation, 0)) + 1
+                        )
+                    row["translations"] = translations
+
+        rows: list[dict[str, Any]] = []
+        for speaker_key, row in rows_by_key.items():
+            suggested_translation = self._speaker_translation_for_key(speaker_key).strip()
+            translations_raw = row.get("translations")
+            translations = (
+                cast(dict[str, int], translations_raw)
+                if isinstance(translations_raw, dict)
+                else {}
+            )
+            if not suggested_translation and translations:
+                sorted_translations = sorted(
+                    translations.items(),
+                    key=lambda item: (-int(item[1]), item[0].casefold()),
+                )
+                suggested_translation = sorted_translations[0][0]
+            rows.append(
+                {
+                    "speaker_key": speaker_key,
+                    "count": int(row.get("count", 0)),
+                    "inferred_count": int(row.get("inferred_count", 0)),
+                    "sample_path": str(row.get("sample_path", "")).strip(),
+                    "sample_uid": str(row.get("sample_uid", "")).strip(),
+                    "sample_context": str(row.get("sample_context", "")).strip(),
+                    "suggested_translation": suggested_translation,
+                }
+            )
+
+        rows.sort(
+            key=lambda item: (
+                -int(item.get("count", 0))
+                if isinstance(item.get("count", 0), int)
+                else 0,
+                str(item.get("speaker_key", "")).casefold(),
+            )
+        )
+        return rows
+
+    def _accept_inferred_speaker_candidate_for_manager(self, speaker_key: str) -> int:
+        normalized_target = self._normalize_speaker_key(speaker_key)
+        if normalized_target == NO_SPEAKER_KEY:
+            return 0
+
+        changed_entries = 0
+        for session in self.sessions.values():
+            if self._is_name_index_session(session):
+                continue
+            for segment in session.segments:
+                if not segment.is_structural_dialogue:
+                    continue
+                if bool(getattr(segment, "translation_only", False)):
+                    continue
+                if segment.speaker_name != NO_SPEAKER_KEY:
+                    continue
+
+                source_lines = self._source_lines_for_line1_inference(segment)
+                if len(source_lines) <= 1:
+                    continue
+                first_line = source_lines[0].strip() if source_lines else ""
+                if not first_line:
+                    continue
+                resolved_first = self._resolve_name_tokens_in_text(
+                    first_line,
+                    prefer_translated=False,
+                ).strip()
+                candidate_key = self._normalize_speaker_key(resolved_first or first_line)
+                if candidate_key != normalized_target:
+                    continue
+
+                prev_disabled = bool(getattr(segment, "disable_line1_speaker_inference", False))
+                prev_forced = bool(getattr(segment, "force_line1_speaker_inference", False))
+                if prev_forced and (not prev_disabled):
+                    continue
+
+                segment.disable_line1_speaker_inference = False
+                segment.force_line1_speaker_inference = True
+                changed_entries += 1
+
+        if changed_entries > 0 and self.current_path is not None:
+            current_session = self.sessions.get(self.current_path)
+            if current_session is not None:
+                self._render_session(current_session, preserve_scroll=True)
+        if changed_entries > 0:
+            entry_label = "entry" if changed_entries == 1 else "entries"
+            self.statusBar().showMessage(
+                f"Accepted inferred speaker '{normalized_target}' for {changed_entries} {entry_label}."
+            )
+        else:
+            self.statusBar().showMessage(
+                f"No entries matched inferred speaker '{normalized_target}'."
+            )
+        return changed_entries
+
+    def _jump_to_speaker_candidate_entry_for_manager(self, path_raw: str, uid: str) -> bool:
+        normalized_path_raw = path_raw.strip()
+        normalized_uid = uid.strip()
+        if not normalized_path_raw or not normalized_uid:
+            return False
+
+        target_path: Optional[Path] = None
+        for candidate_path in self.sessions.keys():
+            if str(candidate_path) == normalized_path_raw:
+                target_path = candidate_path
+                break
+        if target_path is None:
+            raw_path = Path(normalized_path_raw)
+            if raw_path in self.sessions:
+                target_path = raw_path
+        if target_path is None:
+            return False
+
+        target_session = self.sessions.get(target_path)
+        normalized_scope = "dialogue"
+        if target_session is not None:
+            normalized_scope = self._normalized_view_scope_for_path(
+                target_path,
+                target_session,
+                "dialogue",
+            )
+        self._open_file(target_path, focus_uid=normalized_uid, view_scope=normalized_scope)
+        return True
+
     def _open_speaker_manager(self) -> None:
         if not self.sessions:
             QMessageBox.information(

@@ -282,6 +282,10 @@ class SpeakerManagerHost(Protocol):
         self, speaker_key: str, color_hex: str) -> None: ...
 
     def _clear_custom_speaker_color(self, speaker_key: str) -> None: ...
+    def _speaker_inference_enabled_for_manager(self) -> bool: ...
+    def _collect_inferred_speaker_candidates_for_manager(self) -> list[dict[str, Any]]: ...
+    def _accept_inferred_speaker_candidate_for_manager(self, speaker_key: str) -> int: ...
+    def _jump_to_speaker_candidate_entry_for_manager(self, path_raw: str, uid: str) -> bool: ...
 
 
 class VariableLengthManagerHost(Protocol):
@@ -651,17 +655,21 @@ class SpeakerManagerDialog(QDialog):
         self.clear_translate_btn = QPushButton(f"Clear {self.target_language_code}")
         self.color_btn = QPushButton("Pick Color...")
         self.auto_btn = QPushButton("Auto Color")
+        self.inferred_candidates_btn = QPushButton("Inferred Candidates...")
         self.rename_btn.clicked.connect(self._on_rename_clicked)
         self.translate_btn.clicked.connect(self._on_translate_clicked)
         self.clear_translate_btn.clicked.connect(
             self._on_clear_translation_clicked)
         self.color_btn.clicked.connect(self._on_color_clicked)
         self.auto_btn.clicked.connect(self._on_auto_color_clicked)
+        self.inferred_candidates_btn.clicked.connect(
+            self._on_inferred_candidates_clicked)
         actions.addWidget(self.rename_btn)
         actions.addWidget(self.translate_btn)
         actions.addWidget(self.clear_translate_btn)
         actions.addWidget(self.color_btn)
         actions.addWidget(self.auto_btn)
+        actions.addWidget(self.inferred_candidates_btn)
         actions.addStretch(1)
         root.addLayout(actions)
 
@@ -727,11 +735,31 @@ class SpeakerManagerDialog(QDialog):
             selected_key and selected_key in self.editor.speaker_custom_colors)
         has_translation = bool(
             selected_key and self._raw_translation_for_key(selected_key))
+        inference_enabled = False
+        inference_enabled_resolver = getattr(
+            self.editor,
+            "_speaker_inference_enabled_for_manager",
+            None,
+        )
+        if callable(inference_enabled_resolver):
+            try:
+                inference_enabled = bool(inference_enabled_resolver())
+            except Exception:
+                inference_enabled = False
         self.rename_btn.setEnabled(has_selection)
         self.translate_btn.setEnabled(has_selection)
         self.clear_translate_btn.setEnabled(has_translation)
         self.color_btn.setEnabled(has_selection)
         self.auto_btn.setEnabled(has_custom)
+        self.inferred_candidates_btn.setEnabled(inference_enabled)
+        if inference_enabled:
+            self.inferred_candidates_btn.setToolTip(
+                "Review inferred speaker first-line candidates ranked by occurrence."
+            )
+        else:
+            self.inferred_candidates_btn.setToolTip(
+                "Enable 'Infer speaker from line 1' in Settings to use inferred candidates."
+            )
 
     def _rename_prefill_text(self, speaker_key: str) -> str:
         if speaker_key == NO_SPEAKER_KEY:
@@ -830,6 +858,202 @@ class SpeakerManagerDialog(QDialog):
             return
         self.editor._set_speaker_translation_everywhere(current, "")
         self._refresh_list(select_key=current)
+
+    def _on_inferred_candidates_clicked(self) -> None:
+        selected_key = self._selected_speaker_key()
+        dialog = InferredSpeakerCandidatesDialog(
+            self.editor,
+            source_language_code=self.source_language_code,
+            target_language_code=self.target_language_code,
+            parent=self,
+        )
+        dialog.exec()
+        if dialog.jump_target is not None:
+            self.accept()
+            path_raw, uid = dialog.jump_target
+            self.editor._jump_to_speaker_candidate_entry_for_manager(path_raw, uid)
+            return
+        self._refresh_list(select_key=selected_key)
+
+
+class InferredSpeakerCandidatesDialog(QDialog):
+    def __init__(
+        self,
+        editor: SpeakerManagerHost,
+        *,
+        source_language_code: str = "JP",
+        target_language_code: str = "EN",
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.editor = editor
+        self.source_language_code = source_language_code.strip() or "JP"
+        self.target_language_code = target_language_code.strip() or "EN"
+        self.jump_target: Optional[tuple[str, str]] = None
+        self._candidate_rows: list[dict[str, Any]] = []
+        self.setWindowTitle("Inferred Speaker Candidates")
+        self.resize(840, 520)
+
+        root = QVBoxLayout(self)
+        info = QLabel(
+            f"Candidates are collected from first lines of entries without explicit speakers.\n"
+            "Use 'Accept as Speaker' to force line1 speaker inference for matching entries."
+        )
+        info.setWordWrap(True)
+        root.addWidget(info)
+
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(4)
+        self.tree.setHeaderLabels(
+            [
+                f"{self.source_language_code} First Line",
+                f"Suggested {self.target_language_code}",
+                "Count",
+                "Sample Entry",
+            ]
+        )
+        self.tree.setUniformRowHeights(True)
+        self.tree.itemSelectionChanged.connect(self._sync_action_buttons)
+        self.tree.itemDoubleClicked.connect(self._on_go_to_entry_clicked)
+        root.addWidget(self.tree, 1)
+
+        actions = QHBoxLayout()
+        self.accept_btn = QPushButton("Accept as Speaker")
+        self.set_translation_btn = QPushButton(
+            f"Set {self.target_language_code}..."
+        )
+        self.go_to_entry_btn = QPushButton("Go To Entry")
+        self.refresh_btn = QPushButton("Refresh")
+        self.accept_btn.clicked.connect(self._on_accept_clicked)
+        self.set_translation_btn.clicked.connect(self._on_set_translation_clicked)
+        self.go_to_entry_btn.clicked.connect(self._on_go_to_entry_clicked)
+        self.refresh_btn.clicked.connect(self._refresh_rows)
+        actions.addWidget(self.accept_btn)
+        actions.addWidget(self.set_translation_btn)
+        actions.addWidget(self.go_to_entry_btn)
+        actions.addWidget(self.refresh_btn)
+        actions.addStretch(1)
+        root.addLayout(actions)
+
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("MetaDim")
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+
+        close_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close_box.rejected.connect(self.reject)
+        close_box.accepted.connect(self.accept)
+        root.addWidget(close_box)
+
+        self._refresh_rows()
+
+    def _selected_row(self) -> Optional[dict[str, Any]]:
+        item = self.tree.currentItem()
+        if item is None:
+            return None
+        payload = item.data(0, Qt.ItemDataRole.UserRole)
+        return payload if isinstance(payload, dict) else None
+
+    def _sync_action_buttons(self) -> None:
+        has_selection = self._selected_row() is not None
+        self.accept_btn.setEnabled(has_selection)
+        self.set_translation_btn.setEnabled(has_selection)
+        self.go_to_entry_btn.setEnabled(has_selection)
+
+    def _refresh_rows(self, select_speaker_key: Optional[str] = None) -> None:
+        rows = self.editor._collect_inferred_speaker_candidates_for_manager()
+        self._candidate_rows = rows if isinstance(rows, list) else []
+        self.tree.clear()
+
+        if not self._candidate_rows:
+            self.status_label.setText("No inferred speaker candidates found.")
+            self._sync_action_buttons()
+            return
+
+        row_to_select = 0
+        for idx, row in enumerate(self._candidate_rows):
+            speaker_key = str(row.get("speaker_key", "")).strip()
+            if not speaker_key:
+                continue
+            suggested = str(row.get("suggested_translation", "")).strip()
+            occurrences = int(row.get("count", 0)) if isinstance(row.get("count"), int) else 0
+            sample_context = str(row.get("sample_context", "")).strip()
+            sample_path = str(row.get("sample_path", "")).strip()
+            sample_label = sample_context or sample_path
+            if not sample_label:
+                sample_label = "-"
+
+            item = QTreeWidgetItem(
+                [
+                    speaker_key,
+                    suggested or "-",
+                    str(max(0, occurrences)),
+                    _preview_dialog_text(sample_label, limit=96),
+                ]
+            )
+            item.setData(0, Qt.ItemDataRole.UserRole, row)
+            if sample_context and sample_path:
+                item.setToolTip(3, f"{sample_path} | {sample_context}")
+            elif sample_context:
+                item.setToolTip(3, sample_context)
+            elif sample_path:
+                item.setToolTip(3, sample_path)
+            self.tree.addTopLevelItem(item)
+            if select_speaker_key is not None and speaker_key == select_speaker_key:
+                row_to_select = idx
+
+        candidate_item = self.tree.topLevelItem(row_to_select)
+        if candidate_item is not None:
+            self.tree.setCurrentItem(candidate_item)
+        self.status_label.setText(
+            f"{len(self._candidate_rows)} candidates ranked by occurrence."
+        )
+        self._sync_action_buttons()
+
+    def _on_accept_clicked(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        speaker_key = str(row.get("speaker_key", "")).strip()
+        if not speaker_key:
+            return
+        changed = self.editor._accept_inferred_speaker_candidate_for_manager(speaker_key)
+        block_label = "entry" if changed == 1 else "entries"
+        self.status_label.setText(
+            f"Accepted '{speaker_key}' as inferred speaker for {changed} {block_label}."
+        )
+        self._refresh_rows(select_speaker_key=speaker_key)
+
+    def _on_set_translation_clicked(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        speaker_key = str(row.get("speaker_key", "")).strip()
+        if not speaker_key:
+            return
+        suggested = str(row.get("suggested_translation", "")).strip()
+        default_value = suggested or speaker_key
+        translated_name, ok = QInputDialog.getText(
+            self,
+            f"Set Speaker {self.target_language_code}",
+            f"Set {self.target_language_code} translation for '{speaker_key}':",
+            text=default_value,
+        )
+        if not ok:
+            return
+        self.editor._set_speaker_translation_everywhere(speaker_key, translated_name)
+        self._refresh_rows(select_speaker_key=speaker_key)
+
+    def _on_go_to_entry_clicked(self, *_args: Any) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        path_raw = str(row.get("sample_path", "")).strip()
+        uid_raw = str(row.get("sample_uid", "")).strip()
+        if not path_raw or not uid_raw:
+            return
+        self.jump_target = (path_raw, uid_raw)
+        self.accept()
 
 
 class VariableLengthManagerDialog(QDialog):
