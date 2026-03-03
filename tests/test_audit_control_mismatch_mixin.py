@@ -176,6 +176,29 @@ class AuditControlMismatchMixinTests(unittest.TestCase):
         self.assertEqual(payload["scanned_blocks"], 1)
         self.assertEqual(payload["records"], [])
 
+    def test_worker_skips_groups_marked_control_mismatch_ignored(self) -> None:
+        harness = _Harness()
+        anchor = _segment("Map001.json:L0:0", r"\C[2]JP\C[0]", r"\C[2]TL")
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[anchor],
+        )
+        setattr(
+            harness,
+            "_segment_control_mismatch_ignored",
+            lambda _segment, session=None, translator_mode=True: True,
+        )
+
+        payload = harness._compute_audit_control_mismatch_worker(
+            [(Path("Map001.json"), session)],
+            only_translated=True,
+        )
+
+        self.assertEqual(payload["scanned_blocks"], 0)
+        self.assertEqual(payload["records"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

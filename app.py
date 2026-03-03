@@ -313,6 +313,7 @@ class DialogueVisualEditor(
         self._speaker_auto_color_theme_dark: Optional[bool] = None
         self._windowskin_text_colors: dict[int, str] = {}
         self._windowskin_text_colors_loaded = False
+        self.control_mismatch_ignored_entries: dict[tuple[str, str], dict[str, str]] = {}
         self.translation_state_path: Optional[Path] = None
         self.last_folder_path = ""
         self.detected_rpg_engine = "unknown"
@@ -3453,6 +3454,9 @@ class DialogueVisualEditor(
             japanese_setter = getattr(widget, "set_japanese_char_problem_enabled", None)
             if callable(japanese_setter):
                 japanese_setter(japanese_problem_enabled)
+            refresh_metadata = getattr(widget, "refresh_metadata", None)
+            if callable(refresh_metadata):
+                refresh_metadata()
 
     def _apply_translator_source_mismatch_highlighting(
         self,
@@ -3466,6 +3470,15 @@ class DialogueVisualEditor(
         if not self.problem_control_mismatch_check.isChecked():
             self.translator_source_view.setExtraSelections([])
             return
+        if self.current_path is not None:
+            session = self.sessions.get(self.current_path)
+            if session is not None and self._segment_control_mismatch_ignored(
+                segment,
+                session=session,
+                translator_mode=True,
+            ):
+                self.translator_source_view.setExtraSelections([])
+                return
         source_lines = self._logical_translation_source_lines_for_segment(segment)
         tl_lines = self._logical_translation_lines_for_problem_checks(segment)
         source_text = "\n".join(source_lines)
@@ -7080,6 +7093,7 @@ class DialogueVisualEditor(
         self.selected_segment_uid = None
         self.current_reference_map = {}
         self.segment_uid_counter = 0
+        self.control_mismatch_ignored_entries.clear()
         self.speaker_custom_colors.clear()
         self._invalidate_speaker_auto_color_cache()
         self.audit_sanitize_ignored_entries_by_rule.clear()
@@ -7567,6 +7581,66 @@ class DialogueVisualEditor(
     def _on_layout_constraints_changed(self, _value: int) -> None:
         self._refresh_all_file_item_text()
         self._rerender_current_file()
+
+    def _on_control_mismatch_ignore_requested(
+        self,
+        uid: str,
+        include_identical: bool,
+    ) -> None:
+        if self.current_path is None:
+            return
+        session = self.sessions.get(self.current_path)
+        if session is None:
+            return
+        segment = self.current_segment_lookup.get(uid)
+        if segment is None:
+            segment = next((candidate for candidate in session.segments if candidate.uid == uid), None)
+        if segment is None:
+            return
+
+        changed = self._set_control_mismatch_ignored_for_segment(
+            session,
+            segment,
+            include_identical=include_identical,
+        )
+        if changed <= 0:
+            self.statusBar().showMessage("Control mismatch ignore is already set.")
+            return
+
+        self._refresh_after_control_mismatch_ignore_change()
+        if include_identical:
+            label = "block" if changed == 1 else "blocks"
+            self.statusBar().showMessage(
+                f"Ignoring control mismatch for {changed} identical {label}."
+            )
+        else:
+            self.statusBar().showMessage("Ignoring control mismatch for this block chain.")
+
+    def _on_control_mismatch_ignore_cleared(self, uid: str) -> None:
+        if self.current_path is None:
+            return
+        session = self.sessions.get(self.current_path)
+        if session is None:
+            return
+        segment = self.current_segment_lookup.get(uid)
+        if segment is None:
+            segment = next((candidate for candidate in session.segments if candidate.uid == uid), None)
+        if segment is None:
+            return
+        if not self._clear_control_mismatch_ignored_for_segment(session, segment):
+            self.statusBar().showMessage("Control mismatch ignore is not set for this block.")
+            return
+        self._refresh_after_control_mismatch_ignore_change()
+        self.statusBar().showMessage("Cleared control mismatch ignore for this block chain.")
+
+    def _refresh_after_control_mismatch_ignore_change(self) -> None:
+        self._invalidate_audit_caches()
+        self._refresh_all_file_item_text()
+        self._refresh_block_control_mismatch_highlighting()
+        self._refresh_translator_detail_panel()
+        refresh_audit_control = getattr(self, "_refresh_audit_control_mismatch_panel", None)
+        if callable(refresh_audit_control):
+            refresh_audit_control()
 
     def _problem_checks_summary_text(self) -> str:
         enabled_checks: list[str] = []

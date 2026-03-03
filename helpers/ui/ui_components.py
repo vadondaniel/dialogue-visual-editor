@@ -8,6 +8,7 @@ from typing import Any, Callable, Literal, Optional, Protocol, cast
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
+    QContextMenuEvent,
     QColor,
     QFocusEvent,
     QFont,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -2107,6 +2109,8 @@ class DialogueBlockWidget(QFrame):
     reset_requested = Signal(str)
     split_overflow_requested = Signal(str)
     line1_inference_override_changed = Signal(str, bool, bool, bool, bool)
+    control_mismatch_ignore_requested = Signal(str, bool)
+    control_mismatch_ignore_cleared = Signal(str)
 
     def __init__(
         self,
@@ -2197,6 +2201,9 @@ class DialogueBlockWidget(QFrame):
         ] = None
         self.control_mismatch_translation_lines_resolver: Optional[
             Callable[[DialogueSegment], list[str]]
+        ] = None
+        self.control_mismatch_ignored_resolver: Optional[
+            Callable[[DialogueSegment], bool]
         ] = None
         self._actor_id = self._actor_id_from_uid()
         self._name_index_field = self._name_index_field_from_uid()
@@ -2596,6 +2603,13 @@ class DialogueBlockWidget(QFrame):
                 if self.editor is not None:
                     self.editor.setFocus()
                 return True
+            if event.type() == QEvent.Type.ContextMenu:
+                context_event = cast(QContextMenuEvent, event)
+                self._show_block_context_menu(
+                    context_event.globalPos(),
+                    include_editor_actions=False,
+                )
+                return True
             return super().eventFilter(watched, event)
         if editor is not None and watched is editor:
             if event.type() == QEvent.Type.FocusIn:
@@ -2615,15 +2629,83 @@ class DialogueBlockWidget(QFrame):
                 self._apply_deferred_mouse_reveal()
             elif event.type() == QEvent.Type.KeyPress:
                 self._apply_deferred_mouse_reveal()
+            elif event.type() == QEvent.Type.ContextMenu:
+                context_event = cast(QContextMenuEvent, event)
+                self._show_block_context_menu(
+                    context_event.globalPos(),
+                    include_editor_actions=True,
+                )
+                return True
         elif editor is not None and watched is editor.viewport():
             if event.type() == QEvent.Type.MouseButtonRelease:
                 self._apply_deferred_mouse_reveal()
+            if event.type() == QEvent.Type.ContextMenu:
+                context_event = cast(QContextMenuEvent, event)
+                self._show_block_context_menu(
+                    context_event.globalPos(),
+                    include_editor_actions=True,
+                )
+                return True
             if self._handle_variable_tooltip_event(event):
                 return True
             if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
                 self._refresh_source_hint_overlay()
                 self._refresh_width_limit_marker()
         return super().eventFilter(watched, event)
+
+    def _show_block_context_menu(
+        self,
+        global_pos: QPoint,
+        *,
+        include_editor_actions: bool,
+    ) -> None:
+        if include_editor_actions and self.editor is not None:
+            menu = self.editor.createStandardContextMenu()
+        else:
+            menu = QMenu(self)
+        has_custom_actions = self._append_control_mismatch_context_actions(menu)
+        if include_editor_actions:
+            if not menu.actions():
+                return
+        elif not has_custom_actions:
+            return
+        menu.exec(global_pos)
+
+    def _append_control_mismatch_context_actions(self, menu: QMenu) -> bool:
+        if self.actor_mode or (not self._uses_translation_storage()):
+            return False
+        is_ignored = self._is_control_mismatch_ignored()
+        has_problem = self._has_control_mismatch_problem()
+        if not is_ignored and not has_problem:
+            return False
+
+        if menu.actions():
+            menu.addSeparator()
+        if has_problem:
+            ignore_action = menu.addAction("Ignore Control Mismatch")
+            ignore_action.triggered.connect(
+                lambda _checked=False: self.control_mismatch_ignore_requested.emit(
+                    self.segment.uid,
+                    False,
+                )
+            )
+            ignore_all_action = menu.addAction(
+                "Ignore Control Mismatch (All Identical)"
+            )
+            ignore_all_action.triggered.connect(
+                lambda _checked=False: self.control_mismatch_ignore_requested.emit(
+                    self.segment.uid,
+                    True,
+                )
+            )
+        if is_ignored:
+            clear_action = menu.addAction("Clear Ignored Control Mismatch")
+            clear_action.triggered.connect(
+                lambda _checked=False: self.control_mismatch_ignore_cleared.emit(
+                    self.segment.uid
+                )
+            )
+        return True
 
     def _variable_tooltip_text(self, event_pos: QPoint) -> str:
         editor = self.editor
@@ -2677,6 +2759,16 @@ class DialogueBlockWidget(QFrame):
         self._mount_editor()
         self.activated.emit(self.segment.uid)
         super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event: Any) -> None:
+        if isinstance(event, QContextMenuEvent):
+            self._show_block_context_menu(
+                event.globalPos(),
+                include_editor_actions=False,
+            )
+            event.accept()
+            return
+        super().contextMenuEvent(event)
 
     def refresh_metadata(self) -> None:
         self._refresh_meta_label()
@@ -3626,6 +3718,8 @@ class DialogueBlockWidget(QFrame):
             return False
         if self.actor_mode:
             return False
+        if self._is_control_mismatch_ignored():
+            return False
         source_text = "\n".join(self._source_lines_for_control_mismatch())
         translation_text = "\n".join(
             self._translation_lines_for_control_mismatch()
@@ -3643,6 +3737,15 @@ class DialogueBlockWidget(QFrame):
             status != "matched"
             for _start, _end, status in translation_spans
         )
+
+    def _is_control_mismatch_ignored(self) -> bool:
+        resolver = self.control_mismatch_ignored_resolver
+        if not callable(resolver):
+            return False
+        try:
+            return bool(resolver(self.segment))
+        except Exception:
+            return False
 
     def _japanese_problem_spans(self) -> list[tuple[int, int]]:
         if not self.japanese_char_problem_enabled:
@@ -3671,6 +3774,8 @@ class DialogueBlockWidget(QFrame):
         if not self.control_mismatch_highlighting_enabled:
             return []
         if self._displaying_masked_text:
+            return []
+        if self._is_control_mismatch_ignored():
             return []
         translation_text = "\n".join(self._translation_lines_for_control_mismatch_highlight())
         if not translation_text.strip():

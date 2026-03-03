@@ -1674,6 +1674,81 @@ class PersistenceExportMixinTests(unittest.TestCase):
             )
         )
 
+    def test_layout_problem_control_mismatch_can_be_ignored_until_content_changes(self) -> None:
+        harness = _Harness()
+        harness.problem_control_mismatch_check = _BoolControl(True)
+        segment = _dialogue_segment("Map001.json:L0:0", r"\C[2]JP\C[0]")
+        segment.translation_lines = [r"\C[2]TL"]
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+
+        self.assertTrue(
+            harness._segment_has_layout_problem(
+                session,
+                segment,
+                translator_mode=True,
+            )
+        )
+        self.assertEqual(
+            harness._set_control_mismatch_ignored_for_segment(session, segment),
+            1,
+        )
+        self.assertFalse(
+            harness._segment_has_layout_problem(
+                session,
+                segment,
+                translator_mode=True,
+            )
+        )
+
+        segment.translation_lines = [r"\C[2]TL\C[3]"]
+        self.assertTrue(
+            harness._segment_has_layout_problem(
+                session,
+                segment,
+                translator_mode=True,
+            )
+        )
+
+    def test_set_control_mismatch_ignore_can_apply_to_identical_anchors(self) -> None:
+        harness = _Harness()
+        harness.problem_control_mismatch_check = _BoolControl(True)
+        first = _dialogue_segment("Map001.json:L0:0", r"\C[2]JP\C[0]")
+        first.translation_lines = [r"\C[2]TL"]
+        second = _dialogue_segment("Map002.json:L0:0", r"\C[2]JP\C[0]")
+        second.translation_lines = [r"\C[2]TL"]
+        path_a = Path("Map001.json")
+        path_b = Path("Map002.json")
+        session_a = FileSession(path=path_a, data={}, bundles=[], segments=[first])
+        session_b = FileSession(path=path_b, data={}, bundles=[], segments=[second])
+        setattr(
+            harness,
+            "sessions",
+            {
+                path_a: session_a,
+                path_b: session_b,
+            },
+        )
+
+        changed = harness._set_control_mismatch_ignored_for_segment(
+            session_a,
+            first,
+            include_identical=True,
+        )
+
+        self.assertEqual(changed, 2)
+        self.assertFalse(
+            harness._segment_has_layout_problem(
+                session_b,
+                second,
+                translator_mode=True,
+            )
+        )
+
     def test_layout_problem_trailing_color_uses_logical_chain_for_split_translation(self) -> None:
         harness = _Harness()
         harness.problem_trailing_color_code_check = _BoolControl(True)

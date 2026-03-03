@@ -742,6 +742,27 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertEqual(len(widget._control_mismatch_selections()), 3)
         widget.deleteLater()
 
+    def test_control_mismatch_can_be_ignored_via_resolver(self) -> None:
+        segment = _segment([r"\C[14]Press\C[0]"])
+        segment.translation_lines = [r"\C[14]Press"]
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=None,
+        )
+        widget.set_editor_active(True)
+        widget.set_control_mismatch_highlighting_enabled(True)
+        self.assertTrue(widget._has_control_mismatch_problem())
+
+        widget.control_mismatch_ignored_resolver = lambda _segment: True
+        self.assertFalse(widget._has_control_mismatch_problem())
+        self.assertEqual(widget._control_mismatch_selections(), [])
+        widget.deleteLater()
+
     def test_translator_mode_speaker_html_resolver_applies_to_translated_name(self) -> None:
         segment = _segment(["Hero", "こんにちは"])
         segment.translation_lines = [""]

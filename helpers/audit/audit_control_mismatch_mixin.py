@@ -457,12 +457,31 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
     ) -> dict[str, Any]:
         scanned_blocks = 0
         records: list[dict[str, Any]] = []
+        ignored_resolver = getattr(self, "_segment_control_mismatch_ignored", None)
         for path, session in path_sessions:
             groups = self._control_mismatch_scan_groups(session)
             for group in groups:
                 anchor_segment = cast(DialogueSegment, group["anchor_segment"])
                 anchor_index = int(group["anchor_index"])
                 group_segments = cast(list[DialogueSegment], group["segments"])
+                if callable(ignored_resolver):
+                    try:
+                        is_ignored = bool(
+                            ignored_resolver(
+                                anchor_segment,
+                                session=session,
+                                translator_mode=True,
+                            )
+                        )
+                    except TypeError:
+                        try:
+                            is_ignored = bool(ignored_resolver(anchor_segment))
+                        except Exception:
+                            is_ignored = False
+                    except Exception:
+                        is_ignored = False
+                    if is_ignored:
+                        continue
                 source_lines = self._resolve_control_mismatch_group_source_lines(
                     session,
                     anchor_segment,

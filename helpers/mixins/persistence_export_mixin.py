@@ -356,6 +356,263 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         tl_text = strip_control_tokens("\n".join(tl_lines))
         return self._JAPANESE_CHAR_RE.search(tl_text) is not None
 
+    def _control_mismatch_ignore_key(
+        self,
+        path: Path,
+        anchor_uid: str,
+    ) -> tuple[str, str]:
+        return (str(path), anchor_uid)
+
+    def _control_mismatch_ignore_entries(self) -> dict[tuple[str, str], dict[str, str]]:
+        entries_raw = getattr(self, "control_mismatch_ignored_entries", None)
+        if isinstance(entries_raw, dict):
+            return cast(dict[tuple[str, str], dict[str, str]], entries_raw)
+        entries: dict[tuple[str, str], dict[str, str]] = {}
+        setattr(self, "control_mismatch_ignored_entries", entries)
+        return entries
+
+    def _control_mismatch_anchor_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> DialogueSegment:
+        anchor_resolver = getattr(self, "_reference_anchor_segment_for_segment", None)
+        if callable(anchor_resolver):
+            try:
+                resolved_anchor = anchor_resolver(session, segment)
+            except Exception:
+                resolved_anchor = None
+            if isinstance(resolved_anchor, DialogueSegment):
+                return resolved_anchor
+        if not bool(getattr(segment, "translation_only", False)):
+            return segment
+        segments = session.segments
+        segment_index = -1
+        for idx, candidate in enumerate(segments):
+            if candidate is segment:
+                segment_index = idx
+                break
+        if segment_index < 0:
+            for idx, candidate in enumerate(segments):
+                if candidate.uid == segment.uid:
+                    segment_index = idx
+                    break
+        if segment_index < 0:
+            return segment
+        for idx in range(segment_index - 1, -1, -1):
+            if not bool(getattr(segments[idx], "translation_only", False)):
+                return segments[idx]
+        for idx in range(segment_index + 1, len(segments)):
+            if not bool(getattr(segments[idx], "translation_only", False)):
+                return segments[idx]
+        return segment
+
+    def _control_mismatch_signature_for_anchor(
+        self,
+        session: FileSession,
+        anchor_segment: DialogueSegment,
+        *,
+        translator_mode: bool,
+    ) -> str:
+        source_lines = self._resolve_problem_source_lines_for_segment(
+            anchor_segment,
+            translator_mode,
+            session=session,
+            prefer_logical_chain=True,
+        )
+        tl_lines = self._resolve_problem_translation_lines_for_segment(
+            anchor_segment,
+            translator_mode,
+            session=session,
+            prefer_logical_chain=True,
+        )
+        source_text = "\n".join(self._normalize_translation_lines(source_lines))
+        tl_text = "\n".join(self._normalize_translation_lines(tl_lines))
+        return f"{source_text}\n\u241e\n{tl_text}"
+
+    def _segment_control_mismatch_ignored(
+        self,
+        segment: DialogueSegment,
+        *,
+        session: Optional[FileSession] = None,
+        translator_mode: bool = True,
+    ) -> bool:
+        if not translator_mode:
+            return False
+        owner_session = session
+        if owner_session is None:
+            session_resolver = getattr(self, "_session_for_segment", None)
+            if callable(session_resolver):
+                try:
+                    resolved_session = session_resolver(segment)
+                except Exception:
+                    resolved_session = None
+                if isinstance(resolved_session, FileSession):
+                    owner_session = resolved_session
+        if owner_session is None:
+            return False
+
+        entries = self._control_mismatch_ignore_entries()
+        if not entries:
+            return False
+        anchor_segment = self._control_mismatch_anchor_for_segment(owner_session, segment)
+        anchor_uid = anchor_segment.uid if isinstance(anchor_segment.uid, str) else ""
+        if not anchor_uid:
+            return False
+        key = self._control_mismatch_ignore_key(owner_session.path, anchor_uid)
+        ignore_entry = entries.get(key)
+        if not isinstance(ignore_entry, dict):
+            return False
+        ignored_signature = ignore_entry.get("signature")
+        if not isinstance(ignored_signature, str) or not ignored_signature:
+            entries.pop(key, None)
+            return False
+        current_signature = self._control_mismatch_signature_for_anchor(
+            owner_session,
+            anchor_segment,
+            translator_mode=translator_mode,
+        )
+        if current_signature != ignored_signature:
+            entries.pop(key, None)
+            return False
+        return True
+
+    def _set_control_mismatch_ignored_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+        *,
+        include_identical: bool = False,
+        translator_mode: bool = True,
+    ) -> int:
+        if not translator_mode:
+            return 0
+        anchor_segment = self._control_mismatch_anchor_for_segment(session, segment)
+        target_signature = self._control_mismatch_signature_for_anchor(
+            session,
+            anchor_segment,
+            translator_mode=translator_mode,
+        )
+        entries = self._control_mismatch_ignore_entries()
+
+        def set_for_anchor(owner_session: FileSession, owner_anchor: DialogueSegment) -> bool:
+            owner_anchor_uid = owner_anchor.uid if isinstance(owner_anchor.uid, str) else ""
+            if not owner_anchor_uid:
+                return False
+            key = self._control_mismatch_ignore_key(owner_session.path, owner_anchor_uid)
+            existing = entries.get(key)
+            if isinstance(existing, dict) and existing.get("signature") == target_signature:
+                return False
+            entries[key] = {"signature": target_signature}
+            return True
+
+        if not include_identical:
+            return 1 if set_for_anchor(session, anchor_segment) else 0
+
+        changed = 0
+        sessions_raw = getattr(self, "sessions", None)
+        if isinstance(sessions_raw, dict):
+            candidate_sessions = [
+                candidate
+                for candidate in sessions_raw.values()
+                if isinstance(candidate, FileSession)
+            ]
+        else:
+            candidate_sessions = [session]
+
+        for owner_session in candidate_sessions:
+            seen_anchor_uids: set[str] = set()
+            for candidate_segment in owner_session.segments:
+                owner_anchor = self._control_mismatch_anchor_for_segment(
+                    owner_session,
+                    candidate_segment,
+                )
+                owner_anchor_uid = owner_anchor.uid if isinstance(owner_anchor.uid, str) else ""
+                if not owner_anchor_uid or owner_anchor_uid in seen_anchor_uids:
+                    continue
+                seen_anchor_uids.add(owner_anchor_uid)
+                owner_signature = self._control_mismatch_signature_for_anchor(
+                    owner_session,
+                    owner_anchor,
+                    translator_mode=translator_mode,
+                )
+                if owner_signature != target_signature:
+                    continue
+                if set_for_anchor(owner_session, owner_anchor):
+                    changed += 1
+        return changed
+
+    def _clear_control_mismatch_ignored_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> bool:
+        entries = self._control_mismatch_ignore_entries()
+        if not entries:
+            return False
+        anchor_segment = self._control_mismatch_anchor_for_segment(session, segment)
+        anchor_uid = anchor_segment.uid if isinstance(anchor_segment.uid, str) else ""
+        if not anchor_uid:
+            return False
+        key = self._control_mismatch_ignore_key(session.path, anchor_uid)
+        if key not in entries:
+            return False
+        entries.pop(key, None)
+        return True
+
+    def _prune_control_mismatch_ignores_for_session(
+        self,
+        session: FileSession,
+        *,
+        translator_mode: bool = True,
+    ) -> int:
+        entries = self._control_mismatch_ignore_entries()
+        if not entries:
+            return 0
+        removed = 0
+        session_path_key = str(session.path)
+        session_anchor_by_uid = {
+            candidate.uid: candidate
+            for candidate in session.segments
+            if isinstance(candidate.uid, str)
+            and candidate.uid
+        }
+        keys_to_remove: list[tuple[str, str]] = []
+        for key, entry in entries.items():
+            if not isinstance(key, tuple) or len(key) != 2:
+                keys_to_remove.append(key)
+                continue
+            path_key_raw, anchor_uid_raw = key
+            if path_key_raw != session_path_key:
+                continue
+            if not isinstance(anchor_uid_raw, str) or (not anchor_uid_raw):
+                keys_to_remove.append(key)
+                continue
+            anchor_segment = session_anchor_by_uid.get(anchor_uid_raw)
+            if anchor_segment is None:
+                keys_to_remove.append(key)
+                continue
+            ignored_signature = (
+                entry.get("signature")
+                if isinstance(entry, dict)
+                else None
+            )
+            if not isinstance(ignored_signature, str) or not ignored_signature:
+                keys_to_remove.append(key)
+                continue
+            current_signature = self._control_mismatch_signature_for_anchor(
+                session,
+                anchor_segment,
+                translator_mode=translator_mode,
+            )
+            if current_signature != ignored_signature:
+                keys_to_remove.append(key)
+        for key in keys_to_remove:
+            if key in entries:
+                entries.pop(key, None)
+                removed += 1
+        return removed
+
     def _segment_has_control_code_mismatch_problem(
         self,
         segment: DialogueSegment,
@@ -363,6 +620,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         *,
         session: Optional[FileSession] = None,
     ) -> bool:
+        if self._segment_control_mismatch_ignored(
+            segment,
+            session=session,
+            translator_mode=translator_mode,
+        ):
+            return False
         source_lines = self._resolve_problem_source_lines_for_segment(
             segment,
             translator_mode,
@@ -512,6 +775,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         return self._coerce_display_count(raw_value, len(display_segments))
 
     def _refresh_dirty_state(self, session: FileSession) -> None:
+        prune_ignored = getattr(self, "_prune_control_mismatch_ignores_for_session", None)
+        if callable(prune_ignored):
+            try:
+                prune_ignored(session, translator_mode=self._is_translator_mode())
+            except Exception:
+                pass
         invalidate_audit = getattr(self, "_invalidate_audit_caches", None)
         if callable(invalidate_audit):
             invalidate_audit()

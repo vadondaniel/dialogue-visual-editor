@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer
 from PySide6.QtWidgets import (
@@ -1072,6 +1072,12 @@ class RenderMixin(_RenderHostTypingFallback):
             widget.line1_inference_override_changed.connect(
                 self._on_line1_inference_override_changed
             )
+            ignore_handler = getattr(self, "_on_control_mismatch_ignore_requested", None)
+            if callable(ignore_handler):
+                widget.control_mismatch_ignore_requested.connect(ignore_handler)
+            clear_handler = getattr(self, "_on_control_mismatch_ignore_cleared", None)
+            if callable(clear_handler):
+                widget.control_mismatch_ignore_cleared.connect(clear_handler)
 
     def _translator_source_hint_lines_for_segment(
         self,
@@ -1140,6 +1146,18 @@ class RenderMixin(_RenderHostTypingFallback):
         widget.control_mismatch_translation_lines_resolver = (
             logical_translation_resolver if callable(logical_translation_resolver) else None
         )
+        control_mismatch_ignored_resolver = getattr(
+            self,
+            "_segment_control_mismatch_ignored",
+            None,
+        )
+        ignored_resolver_typed: Optional[Callable[[DialogueSegment], bool]] = None
+        if callable(control_mismatch_ignored_resolver):
+            ignored_resolver_typed = cast(
+                Callable[[DialogueSegment], bool],
+                control_mismatch_ignored_resolver,
+            )
+        widget.control_mismatch_ignored_resolver = ignored_resolver_typed
         if widget.translator_mode:
             widget._source_hint_lines = self._translator_source_hint_lines_for_segment(
                 segment
