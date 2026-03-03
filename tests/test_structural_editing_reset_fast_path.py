@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QMessageBox
 from dialogue_visual_editor.helpers.core.models import (
     DialogueSegment,
     FileSession,
+    NO_SPEAKER_KEY,
 )
 from dialogue_visual_editor.helpers.mixins.structural_editing_mixin import (
     StructuralEditingMixin,
@@ -83,6 +84,40 @@ class _StructuralResetHarness(StructuralEditingMixin):
 
     def _normalize_speaker_key(self, key: str) -> str:
         return key.strip().lower()
+
+    def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
+        if segment.speaker_name != NO_SPEAKER_KEY:
+            return segment.speaker_name
+        source_lines = list(segment.source_lines or segment.original_lines or segment.lines or [""])
+        if (
+            bool(getattr(segment, "force_line1_speaker_inference", False))
+            and not bool(getattr(segment, "disable_line1_speaker_inference", False))
+            and len(source_lines) > 1
+            and source_lines[0].strip()
+        ):
+            return source_lines[0].strip()
+        return NO_SPEAKER_KEY
+
+    def _speaker_translation_for_key(self, speaker_key: str) -> str:
+        normalized = self._normalize_speaker_key(speaker_key)
+        for key, value in self.speaker_translation_map.items():
+            if self._normalize_speaker_key(key) == normalized:
+                return value
+        return ""
+
+    def _segment_source_lines_for_display(self, segment: DialogueSegment) -> list[str]:
+        return list(segment.source_lines or segment.original_lines or segment.lines or [""])
+
+    def _inferred_speaker_from_segment_line1(self, segment: DialogueSegment) -> str:
+        source_lines = self._segment_source_lines_for_display(segment)
+        if (
+            bool(getattr(segment, "force_line1_speaker_inference", False))
+            and not bool(getattr(segment, "disable_line1_speaker_inference", False))
+            and len(source_lines) > 1
+            and source_lines[0].strip()
+        ):
+            return source_lines[0].strip()
+        return ""
 
     def _name_index_label(self, _session: FileSession) -> str:
         return "Actor"
@@ -308,10 +343,93 @@ class StructuralEditingResetFastPathTests(unittest.TestCase):
             harness.speaker_translation_map.get("hero"),
             "Original Speaker",
         )
+        widget = harness.block_widgets[segment.uid]
+        self.assertEqual(widget.refresh_status_calls, 1)
         self.assertEqual(
             harness.statusBar().messages[-1],
             "Reset translation block.",
         )
+
+    def test_translator_reset_refreshes_chain_widget_statuses(self) -> None:
+        harness = _StructuralResetHarness(translator_mode=True)
+        anchor = _dialogue_segment("A:1", "jp anchor")
+        followup = _dialogue_segment("A:2", "")
+        followup.translation_only = True
+        followup.translation_lines = ["changed tl"]
+        followup.original_translation_lines = ["original tl"]
+        session = FileSession(
+            path=Path("A.json"),
+            data={},
+            bundles=[],
+            segments=[anchor, followup],
+        )
+        harness.current_path = session.path
+        harness.sessions[session.path] = session
+        harness.current_segment_lookup = {anchor.uid: anchor, followup.uid: followup}
+        harness.block_widgets = {
+            anchor.uid: _DummyWidget(),
+            followup.uid: _DummyWidget(),
+        }
+        harness.rendered_blocks_path = session.path
+        harness.rendered_block_uid_order = [anchor.uid, followup.uid]
+        setattr(
+            harness,
+            "_logical_translation_chain_for_segment",
+            lambda segment, session=None: [anchor, followup],
+        )
+
+        harness._on_reset_requested(followup.uid)
+
+        self.assertEqual(harness.block_widgets[anchor.uid].refresh_status_calls, 1)
+        self.assertEqual(harness.block_widgets[followup.uid].refresh_status_calls, 1)
+
+    def test_translator_reset_uses_inferred_speaker_key_for_translation_map(self) -> None:
+        harness = _StructuralResetHarness(translator_mode=True)
+        segment = _dialogue_segment("A:1", "line")
+        segment.code101["parameters"][4] = ""
+        segment.lines = [r"\C[2]勇者\C[0]", "line"]
+        segment.original_lines = [r"\C[2]勇者\C[0]", "line"]
+        segment.source_lines = [r"\C[2]勇者\C[0]", "line"]
+        segment.translation_lines = ["changed tl"]
+        segment.original_translation_lines = ["original tl"]
+        segment.translation_speaker = "Changed Speaker"
+        segment.original_translation_speaker = "Hero"
+        segment.force_line1_speaker_inference = True
+        segment.original_force_line1_speaker_inference = True
+        session = FileSession(path=Path("A.json"), data={}, bundles=[], segments=[segment])
+        harness.current_path = session.path
+        harness.sessions[session.path] = session
+        harness.current_segment_lookup = {segment.uid: segment}
+        harness.block_widgets = {segment.uid: _DummyWidget()}
+        harness.rendered_blocks_path = session.path
+        harness.rendered_block_uid_order = [segment.uid]
+
+        harness._on_reset_requested(segment.uid)
+
+        self.assertNotIn("(none)", harness.speaker_translation_map)
+        self.assertEqual(harness.speaker_translation_map.get(r"\c[2]勇者\c[0]"), "Hero")
+
+    def test_dedupe_leading_inferred_marker_for_merge_handles_translated_marker(self) -> None:
+        harness = _StructuralResetHarness(translator_mode=True)
+        left = _dialogue_segment("A:1", "line")
+        right = _dialogue_segment("A:2", "line")
+        left.code101["parameters"][4] = ""
+        right.code101["parameters"][4] = ""
+        left.source_lines = [r"\C[2]勇者\C[0]", "left line"]
+        right.source_lines = [r"\C[2]勇者\C[0]", "right line"]
+        left.lines = list(left.source_lines)
+        right.lines = list(right.source_lines)
+        left.force_line1_speaker_inference = True
+        right.force_line1_speaker_inference = True
+        right.translation_speaker = "Hero"
+
+        deduped = harness._dedupe_leading_inferred_marker_for_merge(
+            left,
+            right,
+            [r"\C[2]Hero\C[0]", "TL right"],
+        )
+
+        self.assertEqual(deduped, ["TL right"])
 
     def test_source_reset_text_only_uses_single_widget_fast_path(self) -> None:
         harness = _StructuralResetHarness(translator_mode=False)

@@ -104,6 +104,7 @@ def _coerce_smart_collapse_rule_counts(
 
 class StructuralEditingMixin(_EditorHostTypingFallback):
     _COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]")
+    _LEADING_COLOR_CODE_PREFIX_RE = re.compile(r"^\s*(?:\\[Cc]\[\d+\])+")
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
     _TRAILING_RESET_COLOR_RE = re.compile(r"\\[Cc]\[0\]\s*$")
 
@@ -159,6 +160,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             )
             self.reference_summary_cache_by_path[session.path] = refreshed_reference_map
             self.current_reference_map = refreshed_reference_map
+            self._refresh_translation_chain_widget_statuses(
+                session,
+                segment,
+            )
         else:
             self.current_reference_map = {}
 
@@ -1715,7 +1720,46 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if normalized_right and normalized_right[0] == right_marker:
             trimmed = normalized_right[1:]
             return trimmed if trimmed else [""]
+        translated_marker = self._translated_inferred_marker_for_segment(
+            right_segment,
+            right_marker,
+        ) or self._translated_inferred_marker_for_segment(
+            left_segment,
+            left_marker,
+        )
+        if (
+            translated_marker
+            and normalized_right
+            and normalized_right[0] == translated_marker
+        ):
+            trimmed = normalized_right[1:]
+            return trimmed if trimmed else [""]
         return normalized_right
+
+    def _translated_inferred_marker_for_segment(
+        self,
+        segment: DialogueSegment,
+        source_marker: str,
+    ) -> str:
+        marker_text = source_marker if isinstance(source_marker, str) else ""
+        if not marker_text:
+            return ""
+        translated_speaker = segment.translation_speaker.strip()
+        if not translated_speaker:
+            speaker_key = self._speaker_key_for_segment(segment)
+            if speaker_key != NO_SPEAKER_KEY:
+                translated_speaker = self._speaker_translation_for_key(speaker_key).strip()
+        if not translated_speaker:
+            return ""
+        leading_match = self._LEADING_COLOR_CODE_PREFIX_RE.match(marker_text)
+        prefix = marker_text[:leading_match.end()] if leading_match is not None else ""
+        has_trailing_reset = bool(self._TRAILING_RESET_COLOR_RE.search(marker_text))
+        translated_line = (
+            f"{prefix}{translated_speaker}" if prefix else translated_speaker
+        )
+        if has_trailing_reset and not self._TRAILING_RESET_COLOR_RE.search(translated_line):
+            translated_line = f"{translated_line}\\C[0]"
+        return translated_line
 
     def _same_merge_signature(self, left: DialogueSegment, right: DialogueSegment) -> bool:
         if (not left.is_structural_dialogue) or (not right.is_structural_dialogue):
@@ -2513,9 +2557,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         left_segment.translation_lines = list(merged_tl_lines)
         left_segment.translation_speaker = merged_speaker_translation
         if merged_speaker_translation:
-            self.speaker_translation_map[
-                self._normalize_speaker_key(left_segment.speaker_name)
-            ] = merged_speaker_translation
+            speaker_key = self._speaker_key_for_segment(left_segment)
+            if speaker_key != NO_SPEAKER_KEY:
+                self.speaker_translation_map[
+                    self._normalize_speaker_key(speaker_key)
+                ] = merged_speaker_translation
         if source_affected:
             left_segment.merged_segments.append(right_segment)
         if left_bundle is not None and right_token_index >= 0:
@@ -2587,9 +2633,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 segment.original_force_line1_speaker_inference
             )
             if speaker_after:
-                self.speaker_translation_map[
-                    self._normalize_speaker_key(segment.speaker_name)
-                ] = speaker_after
+                speaker_key = self._speaker_key_for_segment(segment)
+                if speaker_key != NO_SPEAKER_KEY:
+                    self.speaker_translation_map[
+                        self._normalize_speaker_key(speaker_key)
+                    ] = speaker_after
             self._refresh_dirty_state(session)
             if not self._refresh_after_text_reset_without_full_rerender(
                 session,
