@@ -328,6 +328,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     def _consistency_target_display_text_for_chunks(
         self,
         chunks: list[str],
+        chunk_line_limits: Optional[list[int]] = None,
     ) -> str:
         normalized_chunks: list[str] = []
         for chunk in chunks:
@@ -345,13 +346,71 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             chunk_lines = self._normalize_translation_lines(chunk)
             parts.extend(chunk_lines)
             if index < len(normalized_chunks) - 1:
-                pad_lines = max(0, line_limit - len(chunk_lines))
+                chunk_line_limit = line_limit
+                if isinstance(chunk_line_limits, list) and index < len(chunk_line_limits):
+                    raw_limit = chunk_line_limits[index]
+                    if isinstance(raw_limit, int):
+                        chunk_line_limit = max(1, raw_limit)
+                pad_lines = max(0, chunk_line_limit - len(chunk_lines))
                 parts.extend(
                     [""] * pad_lines
                 )
                 # Keep one blank boundary row; it will be styled as separator.
                 parts.extend([""])
         return "\n".join(parts)
+
+    def _consistency_target_visible_line_limit_for_segment(
+        self,
+        segment: DialogueSegment,
+        line_limit: int,
+    ) -> int:
+        visible_limit = max(1, int(line_limit))
+        compose_resolver = getattr(self, "_compose_translation_lines_for_segment", None)
+        if not callable(compose_resolver):
+            return visible_limit
+        probe_visible_lines = [""]
+        try:
+            composed_raw = compose_resolver(segment, probe_visible_lines)
+        except Exception:
+            composed_raw = probe_visible_lines
+        composed_lines = self._normalize_translation_lines(composed_raw)
+        hidden_prefix_count = max(0, len(composed_lines) - len(probe_visible_lines))
+        return max(1, visible_limit - hidden_prefix_count)
+
+    def _consistency_target_visible_line_limits_for_payload(
+        self,
+        payload: dict[str, Any],
+        chunk_count: int,
+    ) -> list[int]:
+        max_lines_spin = getattr(self, "max_lines_spin", None)
+        line_limit = int(max_lines_spin.value()) if max_lines_spin is not None else 4
+        line_limit = max(1, line_limit)
+        limits = [line_limit for _ in range(max(0, chunk_count))]
+        if chunk_count <= 0:
+            return limits
+        path_raw = payload.get("path")
+        if not isinstance(path_raw, str) or not path_raw:
+            return limits
+        session = self.sessions.get(Path(path_raw))
+        if session is None:
+            return limits
+        segment_uids_raw = payload.get("segment_uids")
+        if not isinstance(segment_uids_raw, list):
+            return limits
+        session_lookup = {segment.uid: segment for segment in session.segments}
+        for chunk_index, uid_raw in enumerate(segment_uids_raw):
+            if chunk_index >= chunk_count:
+                break
+            if not isinstance(uid_raw, str) or not uid_raw:
+                continue
+            segment = session_lookup.get(uid_raw)
+            if segment is None:
+                continue
+            limits[chunk_index] = self._consistency_target_visible_line_limit_for_segment(
+                segment,
+                line_limit,
+            )
+        return limits
 
     def _consistency_target_display_text_for_payload(
         self,
@@ -366,7 +425,14 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 if isinstance(raw_chunk, str):
                     chunks.append(raw_chunk)
         if chunks:
-            return self._consistency_target_display_text_for_chunks(chunks)
+            chunk_line_limits = self._consistency_target_visible_line_limits_for_payload(
+                payload,
+                len(chunks),
+            )
+            return self._consistency_target_display_text_for_chunks(
+                chunks,
+                chunk_line_limits=chunk_line_limits,
+            )
         translation = payload.get("translation")
         return translation if isinstance(translation, str) else ""
 
@@ -425,6 +491,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     def _consistency_target_chunks_for_text(
         self,
         text: str,
+        chunk_line_limits: Optional[list[int]] = None,
     ) -> list[dict[str, Any]]:
         lines = self._normalize_translation_lines(text)
         chunks: list[dict[str, Any]] = []
@@ -435,6 +502,14 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         max_lines_spin = getattr(self, "max_lines_spin", None)
         line_limit = int(max_lines_spin.value()) if max_lines_spin is not None else 4
         line_limit = max(1, line_limit)
+
+        def current_chunk_line_limit() -> int:
+            chunk_index = len(chunks)
+            if isinstance(chunk_line_limits, list) and chunk_index < len(chunk_line_limits):
+                raw_limit = chunk_line_limits[chunk_index]
+                if isinstance(raw_limit, int):
+                    return max(1, raw_limit)
+            return line_limit
 
         def flush_current() -> None:
             nonlocal current_lines, current_indices
@@ -466,7 +541,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 pending_blank_index = line_index
                 continue
             if pending_blank_index is not None:
-                if len(current_lines) >= line_limit:
+                if len(current_lines) >= current_chunk_line_limit():
                     # single blank after a full chunk is treated as boundary row
                     flush_current()
                     in_separator_zone = False
@@ -479,7 +554,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             current_indices.append(line_index)
 
         if pending_blank_index is not None:
-            if len(current_lines) < line_limit:
+            if len(current_lines) < current_chunk_line_limit():
                 current_lines.append("")
                 current_indices.append(pending_blank_index)
             pending_blank_index = None
@@ -491,6 +566,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     def _consistency_target_separator_display_indices(
         self,
         text: str,
+        chunk_line_limits: Optional[list[int]] = None,
     ) -> list[int]:
         lines = self._normalize_translation_lines(text)
         separator_indices: list[int] = []
@@ -499,6 +575,15 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         max_lines_spin = getattr(self, "max_lines_spin", None)
         line_limit = int(max_lines_spin.value()) if max_lines_spin is not None else 4
         line_limit = max(1, line_limit)
+        chunk_index = 0
+
+        def current_chunk_line_limit() -> int:
+            if isinstance(chunk_line_limits, list) and chunk_index < len(chunk_line_limits):
+                raw_limit = chunk_line_limits[chunk_index]
+                if isinstance(raw_limit, int):
+                    return max(1, raw_limit)
+            return line_limit
+
         current_line_count = 0
         for line_index, line_text in enumerate(lines):
             if self._consistency_target_is_split_divider(line_text):
@@ -506,6 +591,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 pending_blank_index = None
                 in_separator_zone = True
                 current_line_count = 0
+                chunk_index += 1
                 continue
             if line_text == "":
                 if in_separator_zone:
@@ -515,13 +601,15 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     pending_blank_index = None
                     in_separator_zone = True
                     current_line_count = 0
+                    chunk_index += 1
                     continue
                 pending_blank_index = line_index
                 continue
             if pending_blank_index is not None:
-                if current_line_count >= line_limit:
+                if current_line_count >= current_chunk_line_limit():
                     separator_indices.append(pending_blank_index)
                     current_line_count = 0
+                    chunk_index += 1
                 else:
                     current_line_count += 1
                 pending_blank_index = None
@@ -1248,10 +1336,11 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         if segment is None:
             return
 
-        target_chunks = self._consistency_target_chunks_for_text(target_edit.toPlainText())
-        if not target_chunks:
-            return
         segments_for_chunks: list[DialogueSegment] = [segment]
+        max_lines_spin = getattr(self, "max_lines_spin", None)
+        base_line_limit = int(max_lines_spin.value()) if max_lines_spin is not None else 4
+        base_line_limit = max(1, base_line_limit)
+        chunk_line_limits: Optional[list[int]] = None
         if isinstance(selected_payload, dict) and selected_session is not None:
             segment_uids_raw = selected_payload.get("segment_uids")
             if isinstance(segment_uids_raw, list):
@@ -1267,6 +1356,19 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                         resolved_segments.append(candidate)
                 if resolved_segments:
                     segments_for_chunks = resolved_segments
+                    chunk_line_limits = [
+                        self._consistency_target_visible_line_limit_for_segment(
+                            chunk_segment,
+                            base_line_limit,
+                        )
+                        for chunk_segment in resolved_segments
+                    ]
+        target_chunks = self._consistency_target_chunks_for_text(
+            target_edit.toPlainText(),
+            chunk_line_limits=chunk_line_limits,
+        )
+        if not target_chunks:
+            return
 
         normalize_for_segment = getattr(
             self, "_normalize_audit_translation_lines_for_segment", None
@@ -1288,7 +1390,8 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         selections: list[QTextEdit.ExtraSelection] = []
         document = target_edit.document()
         for separator_index in self._consistency_target_separator_display_indices(
-            target_edit.toPlainText()
+            target_edit.toPlainText(),
+            chunk_line_limits=chunk_line_limits,
         ):
             block = document.findBlockByNumber(separator_index)
             if not block.isValid():
@@ -1916,8 +2019,38 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             self.statusBar().showMessage("Selected group is empty.")
             return
 
+        selected_entry_payload: Optional[dict[str, Any]] = None
+        if self.audit_consistency_entries_list is not None:
+            selected_entry_payload = self._audit_consistency_entry_payload(
+                self.audit_consistency_entries_list.currentItem()
+            )
+        parse_line_limits: Optional[list[int]] = None
+        if isinstance(selected_entry_payload, dict):
+            segment_uids_raw = selected_entry_payload.get("segment_uids")
+            chunk_count = 0
+            if isinstance(segment_uids_raw, list):
+                chunk_count = len(
+                    [
+                        uid_raw
+                        for uid_raw in segment_uids_raw
+                        if isinstance(uid_raw, str) and uid_raw
+                    ]
+                )
+            if chunk_count <= 0:
+                chunks_raw = selected_entry_payload.get("translation_chunks")
+                if isinstance(chunks_raw, list):
+                    chunk_count = len([chunk for chunk in chunks_raw if isinstance(chunk, str)])
+            if chunk_count > 0:
+                parse_line_limits = self._consistency_target_visible_line_limits_for_payload(
+                    selected_entry_payload,
+                    chunk_count,
+                )
+
         target_text = self.audit_consistency_target_edit.toPlainText()
-        target_chunks_payload = self._consistency_target_chunks_for_text(target_text)
+        target_chunks_payload = self._consistency_target_chunks_for_text(
+            target_text,
+            chunk_line_limits=parse_line_limits,
+        )
         target_chunks_lines: list[list[str]] = []
         for chunk in target_chunks_payload:
             chunk_lines_raw = chunk.get("lines")
@@ -1936,11 +2069,6 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 max(1, len(chunk_lines))
                 for chunk_lines in target_chunks_lines
             ]
-        selected_entry_payload: Optional[dict[str, Any]] = None
-        if self.audit_consistency_entries_list is not None:
-            selected_entry_payload = self._audit_consistency_entry_payload(
-                self.audit_consistency_entries_list.currentItem()
-            )
         if isinstance(selected_entry_payload, dict):
             selected_pattern_counts = self._consistency_chunk_line_counts_from_payload(
                 selected_entry_payload

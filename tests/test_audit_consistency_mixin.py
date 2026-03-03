@@ -705,6 +705,81 @@ class AuditConsistencyMixinTests(unittest.TestCase):
             "Line A\n\n\n\n\nLine B",
         )
 
+    def test_target_display_text_for_payload_uses_line_limit_minus_hidden_prefix(self) -> None:
+        harness = _Harness()
+        path = Path("Map024.json")
+
+        class _Spin:
+            def __init__(self, value: int) -> None:
+                self._value = value
+
+            def value(self) -> int:
+                return self._value
+
+        setattr(harness, "max_lines_spin", _Spin(4))
+        anchor = _segment("a1", "ユウカ\nこんにちは", "Yuka\nLine A")
+        setattr(anchor, "consistency_inferred_speaker", True)
+        followup = _segment("a1f", "", "Line B", translation_only=True)
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[anchor, followup],
+        )
+
+        rendered = harness._consistency_target_display_text_for_payload(
+            {
+                "path": str(path),
+                "segment_uids": ["a1", "a1f"],
+                "translation_chunks": ["Line A", "Line B"],
+            }
+        )
+
+        self.assertEqual(
+            rendered,
+            "Line A\n\n\n\nLine B",
+        )
+
+    def test_target_chunk_parse_respects_inferred_visible_limit_separator(self) -> None:
+        harness = _Harness()
+        path = Path("Map025.json")
+
+        class _Spin:
+            def __init__(self, value: int) -> None:
+                self._value = value
+
+            def value(self) -> int:
+                return self._value
+
+        setattr(harness, "max_lines_spin", _Spin(4))
+        anchor = _segment("a1", "ユウカ\nこんにちは", "Yuka\nLine A")
+        setattr(anchor, "consistency_inferred_speaker", True)
+        followup = _segment("a1f", "", "Line B", translation_only=True)
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[anchor, followup],
+        )
+
+        payload = {
+            "path": str(path),
+            "segment_uids": ["a1", "a1f"],
+            "translation_chunks": ["Line A", "Line B"],
+        }
+        rendered = harness._consistency_target_display_text_for_payload(payload)
+        limits = harness._consistency_target_visible_line_limits_for_payload(payload, 2)
+        parsed = harness._consistency_target_chunks_for_text(
+            rendered,
+            chunk_line_limits=limits,
+        )
+
+        parsed_chunks = [
+            "\n".join(harness._normalize_translation_lines(chunk.get("lines", []))).rstrip("\n")
+            for chunk in parsed
+        ]
+        self.assertEqual(parsed_chunks, ["Line A", "Line B"])
+
     def test_consistency_entry_label_includes_non_name_field_suffix(self) -> None:
         harness = _Harness()
         path = Path("Actors.json")
