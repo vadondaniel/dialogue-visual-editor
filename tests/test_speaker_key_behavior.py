@@ -88,6 +88,7 @@ class _SpeakerTranslationHarness:
 class _Line1InferenceHarness:
     def __init__(self, enabled: bool = True) -> None:
         self.infer_speaker_check = SimpleNamespace(isChecked=lambda: enabled)
+        self.speaker_translation_map: dict[str, str] = {}
 
     def _segment_source_lines_for_display(self, segment: DialogueSegment) -> list[str]:
         lines = segment.source_lines or segment.original_lines or segment.lines
@@ -118,6 +119,28 @@ class _Line1InferenceHarness:
 
     def _matches_name_token(self, text: str) -> bool:
         return cast(bool, _call_editor_method("_matches_name_token", self, text))
+
+    def _normalize_speaker_key(self, value: str) -> str:
+        return cast(str, _call_editor_method("_normalize_speaker_key", self, value))
+
+    def _inferred_speaker_from_segment_line1(
+        self,
+        segment: DialogueSegment,
+        *,
+        infer_speaker_enabled: Any = None,
+    ) -> str:
+        method = cast(Any, getattr(DialogueVisualEditor, "_inferred_speaker_from_segment_line1"))
+        return cast(str, method(self, segment, infer_speaker_enabled=infer_speaker_enabled))
+
+    def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
+        return cast(str, _call_editor_method("_speaker_key_for_segment", self, segment))
+
+    def _actor_name_maps(self) -> tuple[dict[int, str], dict[int, str]]:
+        return ({}, {})
+
+    def _speaker_translation_for_key(self, speaker_key: str) -> str:
+        key = self._normalize_speaker_key(speaker_key)
+        return self.speaker_translation_map.get(key, "")
 
     def _normalize_translation_lines(self, value: Any) -> list[str]:
         if isinstance(value, list):
@@ -265,6 +288,21 @@ class _SpeakerInferenceCandidateHarness:
             _call_editor_method("_speaker_translation_for_key", self, speaker_key),
         )
 
+    def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
+        return cast(
+            str,
+            _call_editor_method("_speaker_key_for_segment", self, segment),
+        )
+
+    def _collect_inferred_speaker_candidates_for_manager(self) -> list[dict[str, Any]]:
+        return cast(
+            list[dict[str, Any]],
+            _call_editor_method(
+                "_collect_inferred_speaker_candidates_for_manager",
+                self,
+            ),
+        )
+
     def _actor_name_maps(self) -> tuple[dict[int, str], dict[int, str]]:
         return ({}, {})
 
@@ -409,6 +447,57 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         self.assertEqual(visible_source, ["「行こう」"])
         self.assertEqual(visible_tl, ["Let's go"])
 
+    def test_compose_translation_lines_for_inferred_uses_translation_speaker(self) -> None:
+        harness = _Line1InferenceHarness(enabled=True)
+        segment = DialogueSegment(
+            uid="seg",
+            context="ctx",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=[r"\C[2]勇者\C[0]", "台詞"],
+            original_lines=[r"\C[2]勇者\C[0]", "台詞"],
+            source_lines=[r"\C[2]勇者\C[0]", "台詞"],
+            translation_speaker="Hero",
+        )
+        setattr(segment, "force_line1_speaker_inference", True)
+
+        composed = cast(
+            list[str],
+            _call_editor_method(
+                "_compose_translation_lines_for_segment",
+                harness,
+                segment,
+                ["EN line"],
+            ),
+        )
+
+        self.assertEqual(composed, [r"\C[2]Hero\C[0]", "EN line"])
+
+    def test_compose_translation_lines_for_inferred_uses_speaker_map_fallback(self) -> None:
+        harness = _Line1InferenceHarness(enabled=True)
+        harness.speaker_translation_map[r"\C[2]勇者\C[0]"] = "Hero"
+        segment = DialogueSegment(
+            uid="seg",
+            context="ctx",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=[r"\C[2]勇者\C[0]", "台詞"],
+            original_lines=[r"\C[2]勇者\C[0]", "台詞"],
+            source_lines=[r"\C[2]勇者\C[0]", "台詞"],
+            translation_speaker="",
+        )
+        setattr(segment, "force_line1_speaker_inference", True)
+
+        composed = cast(
+            list[str],
+            _call_editor_method(
+                "_compose_translation_lines_for_segment",
+                harness,
+                segment,
+                ["EN line"],
+            ),
+        )
+
+        self.assertEqual(composed, [r"\C[2]Hero\C[0]", "EN line"])
+
     def test_collect_inferred_speaker_candidates_ranks_by_occurrence(self) -> None:
         harness = _SpeakerInferenceCandidateHarness()
         harness.sessions[harness.path_a].segments[1].disable_line1_speaker_inference = True
@@ -488,6 +577,9 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         self.assertFalse(segments[0].disable_line1_speaker_inference)
         self.assertTrue(segments[1].force_line1_speaker_inference)
         self.assertFalse(segments[1].disable_line1_speaker_inference)
+        self.assertEqual(segments[0].translation_speaker, "Aki")
+        self.assertEqual(segments[1].translation_speaker, "Aki")
+        self.assertEqual(harness.speaker_translation_map.get("Hero", ""), "Aki")
         self.assertEqual(harness.render_calls, 1)
 
     def test_jump_to_speaker_candidate_entry_opens_target_file(self) -> None:

@@ -875,7 +875,6 @@ class SpeakerManagerDialog(QDialog):
             return
         self._refresh_list(select_key=selected_key)
 
-
 class InferredSpeakerCandidatesDialog(QDialog):
     def __init__(
         self,

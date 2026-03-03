@@ -4557,6 +4557,24 @@ class DialogueVisualEditor(
         else:
             source_lines = self._segment_source_lines_for_display(segment)
         speaker_line = source_lines[0] if source_lines else ""
+
+        translated_speaker = segment.translation_speaker.strip()
+        if not translated_speaker:
+            speaker_key = self._speaker_key_for_segment(segment)
+            if speaker_key != NO_SPEAKER_KEY:
+                translated_speaker = self._speaker_translation_for_key(speaker_key).strip()
+        if translated_speaker:
+            leading_match = _LEADING_COLOR_CODE_PREFIX_RE.match(speaker_line)
+            prefix = (
+                speaker_line[:leading_match.end()]
+                if leading_match is not None
+                else ""
+            )
+            has_trailing_reset = bool(_TRAILING_RESET_COLOR_RE.search(speaker_line))
+            translated_line = f"{prefix}{translated_speaker}" if prefix else translated_speaker
+            if has_trailing_reset and not _TRAILING_RESET_COLOR_RE.search(translated_line):
+                translated_line = f"{translated_line}\\C[0]"
+            speaker_line = translated_line
         return [speaker_line] + normalized_visible
 
     def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
@@ -4929,7 +4947,20 @@ class DialogueVisualEditor(
         if normalized_target == NO_SPEAKER_KEY:
             return 0
 
+        suggested_translation = self._speaker_translation_for_key(normalized_target).strip()
+        if not suggested_translation:
+            for row in self._collect_inferred_speaker_candidates_for_manager():
+                row_key = self._normalize_speaker_key(str(row.get("speaker_key", "")))
+                if row_key != normalized_target:
+                    continue
+                suggestion = str(row.get("suggested_translation", "")).strip()
+                if suggestion:
+                    suggested_translation = suggestion
+                    break
+
         changed_entries = 0
+        translated_entries = 0
+        map_changed = False
         for session in self.sessions.values():
             if self._is_name_index_session(session):
                 continue
@@ -4957,22 +4988,40 @@ class DialogueVisualEditor(
 
                 prev_disabled = bool(getattr(segment, "disable_line1_speaker_inference", False))
                 prev_forced = bool(getattr(segment, "force_line1_speaker_inference", False))
-                if prev_forced and (not prev_disabled):
-                    continue
+                needs_inference_update = not (prev_forced and (not prev_disabled))
+                if needs_inference_update:
+                    segment.disable_line1_speaker_inference = False
+                    segment.force_line1_speaker_inference = True
+                    changed_entries += 1
 
-                segment.disable_line1_speaker_inference = False
-                segment.force_line1_speaker_inference = True
-                changed_entries += 1
+                if (
+                    suggested_translation
+                    and segment.translation_speaker.strip() != suggested_translation
+                ):
+                    segment.translation_speaker = suggested_translation
+                    translated_entries += 1
 
-        if changed_entries > 0 and self.current_path is not None:
+        if suggested_translation:
+            current_map_value = self.speaker_translation_map.get(normalized_target, "").strip()
+            if current_map_value != suggested_translation:
+                self.speaker_translation_map[normalized_target] = suggested_translation
+                map_changed = True
+
+        if (changed_entries > 0 or translated_entries > 0 or map_changed) and self.current_path is not None:
             current_session = self.sessions.get(self.current_path)
             if current_session is not None:
                 self._render_session(current_session, preserve_scroll=True)
-        if changed_entries > 0:
+        if changed_entries > 0 or translated_entries > 0:
             entry_label = "entry" if changed_entries == 1 else "entries"
-            self.statusBar().showMessage(
+            message = (
                 f"Accepted inferred speaker '{normalized_target}' for {changed_entries} {entry_label}."
             )
+            if translated_entries > 0:
+                tl_label = "entry" if translated_entries == 1 else "entries"
+                message += (
+                    f" Applied speaker translation to {translated_entries} {tl_label}."
+                )
+            self.statusBar().showMessage(message)
         else:
             self.statusBar().showMessage(
                 f"No entries matched inferred speaker '{normalized_target}'."

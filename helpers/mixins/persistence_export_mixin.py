@@ -3011,7 +3011,45 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             export_segment.lines = self._translated_export_lines_for_segment(source_segment)
 
             speaker_en = source_segment.translation_speaker.strip()
-            if speaker_en and source_segment.speaker_name != NO_SPEAKER_KEY:
+            if not speaker_en:
+                speaker_key = NO_SPEAKER_KEY
+                speaker_key_resolver = getattr(self, "_speaker_key_for_segment", None)
+                if callable(speaker_key_resolver):
+                    try:
+                        resolved_key = speaker_key_resolver(source_segment)
+                    except Exception:
+                        resolved_key = NO_SPEAKER_KEY
+                    if isinstance(resolved_key, str) and resolved_key.strip():
+                        speaker_key = resolved_key.strip()
+
+                if speaker_key == NO_SPEAKER_KEY:
+                    explicit_speaker = source_segment.speaker_name.strip()
+                    if explicit_speaker:
+                        speaker_key = explicit_speaker
+
+                if speaker_key != NO_SPEAKER_KEY:
+                    speaker_translation_resolver = getattr(
+                        self,
+                        "_speaker_translation_for_key",
+                        None,
+                    )
+                    if callable(speaker_translation_resolver):
+                        try:
+                            resolved_translation = speaker_translation_resolver(speaker_key)
+                        except Exception:
+                            resolved_translation = ""
+                        if isinstance(resolved_translation, str):
+                            speaker_en = resolved_translation.strip()
+
+                if not speaker_en and speaker_key != NO_SPEAKER_KEY:
+                    speaker_map_raw = getattr(self, "speaker_translation_map", None)
+                    if isinstance(speaker_map_raw, dict):
+                        map_value = speaker_map_raw.get(speaker_key, "")
+                        if isinstance(map_value, str):
+                            speaker_en = map_value.strip()
+
+            has_explicit_speaker = source_segment.speaker_name != NO_SPEAKER_KEY
+            if speaker_en and has_explicit_speaker:
                 params = export_segment.params
                 while len(params) <= 4:
                     params.append("")

@@ -13,6 +13,7 @@ from dialogue_visual_editor.helpers.core.models import (
     CommandToken,
     DialogueSegment,
     FileSession,
+    NO_SPEAKER_KEY,
 )
 from dialogue_visual_editor.helpers.core.parser import (
     parse_dialogue_file,
@@ -51,6 +52,7 @@ class _Harness(PersistenceExportMixin):
         self.problem_trailing_color_code_check = _BoolControl(False)
         self.problem_missing_translation_check = _BoolControl(False)
         self.problem_contains_japanese_check = _BoolControl(False)
+        self.speaker_translation_map: dict[str, str] = {}
 
     def _is_name_index_session(self, session: FileSession) -> bool:
         return bool(getattr(session, "is_name_index_session", False))
@@ -64,6 +66,22 @@ class _Harness(PersistenceExportMixin):
         if isinstance(value, str):
             return value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
         return [""]
+
+    def _speaker_key_for_segment(self, segment: DialogueSegment) -> str:
+        if segment.speaker_name != NO_SPEAKER_KEY:
+            return segment.speaker_name
+        source_lines = list(segment.source_lines or segment.original_lines or segment.lines or [""])
+        if (
+            bool(getattr(segment, "force_line1_speaker_inference", False))
+            and not bool(getattr(segment, "disable_line1_speaker_inference", False))
+            and len(source_lines) > 1
+            and source_lines[0].strip()
+        ):
+            return source_lines[0].strip()
+        return NO_SPEAKER_KEY
+
+    def _speaker_translation_for_key(self, speaker_key: str) -> str:
+        return self.speaker_translation_map.get(speaker_key, "")
 
 
 class _StatusBarHarness:
@@ -1371,6 +1389,85 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual([entry["code"] for entry in rebuilt], [101, 401, 101, 401])
         self.assertEqual(rebuilt[1]["parameters"][0], "TL main")
         self.assertEqual(rebuilt[3]["parameters"][0], "TL extra")
+
+    def test_export_translated_data_does_not_write_101_speaker_for_forced_line1_inference(self) -> None:
+        harness = _Harness()
+        commands_ref: list[Any] = [
+            {"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            {"code": 401, "indent": 0, "parameters": ["Hero"]},
+            {"code": 401, "indent": 0, "parameters": ["JP line"]},
+        ]
+        source = DialogueSegment(
+            uid="src",
+            context="ctx",
+            code101=commands_ref[0],
+            lines=["Hero", "JP line"],
+            original_lines=["Hero", "JP line"],
+            source_lines=["Hero", "JP line"],
+            code401_template={"code": 401, "indent": 0, "parameters": [""]},
+            translation_lines=["EN line"],
+            original_translation_lines=[""],
+            translation_speaker="Yuki",
+            force_line1_speaker_inference=True,
+            original_force_line1_speaker_inference=True,
+        )
+
+        bundle = CommandBundle(
+            context="ctx",
+            commands_ref=commands_ref,
+            tokens=[CommandToken(kind="dialogue", segment=source)],
+        )
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={"list": commands_ref},
+            bundles=[bundle],
+            segments=[source],
+        )
+
+        exported = harness._export_translated_data_for_session(session)
+        rebuilt = exported["list"]
+        self.assertEqual(rebuilt[0]["parameters"][4], "")
+        self.assertEqual(rebuilt[1]["parameters"][0], "EN line")
+
+    def test_export_translated_data_uses_saved_speaker_map_for_forced_line1_inference(self) -> None:
+        harness = _Harness()
+        harness.speaker_translation_map["勇者"] = "Hero"
+        commands_ref: list[Any] = [
+            {"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            {"code": 401, "indent": 0, "parameters": ["勇者"]},
+            {"code": 401, "indent": 0, "parameters": ["JP line"]},
+        ]
+        source = DialogueSegment(
+            uid="src",
+            context="ctx",
+            code101=commands_ref[0],
+            lines=["勇者", "JP line"],
+            original_lines=["勇者", "JP line"],
+            source_lines=["勇者", "JP line"],
+            code401_template={"code": 401, "indent": 0, "parameters": [""]},
+            translation_lines=["EN line"],
+            original_translation_lines=[""],
+            translation_speaker="",
+            force_line1_speaker_inference=True,
+            original_force_line1_speaker_inference=True,
+        )
+
+        bundle = CommandBundle(
+            context="ctx",
+            commands_ref=commands_ref,
+            tokens=[CommandToken(kind="dialogue", segment=source)],
+        )
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={"list": commands_ref},
+            bundles=[bundle],
+            segments=[source],
+        )
+
+        exported = harness._export_translated_data_for_session(session)
+        rebuilt = exported["list"]
+        self.assertEqual(rebuilt[0]["parameters"][4], "")
+        self.assertEqual(rebuilt[1]["parameters"][0], "EN line")
 
     def test_missing_translation_problem_detects_empty_translation(self) -> None:
         harness = _Harness()
