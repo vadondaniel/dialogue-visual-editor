@@ -965,22 +965,38 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             return
         neighbors_edit.setPlainText(self._build_consistency_neighbor_preview_text(payload))
 
-    def _consistency_variant_hash(self, variant_text: str) -> int:
-        digest = hashlib.blake2b(
-            variant_text.encode("utf-8", errors="ignore"),
-            digest_size=8,
-        ).digest()
-        return int.from_bytes(digest, byteorder="big", signed=False)
+    def _consistency_variant_key(self, chunks: Any) -> tuple[str, ...]:
+        if isinstance(chunks, str):
+            normalized_chunks = [chunks]
+        elif isinstance(chunks, tuple):
+            normalized_chunks = [chunk for chunk in chunks if isinstance(chunk, str)]
+        elif isinstance(chunks, list):
+            normalized_chunks = [chunk for chunk in chunks if isinstance(chunk, str)]
+        else:
+            normalized_chunks = []
+        if not normalized_chunks:
+            return ("",)
+        return tuple(normalized_chunks)
+
+    def _consistency_variant_hash(self, variant_key: tuple[str, ...]) -> int:
+        digest = hashlib.blake2b(digest_size=8)
+        for chunk in variant_key:
+            encoded = chunk.encode("utf-8", errors="ignore")
+            digest.update(len(encoded).to_bytes(8, byteorder="big", signed=False))
+            digest.update(b"\0")
+            digest.update(encoded)
+            digest.update(b"\xff")
+        return int.from_bytes(digest.digest(), byteorder="big", signed=False)
 
     def _consistency_variant_color_map(
         self,
-        variants: set[str],
-    ) -> dict[str, QColor]:
+        variants: set[tuple[str, ...]],
+    ) -> dict[tuple[str, ...], QColor]:
         if not variants:
             return {}
         ordered_variants = sorted(
             variants,
-            key=lambda text: self._consistency_variant_hash(text),
+            key=self._consistency_variant_hash,
         )
         total = len(ordered_variants)
         dark = is_dark_palette()
@@ -990,21 +1006,21 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         else:
             saturation = 65
             value = 240
-        color_map: dict[str, QColor] = {}
-        for idx, text in enumerate(ordered_variants):
+        color_map: dict[tuple[str, ...], QColor] = {}
+        for idx, variant_key in enumerate(ordered_variants):
             hue = int((idx * 360) / max(total, 1)) % 360
-            color_map[text] = QColor.fromHsv(hue, saturation, value)
+            color_map[variant_key] = QColor.fromHsv(hue, saturation, value)
         return color_map
 
     def _consistency_variant_bg(
         self,
-        variant_text: str,
-        color_map: dict[str, QColor],
+        variant_key: tuple[str, ...],
+        color_map: dict[tuple[str, ...], QColor],
     ) -> QColor:
-        if not variant_text.strip():
+        if not any(chunk.strip() for chunk in variant_key):
             return QColor("#3f3f46") if is_dark_palette() else QColor("#e5e7eb")
         return color_map.get(
-            variant_text,
+            variant_key,
             QColor("#4b5563") if is_dark_palette() else QColor("#dbeafe"),
         )
 
@@ -1144,7 +1160,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         self,
         segment: DialogueSegment,
         target_lines: list[str],
-    ) -> dict[str, float | int | bool]:
+    ) -> dict[str, Any]:
         thin_width_spin = getattr(self, "thin_width_spin", None)
         wide_width_spin = getattr(self, "wide_width_spin", None)
         max_lines_spin = getattr(self, "max_lines_spin", None)
@@ -1153,12 +1169,31 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         width_limit = thin_width if segment.has_face else wide_width
         row_limit = float(max(1, int(max_lines_spin.value()))) if max_lines_spin is not None else 4.0
 
+        visible_lines = self._normalize_translation_lines(target_lines)
+        storage_lines = list(visible_lines)
+        compose_resolver = getattr(self, "_compose_translation_lines_for_segment", None)
+        if callable(compose_resolver):
+            try:
+                composed_raw = compose_resolver(segment, visible_lines)
+            except Exception:
+                composed_raw = visible_lines
+            storage_lines = self._normalize_translation_lines(composed_raw)
+
         max_visible = 0
-        for line in target_lines:
+        for line in visible_lines:
             max_visible = max(max_visible, visible_length(line))
         char_over = max(0, max_visible - width_limit)
-        row_total = total_display_rows(target_lines)
+        row_total = total_display_rows(storage_lines)
         row_over = max(0.0, row_total - row_limit)
+        kept_storage_lines, overflow_storage_lines = split_lines_by_row_budget(
+            storage_lines,
+            row_limit,
+        )
+        hidden_prefix_count = max(0, len(storage_lines) - len(visible_lines))
+        kept_visible_count = max(0, len(kept_storage_lines) - hidden_prefix_count)
+        overflow_start_visible = len(visible_lines)
+        if overflow_storage_lines:
+            overflow_start_visible = min(len(visible_lines), kept_visible_count)
         return {
             "width_limit": width_limit,
             "max_visible": max_visible,
@@ -1169,6 +1204,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             "has_char_over": char_over > 0,
             "has_row_over": row_over > 0.0,
             "has_overflow": (char_over > 0) or (row_over > 0.0),
+            "overflow_start_visible": overflow_start_visible,
         }
 
     def _refresh_audit_consistency_target_overflow_status(self) -> None:
@@ -1330,8 +1366,20 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 setattr(extra, "format", char_fmt)
                 selections.append(extra)
 
-            kept_lines, overflow_lines = split_lines_by_row_budget(normalized_chunk, row_limit)
-            overflow_start = len(kept_lines) if overflow_lines else len(normalized_chunk)
+            overflow_start_raw = metrics.get("overflow_start_visible")
+            if isinstance(overflow_start_raw, (int, float)):
+                overflow_start = max(
+                    0,
+                    min(len(normalized_chunk), int(overflow_start_raw)),
+                )
+            else:
+                kept_lines, overflow_lines = split_lines_by_row_budget(
+                    normalized_chunk,
+                    row_limit,
+                )
+                overflow_start = (
+                    len(kept_lines) if overflow_lines else len(normalized_chunk)
+                )
             for line_index in range(overflow_start, len(normalized_chunk)):
                 if line_index >= len(display_indices):
                     break
@@ -1545,14 +1593,6 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             self.audit_consistency_target_edit.setPlainText("")
             self._refresh_audit_consistency_target_overflow_status()
             return
-        variants = {
-            str(entry.get("translation", ""))
-            for entry in entries
-            if isinstance(entry, dict)
-            and isinstance(entry.get("translation"), str)
-            and str(entry.get("translation", "")).strip()
-        }
-        color_map = self._consistency_variant_color_map(variants)
         foreground = self._consistency_variant_fg()
         parsed_entries: list[dict[str, Any]] = []
         max_locator_width = 0
@@ -1600,6 +1640,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     max(1, len(self._normalize_translation_lines(chunk)))
                     for chunk in translation_chunks
                 ]
+            variant_key = self._consistency_variant_key(translation_chunks)
             locator = self._consistency_entry_locator(path_raw, entry_label)
             max_locator_width = max(max_locator_width, len(locator))
             parsed_entries.append(
@@ -1613,8 +1654,20 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                     "segment_uids": segment_uids,
                     "translation_chunks": translation_chunks,
                     "chunk_line_counts": chunk_line_counts,
+                    "variant_key": variant_key,
                 }
             )
+
+        variants = {
+            cast(tuple[str, ...], entry.get("variant_key"))
+            for entry in parsed_entries
+            if isinstance(entry.get("variant_key"), tuple)
+            and any(
+                str(chunk).strip()
+                for chunk in cast(tuple[str, ...], entry.get("variant_key"))
+            )
+        }
+        color_map = self._consistency_variant_color_map(variants)
 
         for entry in parsed_entries:
             path_raw = entry["path"]
@@ -1626,6 +1679,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             segment_uids = entry["segment_uids"]
             translation_chunks = entry["translation_chunks"]
             chunk_line_counts = entry["chunk_line_counts"]
+            variant_key = entry["variant_key"]
             label = self._consistency_entry_display_label(
                 path_raw,
                 entry_label,
@@ -1636,7 +1690,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             item.setBackground(
                 QBrush(
                     self._consistency_variant_bg(
-                        translation,
+                        variant_key,
                         color_map,
                     )
                 )

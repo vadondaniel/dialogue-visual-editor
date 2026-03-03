@@ -648,6 +648,51 @@ class AuditConsistencyMixinTests(unittest.TestCase):
         self.assertEqual(len(groups), 1)
         self.assertEqual(int(groups[0]["variant_count"]), 2)
 
+    def test_variant_color_map_treats_split_layout_as_distinct(self) -> None:
+        harness = _Harness()
+
+        unsplit_key = harness._consistency_variant_key(["Line 1\nLine 2"])
+        split_key = harness._consistency_variant_key(["Line 1", "Line 2"])
+
+        color_map = harness._consistency_variant_color_map({unsplit_key, split_key})
+
+        self.assertEqual(len(color_map), 2)
+        self.assertIn(unsplit_key, color_map)
+        self.assertIn(split_key, color_map)
+        self.assertNotEqual(color_map[unsplit_key].name(), color_map[split_key].name())
+
+    def test_target_overflow_metrics_counts_inferred_speaker_storage_budget(self) -> None:
+        harness = _Harness()
+
+        class _Spin:
+            def __init__(self, value: int) -> None:
+                self._value = value
+
+            def value(self) -> int:
+                return self._value
+
+        setattr(harness, "thin_width_spin", _Spin(99))
+        setattr(harness, "wide_width_spin", _Spin(99))
+        setattr(harness, "max_lines_spin", _Spin(4))
+
+        inferred = _segment("d1", "ユウカ\nこんにちは", "Yuka\nHi")
+        setattr(inferred, "consistency_inferred_speaker", True)
+        normal = _segment("d2", "こんにちは", "Hi")
+        target_lines = ["L1", "L2", "L3", "L4"]
+
+        inferred_metrics = harness._consistency_target_overflow_metrics_for_segment(
+            inferred,
+            target_lines,
+        )
+        normal_metrics = harness._consistency_target_overflow_metrics_for_segment(
+            normal,
+            target_lines,
+        )
+
+        self.assertFalse(bool(normal_metrics["has_row_over"]))
+        self.assertTrue(bool(inferred_metrics["has_row_over"]))
+        self.assertEqual(int(inferred_metrics["overflow_start_visible"]), 3)
+
     def test_target_display_text_for_chunks_adds_divider_padding(self) -> None:
         harness = _Harness()
 
