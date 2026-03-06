@@ -75,6 +75,9 @@ class _ApplyWorkflowHarness:
     _chunk_entry_windows = MassTranslateDialog._chunk_entry_windows
     _context_payload_for_chunk = MassTranslateDialog._context_payload_for_chunk
     _chunk_payload_for_group = MassTranslateDialog._chunk_payload_for_group
+    _effective_context_box_count = staticmethod(
+        MassTranslateDialog._effective_context_box_count
+    )
     _entries_from_entry_windows = staticmethod(
         MassTranslateDialog._entries_from_entry_windows
     )
@@ -235,6 +238,22 @@ def _segment(uid: str, lines: list[str]) -> DialogueSegment:
 
 
 class MassTranslateApplyWorkflowTests(unittest.TestCase):
+    def test_effective_context_box_count_disables_context_without_dialogue(self) -> None:
+        self.assertEqual(
+            _ApplyWorkflowHarness._effective_context_box_count(
+                2,
+                include_dialogue=False,
+            ),
+            0,
+        )
+        self.assertEqual(
+            _ApplyWorkflowHarness._effective_context_box_count(
+                2,
+                include_dialogue=True,
+            ),
+            2,
+        )
+
     def test_context_payload_for_chunk_uses_top_level_context_for_continuous_run(self) -> None:
         editor = _ApplyWorkflowEditorMeta()
         path = Path("Map001.json")
@@ -339,6 +358,55 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
         windows = payload["entry_windows"]
         self.assertEqual(windows[0]["context_after"][0]["ja_text"], "line-2")
         self.assertEqual(windows[1]["context_before"][0]["ja_text"], "line-2")
+
+    def test_context_payload_for_chunk_skips_empty_neighbor_blocks(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        segments = [
+            _segment("Map001.json:0", [""]),
+            _segment("Map001.json:1", [" "]),
+            _segment("Map001.json:2", ["line-2"]),
+            _segment("Map001.json:3", [""]),
+            _segment("Map001.json:4", ["line-4"]),
+        ]
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=segments,
+        )
+        harness = _ApplyWorkflowHarness(editor)
+        harness.entry_block_refs = {
+            "D:2": (path, 2),
+        }
+
+        payload = harness._context_payload_for_chunk([{"id": "D:2"}], 2)
+
+        self.assertNotIn("context_before", payload)
+        self.assertEqual(payload["context_after"][0]["ja_text"], "line-4")
+
+    def test_chunk_payload_for_group_omits_context_when_dialogue_not_included(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        segments = [_segment(f"Map001.json:{idx}", [f"line-{idx}"]) for idx in range(3)]
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=segments,
+        )
+        harness = _ApplyWorkflowHarness(editor)
+        harness.entry_block_refs = {
+            "M:1": (path, 1),
+        }
+
+        context_boxes = harness._effective_context_box_count(
+            2,
+            include_dialogue=False,
+        )
+        payload = harness._chunk_payload_for_group([{"id": "M:1"}], context_boxes)
+
+        self.assertEqual(list(payload.keys()), ["entries"])
 
     def test_entries_from_payload_flattens_entry_windows(self) -> None:
         harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())

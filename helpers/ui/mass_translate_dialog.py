@@ -1263,7 +1263,7 @@ class MassTranslateDialog(QDialog):
             source_text = "\n".join(
                 self.editor._segment_source_lines_for_display(neighbor)).strip()
             if not source_text:
-                source_text = "(empty)"
+                continue
             blocks.append({"speaker": speaker_display, source_field: source_text})
             if len(blocks) >= box_limit:
                 break
@@ -1271,6 +1271,16 @@ class MassTranslateDialog(QDialog):
         if direction < 0:
             blocks.reverse()
         return blocks
+
+    @staticmethod
+    def _effective_context_box_count(
+        requested_boxes: int,
+        *,
+        include_dialogue: bool,
+    ) -> int:
+        if not include_dialogue:
+            return 0
+        return max(0, requested_boxes)
 
     def _chunk_context_blocks(
         self,
@@ -1997,7 +2007,10 @@ class MassTranslateDialog(QDialog):
 
         groups = self._chunkify_entries(
             entries, self.max_chunk_chars_spin.value())
-        context_boxes = self.context_boxes_spin.value()
+        context_boxes = self._effective_context_box_count(
+            self.context_boxes_spin.value(),
+            include_dialogue=include_dialogue,
+        )
         self.chunk_payloads = []
         self.chunk_expected_ids = []
         self.chunk_status = {}
