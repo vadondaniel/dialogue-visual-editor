@@ -383,6 +383,81 @@ class AuditCoreAdditionalTests(unittest.TestCase):
         self.assertEqual(harness.open_calls, [(path, "u1", "dialogue")])
         self.assertIn("Jumped to Map001.json (u1).", harness.statusBar().messages[-1])
 
+    def test_normalize_lines_defensive_split_fallback(self) -> None:
+        harness = _Harness()
+        segment = _segment("u1", kind="choice")
+        with patch(
+            "dialogue_visual_editor.helpers.audit.audit_core_mixin.re.split",
+            return_value=[],
+        ):
+            normalized = harness._normalize_audit_translation_lines_for_segment(
+                segment,
+                "A[p]",
+            )
+        self.assertEqual(normalized, ["A"])
+
+    def test_scope_for_uid_defensive_branches(self) -> None:
+        harness = _Harness()
+        path = Path("Map001.json")
+
+        harness.sessions[path] = type("SessionStub", (), {"segments": ("u1",)})()
+        self.assertIsNone(harness._scope_for_audit_target_uid(path, "u1"))
+
+        harness.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[_segment("u1", kind="note_text")],
+        )
+        harness._is_misc_segment_kind_for_scope = "nope"
+        self.assertEqual(harness._scope_for_audit_target_uid(path, "u1"), "dialogue")
+
+        def _raiser(_segment: DialogueSegment) -> bool:
+            raise RuntimeError("boom")
+
+        harness._is_misc_segment_kind_for_scope = _raiser
+        self.assertEqual(harness._scope_for_audit_target_uid(path, "u1"), "dialogue")
+
+    def test_overlay_host_widget_handles_viewport_edge_cases(self) -> None:
+        harness = _Harness()
+
+        class _BrokenViewportWidget(QWidget):
+            def viewport(self) -> QWidget:
+                raise RuntimeError("bad viewport")
+
+        class _NonWidgetViewport(QWidget):
+            @staticmethod
+            def viewport() -> str:
+                return "not-a-widget"
+
+        broken = _BrokenViewportWidget()
+        non_widget = _NonWidgetViewport()
+        self.assertIs(harness._overlay_host_widget(broken), broken)
+        self.assertIs(harness._overlay_host_widget(non_widget), non_widget)
+
+    def test_set_progress_overlay_handles_early_returns_and_reparenting(self) -> None:
+        harness = _Harness()
+        harness._set_audit_progress_overlay(None, None, "skip")
+        harness._set_audit_progress_overlay(QWidget(), None, "skip")
+
+        zero_host = QWidget()
+        zero_host.resize(0, 0)
+        zero_overlay = QLabel(zero_host)
+        harness._set_audit_progress_overlay(zero_host, zero_overlay, "No-op")
+        self.assertFalse(zero_overlay.isVisible())
+
+        host = _ViewportHost()
+        host.resize(120, 60)
+        host.viewport().resize(120, 60)
+        host.show()
+        QApplication.processEvents()
+        overlay = QLabel(host)
+        self.assertIs(overlay.parentWidget(), host)
+        harness._set_audit_progress_overlay(host, overlay, "Active")
+        self.assertIs(overlay.parentWidget(), host.viewport())
+        self.assertTrue(overlay.isVisible())
+        host.hide()
+
 
 if __name__ == "__main__":
     unittest.main()

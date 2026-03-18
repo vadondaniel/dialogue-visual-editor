@@ -134,6 +134,15 @@ class AuditSanitizeApplyMixinTests(unittest.TestCase):
         self.assertEqual(lines, ['"A"', '"B"'])
         self.assertEqual(replacements, 4)
 
+    def test_apply_rules_to_lines_skips_empty_find_text(self) -> None:
+        harness = _Harness()
+        lines, replacements = harness._apply_sanitize_rules_to_lines(
+            ["abc"],
+            [{"find_text": "", "replace_text": "x"}],
+        )
+        self.assertEqual(lines, ["abc"])
+        self.assertEqual(replacements, 0)
+
     def test_apply_single_entry_handles_missing_session_segment_and_ignored(self) -> None:
         harness = _Harness()
         rule = {"rule_id": "r", "find_text": "a", "replace_text": "b"}
@@ -187,6 +196,21 @@ class AuditSanitizeApplyMixinTests(unittest.TestCase):
         self.assertEqual(segment.translation_lines, ["bb"])
         self.assertEqual(harness.translator_panel_refresh_calls, 1)
 
+    def test_apply_single_entry_translation_without_segment_normalizer(self) -> None:
+        harness = _Harness()
+        harness.scope = "translation"
+        path = Path("Map001.json")
+        segment = _segment("uid-1", translation="aa")
+        harness.sessions[path] = FileSession(path=path, data={}, bundles=[], segments=[segment])
+        harness.current_path = None
+        harness._normalize_audit_translation_lines_for_segment = None
+        rule = {"rule_id": "r", "find_text": "a", "replace_text": "b"}
+
+        harness._apply_audit_sanitize_rule_to_entry(rule, str(path), "uid-1")
+
+        self.assertEqual(segment.translation_lines, ["bb"])
+        self.assertEqual(harness.translator_panel_refresh_calls, 1)
+
     def test_apply_single_entry_reports_no_replacements(self) -> None:
         harness = _Harness()
         harness.scope = "original"
@@ -230,6 +254,61 @@ class AuditSanitizeApplyMixinTests(unittest.TestCase):
         self.assertEqual(harness.render_calls, 1)
         self.assertIn("Applied sanitize rules", harness.status_bar.messages[-1])
 
+    def test_apply_rules_bulk_no_changes_refreshes_panels(self) -> None:
+        harness = _Harness()
+        path = Path("Map001.json")
+        missing_path = Path("Missing.json")
+        segment = _segment("uid-1", source="aa", translation="aa")
+        harness.sessions[path] = FileSession(path=path, data={}, bundles=[], segments=[segment])
+        harness.file_paths = [missing_path, path]
+        harness.ignored_entries.add(("r", str(path), "uid-1"))
+
+        harness._apply_audit_sanitize_rules(
+            [{"rule_id": "r", "find_text": "a", "replace_text": "b"}]
+        )
+
+        self.assertEqual(harness.status_bar.messages[-1], "No replacements applied.")
+        self.assertEqual(harness.sanitize_panel_refresh_calls, 1)
+        self.assertEqual(harness.control_panel_refresh_calls, 1)
+        self.assertEqual(harness.collision_panel_refresh_calls, 1)
+        self.assertEqual(harness.name_panel_refresh_calls, 1)
+        self.assertEqual(harness.invalidate_cache_calls, 0)
+
+    def test_apply_rules_bulk_translation_normalizer_raises_then_refreshes_translator_panel(self) -> None:
+        harness = _Harness()
+        harness.scope = "translation"
+        harness.normalize_for_segment_raises = True
+        path = Path("Map001.json")
+        segment = _segment("uid-1", source="x", translation="aa")
+        harness.sessions[path] = FileSession(path=path, data={}, bundles=[], segments=[segment])
+        harness.file_paths = [path]
+        harness.current_path = Path("Other.json")
+
+        harness._apply_audit_sanitize_rules(
+            [{"rule_id": "r", "find_text": "a", "replace_text": "b"}]
+        )
+
+        self.assertEqual(segment.translation_lines, ["bb"])
+        self.assertEqual(harness.translator_panel_refresh_calls, 1)
+        self.assertEqual(harness.invalidate_cache_calls, 1)
+
+    def test_apply_rules_bulk_without_segment_normalizer_uses_global_normalize(self) -> None:
+        harness = _Harness()
+        harness.scope = "translation"
+        path = Path("Map001.json")
+        segment = _segment("uid-1", source="x", translation="aa")
+        harness.sessions[path] = FileSession(path=path, data={}, bundles=[], segments=[segment])
+        harness.file_paths = [path]
+        harness.current_path = None
+        harness._normalize_audit_translation_lines_for_segment = None
+
+        harness._apply_audit_sanitize_rules(
+            [{"rule_id": "r", "find_text": "a", "replace_text": "b"}]
+        )
+
+        self.assertEqual(segment.translation_lines, ["bb"])
+        self.assertEqual(harness.translator_panel_refresh_calls, 1)
+
     def test_apply_selected_rule_requires_selection(self) -> None:
         harness = _Harness()
         harness.audit_sanitize_rules_list = _RulesListStub(item=None)
@@ -242,7 +321,12 @@ class AuditSanitizeApplyMixinTests(unittest.TestCase):
         harness._apply_selected_audit_sanitize_rule()
         self.assertEqual(harness.status_bar.messages[-1], "No data loaded.")
 
+    def test_apply_selected_rule_no_list_is_noop(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_rules_list = None
+        harness._apply_selected_audit_sanitize_rule()
+        self.assertEqual(harness.status_bar.messages, [])
+
 
 if __name__ == "__main__":
     unittest.main()
-
