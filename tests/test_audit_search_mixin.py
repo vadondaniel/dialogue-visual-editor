@@ -367,6 +367,73 @@ class AuditSearchMixinTests(unittest.TestCase):
         self.assertEqual(replacements, 2)
         self.assertEqual(session.segments[0].translation_lines, ["bb"])
 
+    def test_replace_in_lines_empty_find_and_no_hit_paths(self) -> None:
+        harness = _Harness()
+        replaced, count = harness._replace_in_lines(
+            ["alpha", "beta"],
+            "",
+            "x",
+            True,
+        )
+        self.assertEqual(replaced, ["alpha", "beta"])
+        self.assertEqual(count, 0)
+
+        replaced, count = harness._replace_in_lines(
+            ["alpha", "beta"],
+            "zzz",
+            "x",
+            True,
+        )
+        self.assertEqual(replaced, ["alpha", "beta"])
+        self.assertEqual(count, 0)
+
+    def test_replace_in_session_entry_translation_normalizer_exception_paths(self) -> None:
+        harness = _Harness()
+        path = Path("scene.ks")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[_segment("scene.ks:K:1", "src", "aa", kind="tyrano_dialogue")],
+        )
+        harness.sessions[path] = session
+
+        def _raise_on_read(_segment: DialogueSegment, _lines: list[str]) -> list[str]:
+            raise RuntimeError("read normalize failed")
+
+        harness._normalize_audit_translation_lines_for_segment = _raise_on_read
+        changed, replacements = harness._replace_in_session_entry(
+            str(path),
+            "scene.ks:K:1",
+            "a",
+            "b",
+            "translation",
+            True,
+        )
+        self.assertTrue(changed)
+        self.assertEqual(replacements, 2)
+        self.assertEqual(session.segments[0].translation_lines, ["bb"])
+
+        session.segments[0].translation_lines = ["aa"]
+
+        def _raise_on_store(_segment: DialogueSegment, lines: list[str]) -> list[str]:
+            if lines == ["aa"]:
+                return ["aa"]
+            raise RuntimeError("store normalize failed")
+
+        harness._normalize_audit_translation_lines_for_segment = _raise_on_store
+        changed, replacements = harness._replace_in_session_entry(
+            str(path),
+            "scene.ks:K:1",
+            "a",
+            "b",
+            "translation",
+            True,
+        )
+        self.assertTrue(changed)
+        self.assertEqual(replacements, 2)
+        self.assertEqual(session.segments[0].translation_lines, ["bb"])
+
 
 if __name__ == "__main__":
     unittest.main()

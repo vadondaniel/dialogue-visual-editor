@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QListWidgetItem, QMessageBox
 
 from dialogue_visual_editor.helpers.audit.audit_search_mixin import AuditSearchMixin
-from dialogue_visual_editor.helpers.core.models import FileSession
+from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
 
 
 class _LineEditStub:
@@ -192,6 +192,7 @@ class _WorkerHarness(AuditSearchMixin):
         self.audit_worker_executor: Any = _WorkerExecutorStub()
 
         self.audit_search_query_edit: Any = _LineEditStub("alpha")
+        self.audit_search_replace_edit: Any = _LineEditStub("")
         self.audit_search_scope_combo: Any = _ComboStub("both")
         self.audit_search_case_sensitive_check: Any = _CheckStub(False)
         self.audit_search_results_list: Any = QListWidget()
@@ -216,6 +217,11 @@ class _WorkerHarness(AuditSearchMixin):
         self.audit_search_displayed_key: Any = None
         self.audit_search_display_complete = False
         self.overlay_messages: list[str] = []
+        self.path_sessions: list[tuple[Path, FileSession]] = []
+        self.sessions: dict[Path, FileSession] = {}
+        self.stop_render_calls = 0
+        self.preview_refresh_calls = 0
+        self.audit_search_timer: Any = None
 
     @staticmethod
     def _search_request_key(request: dict[str, Any] | None) -> tuple[Any, ...]:
@@ -229,6 +235,46 @@ class _WorkerHarness(AuditSearchMixin):
             request.get("natural_mode"),
         )
 
+    @staticmethod
+    def _is_name_index_session(_session: FileSession) -> bool:
+        return False
+
+    @staticmethod
+    def _name_index_label(_session: FileSession) -> str:
+        return "Actor"
+
+    @staticmethod
+    def _actor_id_from_uid(_uid: str) -> None:
+        return None
+
+    @staticmethod
+    def _segment_source_lines_for_display(segment: DialogueSegment) -> list[str]:
+        return list(segment.source_lines or segment.original_lines or segment.lines or [""])
+
+    @staticmethod
+    def _normalize_translation_lines(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) if item is not None else "" for item in value] or [""]
+        if isinstance(value, str):
+            return value.split("\n")
+        return [""]
+
+    @staticmethod
+    def _audit_entry_text_for_segment(
+        _session: FileSession,
+        _segment: DialogueSegment,
+        index: int,
+    ) -> str:
+        return f"Block {index}"
+
+    @staticmethod
+    def _relative_path(path: Path) -> str:
+        return path.as_posix()
+
+    @staticmethod
+    def _audit_highlight_style() -> str:
+        return "background:#ff0;"
+
     def _set_audit_progress_overlay(
         self,
         _target_widget: Any,
@@ -236,6 +282,15 @@ class _WorkerHarness(AuditSearchMixin):
         text: str,
     ) -> None:
         self.overlay_messages.append(str(text))
+
+    def _audit_path_sessions_snapshot(self) -> list[tuple[Path, FileSession]]:
+        return list(self.path_sessions)
+
+    def _stop_audit_search_render(self) -> None:
+        self.stop_render_calls += 1
+
+    def _refresh_audit_search_replace_preview(self) -> None:
+        self.preview_refresh_calls += 1
 
 
 def _add_result_item(
@@ -450,6 +505,29 @@ class AuditSearchUiUtilsTests(unittest.TestCase):
             "Replaced 2 matches in selected result.",
         )
 
+    def test_replace_selected_guard_and_current_session_render_branch(self) -> None:
+        harness = _Harness()
+        harness.audit_search_results_list = None
+        harness._replace_selected_audit_search_result()
+        self.assertEqual(harness.statusBar().messages, [])
+
+        harness = _Harness()
+        item = _add_result_item(harness)
+        harness.audit_search_results_list.setCurrentItem(item)
+        harness.audit_search_query_edit.setText("alpha")
+        harness.audit_search_replace_edit.setText("omega")
+        harness.current_path = Path("Map001.json")
+        harness.sessions[harness.current_path] = FileSession(
+            path=harness.current_path,
+            data={},
+            bundles=[],
+            segments=[],
+        )
+        harness.replace_outcomes[("Map001.json", "u1", "both")] = (True, 1)
+        harness._replace_selected_audit_search_result()
+        self.assertEqual(harness.render_session_calls, 1)
+        self.assertEqual(harness.refresh_translator_calls, 0)
+
     def test_replace_all_branches_and_success(self) -> None:
         harness = _Harness()
         harness.audit_search_display_complete = False
@@ -544,6 +622,56 @@ class AuditSearchUiUtilsTests(unittest.TestCase):
         self.assertEqual(harness.render_session_calls, 0)
         self.assertEqual(harness.statusBar().messages[-1], "Replaced 1 match in 1 result entry.")
 
+    def test_run_search_guard_and_queue_paths(self) -> None:
+        harness = _WorkerHarness()
+        harness.audit_search_query_edit = None
+        harness._run_audit_search()
+
+        harness = _WorkerHarness()
+        harness.audit_search_query_edit.setText("")
+        harness._run_audit_search()
+        self.assertIn("Type to search.", harness.audit_search_status_label.text())
+
+        harness = _WorkerHarness()
+        harness.audit_search_query_edit.setText("alpha")
+        harness.path_sessions = []
+        harness._run_audit_search()
+        self.assertEqual(harness.audit_search_status_label.text(), "No data loaded.")
+
+        harness = _WorkerHarness()
+        harness.audit_search_query_edit.setText("alpha")
+        harness.path_sessions = [(Path("Map001.json"), FileSession(path=Path("Map001.json"), data={}, bundles=[], segments=[]))]
+        harness.sessions = {Path("Map001.json"): FileSession(path=Path("Map001.json"), data={}, bundles=[], segments=[])}
+        harness._run_audit_search()
+        self.assertIsNotNone(harness.audit_search_worker_running_request)
+
+    def test_run_search_cache_paths_and_replace_button_state(self) -> None:
+        harness = _WorkerHarness()
+        harness.audit_search_query_edit.setText("alpha")
+        harness.path_sessions = [(Path("Map001.json"), FileSession(path=Path("Map001.json"), data={}, bundles=[], segments=[]))]
+        harness.sessions = {Path("Map001.json"): FileSession(path=Path("Map001.json"), data={}, bundles=[], segments=[])}
+        cache_key = (1, "both", "alpha", False, True)
+        harness.audit_search_cache_key = cache_key
+        harness.audit_search_cache_records = []
+        harness._run_audit_search()
+        self.assertIn("No matches for 'alpha' in both.", harness.audit_search_status_label.text())
+        self.assertFalse(harness.audit_search_replace_all_btn.enabled)
+
+        harness.audit_search_cache_records = [
+            {
+                "path": Path("Map001.json"),
+                "uid": "u1",
+                "entry_text": "Block 1",
+                "matched_field": "Original",
+                "matched_text": "alpha",
+            }
+        ]
+        harness.audit_search_display_complete = False
+        harness.audit_search_displayed_key = None
+        harness._run_audit_search()
+        self.assertEqual(harness.audit_search_render_records, harness.audit_search_cache_records)
+        self.assertEqual(harness.audit_search_render_timer.started[-1], harness.audit_render_batch_interval_ms)
+
     def test_worker_queue_start_and_poll_branches(self) -> None:
         harness = _WorkerHarness()
         request = {
@@ -565,19 +693,28 @@ class AuditSearchUiUtilsTests(unittest.TestCase):
         harness._queue_audit_search_worker(dict(request))
         self.assertEqual(harness.audit_search_worker_pending_request, request)
 
+        harness = _WorkerHarness()
         start_calls = {"count": 0}
-        harness.audit_search_worker_pending_request = None
-        harness._start_next_audit_search_worker()
-        harness.audit_search_worker_pending_request = dict(request)
-        harness.audit_worker_executor = _WorkerExecutorStub(error=RuntimeError("boom"))
-        harness._start_next_audit_search_worker()
-        self.assertIn("Search scan failed: boom", harness.audit_search_status_label.text())
+        harness._start_next_audit_search_worker = lambda: start_calls.__setitem__("count", start_calls["count"] + 1)  # type: ignore[method-assign]
+        harness._queue_audit_search_worker(dict(request))
+        self.assertEqual(start_calls["count"], 1)
+
+        harness2 = _WorkerHarness()
+        harness2.audit_search_worker_pending_request = None
+        harness2._start_next_audit_search_worker()
+        harness2.audit_search_worker_pending_request = dict(request)
+        harness2.audit_worker_executor = _WorkerExecutorStub(error=RuntimeError("boom"))
+        harness2._start_next_audit_search_worker()
+        self.assertIn("Search scan failed: boom", harness2.audit_search_status_label.text())
 
         harness = _WorkerHarness()
         harness.audit_search_worker_pending_request = dict(request)
+        poll_start_calls = {"count": 0}
         harness._start_next_audit_search_worker = lambda: start_calls.__setitem__("count", start_calls["count"] + 1)  # type: ignore[method-assign]
         harness._poll_audit_search_worker()
-        self.assertEqual(start_calls["count"], 1)
+        harness._start_next_audit_search_worker = lambda: poll_start_calls.__setitem__("count", poll_start_calls["count"] + 1)  # type: ignore[method-assign]
+        harness._poll_audit_search_worker()
+        self.assertEqual(poll_start_calls["count"], 1)
 
         harness = _WorkerHarness()
         harness.audit_search_worker_future = _WorkerFutureStub(done=False)
@@ -673,6 +810,44 @@ class AuditSearchUiUtilsTests(unittest.TestCase):
         self.assertEqual(harness.audit_search_render_timer.started, [7])
         self.assertEqual(len(harness.audit_search_render_records), 1)
         self.assertFalse(harness.audit_search_display_complete)
+
+    def test_render_next_batch_partial_and_completion_paths(self) -> None:
+        harness = _WorkerHarness()
+        harness.audit_result_batch_size = 1
+        harness.audit_search_render_records = [
+            {
+                "path": Path("Map001.json"),
+                "uid": "u1",
+                "entry_text": "Block 1",
+                "matched_field": "Original",
+                "matched_text": "alpha",
+            },
+            {
+                "path": Path("Map001.json"),
+                "uid": "u2",
+                "entry_text": "Block 2",
+                "matched_field": "Translation",
+                "matched_text": "beta",
+            },
+        ]
+        harness.audit_search_render_query = "alpha"
+        harness.audit_search_render_needle = "alpha"
+        harness.audit_search_render_natural_mode = True
+        harness.audit_search_render_case_sensitive = False
+        harness.audit_search_render_scope = "both"
+        harness.audit_search_render_generation = 1
+
+        harness._render_next_audit_search_batch()
+        self.assertEqual(harness.audit_search_render_index, 1)
+        self.assertEqual(harness.audit_search_results_list.count(), 1)
+        self.assertEqual(harness.audit_search_render_timer.started[-1], harness.audit_render_batch_interval_ms)
+
+        harness._render_next_audit_search_batch()
+        self.assertEqual(harness.audit_search_render_index, 2)
+        self.assertTrue(harness.audit_search_display_complete)
+        self.assertEqual(harness.audit_search_displayed_key, (1, "both", "alpha", False, True))
+        self.assertEqual(harness.stop_render_calls, 1)
+        self.assertEqual(harness.preview_refresh_calls, 1)
 
 
 if __name__ == "__main__":
