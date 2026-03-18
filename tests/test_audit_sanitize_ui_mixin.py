@@ -322,6 +322,43 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         self.assertEqual(block_entry, "Block 1")
         self.assertEqual(name_entry, "Actor ID 3")
 
+    def test_display_index_defensive_name_index_and_fallback_paths(self) -> None:
+        harness = _Harness()
+        name_session = FileSession(
+            path=Path("Actors.json"),
+            data={},
+            bundles=[],
+            segments=[_segment("Actors.json:A:1:name", segment_kind="name_index")],
+        )
+        setattr(name_session, "is_name_index_session", True)
+        self.assertEqual(
+            harness._audit_display_index_for_segment(
+                name_session,
+                name_session.segments[0],
+                7,
+            ),
+            7,
+        )
+
+        map_segment = _segment("shared-uid", segment_kind="map_display_name")
+        other_segment = _segment("other-uid")
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[map_segment, other_segment],
+        )
+        fake_candidate = _segment("shared-uid")
+        self.assertEqual(
+            harness._audit_display_index_for_segment(session, fake_candidate, 9),
+            0,
+        )
+        missing_segment = _segment("missing-uid")
+        self.assertEqual(
+            harness._audit_display_index_for_segment(session, missing_segment, -5),
+            0,
+        )
+
     def test_highlight_scope_and_rule_payload_helpers(self) -> None:
         harness = _Harness()
         highlighted = harness._highlight_audit_literal_html("A < B\nA", "A")
@@ -362,6 +399,25 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         self.assertIsNotNone(by_id)
         self.assertIsNone(missing_by_id)
 
+    def test_entry_text_name_index_without_actor_id(self) -> None:
+        harness = _Harness()
+        name_session = FileSession(
+            path=Path("Classes.json"),
+            data={},
+            bundles=[],
+            segments=[_segment("Classes.json:entry", segment_kind="name_index")],
+        )
+        setattr(name_session, "is_name_index_session", True)
+        setattr(name_session, "name_index_label", "Class")
+        self.assertEqual(
+            harness._audit_entry_text_for_segment(
+                name_session,
+                name_session.segments[0],
+                5,
+            ),
+            "Class 5",
+        )
+
     def test_ignored_entry_round_trip_updates_cache_and_refresh(self) -> None:
         harness = _Harness()
 
@@ -374,6 +430,16 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         self.assertEqual(harness.invalidate_cache_calls, 2)
         self.assertEqual(harness.refresh_panel_calls, 2)
         self.assertEqual(harness.audit_sanitize_ignored_entries_by_rule, {})
+
+    def test_unignore_missing_rule_set_and_non_dict_rule_payload(self) -> None:
+        harness = _Harness()
+        harness._set_audit_sanitize_entry_ignored("missing", "Map001.json", "u1", False)
+        self.assertEqual(harness.invalidate_cache_calls, 0)
+        self.assertEqual(harness.refresh_panel_calls, 0)
+
+        item = QListWidgetItem("Invalid")
+        item.setData(Qt.ItemDataRole.UserRole, ["not", "dict"])
+        self.assertIsNone(harness._audit_sanitize_rule_payload(item))
 
     def test_occurrence_payload_and_view_key_parsing(self) -> None:
         harness = _Harness()
@@ -394,6 +460,12 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         self.assertEqual(parsed_view_key, (3, "both", "r1"))
         self.assertIsNone(harness._audit_sanitize_occurrence_payload(invalid))
         self.assertIsNone(harness._audit_sanitize_occurrence_view_key_from_item(invalid))
+
+        invalid_payload_type = QListWidgetItem("Bad")
+        invalid_payload_type.setData(Qt.ItemDataRole.UserRole, 123)
+        self.assertIsNone(harness._audit_sanitize_occurrence_payload(None))
+        self.assertIsNone(harness._audit_sanitize_occurrence_payload(invalid_payload_type))
+        self.assertIsNone(harness._audit_sanitize_occurrence_view_key_from_item(None))
 
     def test_set_occurrence_view_visibility_toggles_rows_and_goto_button(self) -> None:
         harness = _Harness()
@@ -417,6 +489,12 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         harness._set_audit_sanitize_occurrence_view_visibility((9, "both", "missing"))
         self.assertEqual(harness.audit_sanitize_occurrences_list.currentRow(), -1)
         self.assertFalse(harness.audit_sanitize_goto_btn.enabled)
+
+    def test_set_occurrence_view_visibility_no_list_is_noop(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_occurrences_list = None
+        harness._set_audit_sanitize_occurrence_view_visibility((1, "both", "r1"))
+        self.assertIsNone(harness.audit_sanitize_active_view_key)
 
     def test_add_occurrence_result_renders_ignored_rows_and_respects_active_view_key(self) -> None:
         harness = _Harness()
@@ -450,6 +528,46 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         self.assertIn("[Ignored]", widget.text())
         self.assertIn("Ignored for selected rule", widget.text())
         self.assertIn("L1 x2", widget.text())
+
+    def test_add_occurrence_result_guards_and_no_field_label_prefix(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_occurrences_list = None
+        harness._add_audit_sanitize_occurrence_result(
+            path=Path("Map001.json"),
+            uid="u1",
+            rule_id="r1",
+            entry_text="Block 1",
+            occurrences=[{"line_index": 1, "hit_count": 1, "line_text": "A"}],
+            find_text="A",
+            show_field_label=False,
+        )
+
+        harness.audit_sanitize_occurrences_list = QListWidget()
+        harness._add_audit_sanitize_occurrence_result(
+            path=Path("Map001.json"),
+            uid="u1",
+            rule_id="r1",
+            entry_text="Block 1",
+            occurrences=[],
+            find_text="A",
+            show_field_label=False,
+        )
+        self.assertEqual(harness.audit_sanitize_occurrences_list.count(), 0)
+
+        harness._add_audit_sanitize_occurrence_result(
+            path=Path("Map001.json"),
+            uid="u1",
+            rule_id="r1",
+            entry_text="Block 1",
+            occurrences=[{"line_index": 1, "hit_count": 1, "line_text": "A"}],
+            find_text="A",
+            show_field_label=False,
+        )
+        self.assertEqual(harness.audit_sanitize_occurrences_list.count(), 1)
+        item = harness.audit_sanitize_occurrences_list.item(0)
+        widget = harness.audit_sanitize_occurrences_list.itemWidget(item)
+        assert isinstance(widget, QLabel)
+        self.assertIn("<b>L1 x1</b>", widget.text())
 
     def test_apply_payload_no_selected_rule_updates_counts_and_clears_view(self) -> None:
         harness = _Harness()
@@ -490,6 +608,32 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         self.assertTrue(harness.audit_sanitize_display_complete)
         self.assertEqual(harness.audit_sanitize_displayed_key, (3, "original", ""))
         self.assertEqual(harness.hide_overlay_calls, 1)
+
+    def test_apply_payload_guard_and_invalid_rule_item_continue(self) -> None:
+        harness = _Harness()
+        harness._apply_audit_sanitize_payload(
+            generation=1,
+            scope="original",
+            selected_rule_id="r1",
+            selected_find_text="A",
+            payload={},
+        )
+
+        harness.audit_sanitize_rules_list = QListWidget()
+        harness.audit_sanitize_summary_label = QLabel()
+        harness.audit_sanitize_occurrences_list = QListWidget()
+        harness.audit_sanitize_goto_btn = _ButtonStub()
+        bad_rule = QListWidgetItem("bad")
+        bad_rule.setData(Qt.ItemDataRole.UserRole, "bad-payload")
+        harness.audit_sanitize_rules_list.addItem(bad_rule)
+        harness._apply_audit_sanitize_payload(
+            generation=2,
+            scope="both",
+            selected_rule_id="",
+            selected_find_text="",
+            payload={"counts": {"r1": 1}},
+        )
+        self.assertIn("Potential replacements:", harness.audit_sanitize_summary_label.text())
 
     def test_apply_payload_selected_rule_handles_empty_and_built_views(self) -> None:
         harness = _Harness()
@@ -627,6 +771,42 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         self.assertEqual(len(apply_calls), 1)
         self.assertEqual(harness.queued_requests, [])
 
+    def test_refresh_panel_occurrence_cache_payload_fallback_branch(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_rules_list = QListWidget()
+        harness.audit_sanitize_summary_label = QLabel()
+        harness.audit_sanitize_occurrences_list = QListWidget()
+        harness.audit_sanitize_goto_btn = _ButtonStub()
+        harness.audit_sanitize_apply_selected_btn = _ButtonStub()
+        rule = QListWidgetItem("Rule")
+        rule.setData(
+            Qt.ItemDataRole.UserRole,
+            {"rule_id": "r1", "label": "Rule", "find_text": "「", "replace_text": '"'},
+        )
+        harness.audit_sanitize_rules_list.addItem(rule)
+        harness.audit_sanitize_rules_list.setCurrentItem(rule)
+        harness.audit_sanitize_scope_combo = _ComboStub("both")
+        requested_key = (harness.audit_cache_generation, "both", "r1")
+        harness.audit_sanitize_counts_cache_key = (harness.audit_cache_generation, "both")
+        harness.audit_sanitize_counts_cache = {"r1": 2}
+        harness.audit_sanitize_occurrence_cache_by_key = {}
+        harness.audit_sanitize_occurrence_cache_key = requested_key
+        harness.audit_sanitize_occurrence_cache_payload = {
+            "records": [],
+            "total_hits": 2,
+            "entries": 1,
+            "block_count": 1,
+        }
+        apply_calls: list[dict[str, Any]] = []
+
+        def _capture(**kwargs: Any) -> None:
+            apply_calls.append(dict(kwargs))
+
+        harness._apply_audit_sanitize_payload = _capture  # type: ignore[method-assign]
+        harness._refresh_audit_sanitize_panel()
+        self.assertEqual(len(apply_calls), 1)
+        self.assertEqual(apply_calls[0]["selected_rule_id"], "r1")
+
     def test_refresh_panel_queues_occurrence_or_full_scans(self) -> None:
         harness = _Harness()
         harness.audit_sanitize_rules_list = QListWidget()
@@ -679,6 +859,11 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
             {"r2": {("Map002.json", "u2")}},
         )
         self.assertEqual(harness2.audit_sanitize_summary_label.text(), "Scanning sanitize results...")
+
+    def test_refresh_occurrences_calls_refresh_panel(self) -> None:
+        harness = _Harness()
+        harness._refresh_audit_sanitize_occurrences()
+        self.assertEqual(harness.refresh_panel_calls, 1)
 
     def test_render_next_batch_partial_completion_and_error_paths(self) -> None:
         harness = _Harness()
@@ -743,6 +928,21 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         self.assertEqual(failing.stop_render_calls, 1)
         self.assertEqual(failing.audit_sanitize_summary_label.text(), "Sanitize render failed: boom")
 
+    def test_render_next_batch_guard_paths(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_occurrences_list = None
+        harness.audit_sanitize_goto_btn = _ButtonStub()
+        harness.audit_sanitize_render_records = [{}]
+        harness._render_next_audit_sanitize_occurrence_batch()
+        self.assertEqual(harness.stop_render_calls, 1)
+
+        harness2 = _Harness()
+        harness2.audit_sanitize_occurrences_list = QListWidget()
+        harness2.audit_sanitize_goto_btn = _ButtonStub()
+        harness2.audit_sanitize_render_records = []
+        harness2._render_next_audit_sanitize_occurrence_batch()
+        self.assertEqual(harness2.stop_render_calls, 1)
+
     def test_go_to_selected_occurrence_validates_payload(self) -> None:
         harness = _Harness()
         harness.audit_sanitize_occurrences_list = QListWidget()
@@ -760,6 +960,30 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         harness.audit_sanitize_occurrences_list.setCurrentItem(valid)
         harness._go_to_selected_audit_sanitize_occurrence()
         self.assertEqual(harness.jump_calls, [("Map001.json", "u1")])
+
+    def test_go_to_selected_occurrence_guard_paths(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_occurrences_list = None
+        harness._go_to_selected_audit_sanitize_occurrence()
+        self.assertEqual(harness.jump_calls, [])
+
+        harness.audit_sanitize_occurrences_list = QListWidget()
+        harness._go_to_selected_audit_sanitize_occurrence()
+        self.assertEqual(harness.jump_calls, [])
+
+        non_dict = QListWidgetItem("Bad")
+        non_dict.setData(Qt.ItemDataRole.UserRole, "bad")
+        harness.audit_sanitize_occurrences_list.addItem(non_dict)
+        harness.audit_sanitize_occurrences_list.setCurrentItem(non_dict)
+        harness._go_to_selected_audit_sanitize_occurrence()
+        self.assertEqual(harness.jump_calls, [])
+
+        missing_uid = QListWidgetItem("Missing uid")
+        missing_uid.setData(Qt.ItemDataRole.UserRole, {"path": "Map001.json", "uid": ""})
+        harness.audit_sanitize_occurrences_list.addItem(missing_uid)
+        harness.audit_sanitize_occurrences_list.setCurrentItem(missing_uid)
+        harness._go_to_selected_audit_sanitize_occurrence()
+        self.assertEqual(harness.jump_calls, [])
 
     def test_rules_context_menu_apply_action(self) -> None:
         harness = _Harness()
@@ -787,6 +1011,19 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
             harness.apply_rules_calls,
             [[{"rule_id": "r1", "label": "Rule 1", "find_text": "「", "replace_text": '"'}]],
         )
+
+    def test_rules_context_menu_guard_paths(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_rules_list = None
+        harness._on_audit_sanitize_rules_context_menu(object())
+
+        harness.audit_sanitize_rules_list = _FakeList([], current_row=-1)
+        harness._on_audit_sanitize_rules_context_menu(object())
+
+        bad_item = _FakeItem({Qt.ItemDataRole.UserRole: "bad"})
+        harness.audit_sanitize_rules_list = _FakeList([bad_item], current_row=-1)
+        harness._on_audit_sanitize_rules_context_menu(object())
+        self.assertEqual(harness.apply_rules_calls, [])
 
     def test_occurrences_context_menu_branches(self) -> None:
         harness = _Harness()
@@ -818,6 +1055,31 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         self.assertEqual(len(harness.apply_entry_calls), 1)
         self.assertTrue(harness._is_audit_sanitize_entry_ignored(rule_id, "Map001.json", "u1"))
         self.assertEqual(harness.status_bar.messages[-1], "Entry ignored.")
+
+    def test_occurrences_context_menu_guard_paths(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_occurrences_list = None
+        harness._on_audit_sanitize_occurrences_context_menu(object())
+
+        harness.audit_sanitize_occurrences_list = _FakeList([], current_row=-1)
+        harness._on_audit_sanitize_occurrences_context_menu(object())
+
+        bad_payload_item = _FakeItem({Qt.ItemDataRole.UserRole: "bad"})
+        harness.audit_sanitize_occurrences_list = _FakeList([bad_payload_item], current_row=-1)
+        harness._on_audit_sanitize_occurrences_context_menu(object())
+
+        unknown_rule_item = _FakeItem(
+            {
+                Qt.ItemDataRole.UserRole: {
+                    "path": "Map001.json",
+                    "uid": "u1",
+                    "rule_id": "missing_rule",
+                }
+            }
+        )
+        harness.audit_sanitize_occurrences_list = _FakeList([unknown_rule_item], current_row=-1)
+        harness._on_audit_sanitize_occurrences_context_menu(object())
+        self.assertEqual(harness.jump_calls, [])
 
 
 if __name__ == "__main__":
