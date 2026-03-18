@@ -85,6 +85,31 @@ class IndexDBTests(unittest.TestCase):
             finally:
                 db.close()
 
+    def test_log_changes_with_empty_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "index.sqlite3"
+            db = DialogueIndexDB(db_path)
+            try:
+                db.log_changes("Map003.json", [])
+                count_row = db.conn.execute(
+                    "SELECT COUNT(*) FROM change_log WHERE file_path = ?",
+                    ("Map003.json",),
+                ).fetchone()
+                self.assertEqual(count_row[0], 0)
+            finally:
+                db.close()
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_close_swallows_connection_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "index.sqlite3"
+            db = DialogueIndexDB(db_path)
+            original_conn = db.conn
+            class _FailingConnection:
+                def close(self) -> None:
+                    raise RuntimeError("boom")
+
+            db.conn = _FailingConnection()
+            try:
+                db.close()
+            finally:
+                original_conn.close()

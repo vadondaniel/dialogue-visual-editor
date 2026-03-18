@@ -218,6 +218,122 @@ class TextUtilsTests(unittest.TestCase):
         self.assertEqual(updated, r"\! ......... \C[2]")
         self.assertEqual(replacements, 0)
 
+    def test_misc_private_coverage_paths(self) -> None:
+        original_font_size = text_utils._DEFAULT_FONT_SIZE
+        original_capital_policy = text_utils.CAPITAL_START_FORCE_BREAK
+        text_utils._DEFAULT_FONT_SIZE = 0
+        try:
+            self.assertEqual(text_utils.message_font_scale_for_size(28), 1.0)
+            self.assertEqual(text_utils._clamp_font_size(-5), text_utils._MIN_FONT_SIZE)
+        finally:
+            text_utils._DEFAULT_FONT_SIZE = original_font_size
+
+        self.assertFalse(text_utils.looks_like_name_line(""))
+        self.assertTrue(text_utils.looks_like_name_line(r"\N[1]"))
+        self.assertFalse(text_utils.looks_like_name_line("abc"))
+        self.assertFalse(text_utils.looks_like_name_line("This line has too many words for a name"))
+
+        self.assertEqual(text_utils.trim_extra_ellipsis_runs("abc"), ("abc", 0))
+        self.assertEqual(text_utils.preview_text("x" * 70, 66), "x" * 63 + "...")
+        self.assertEqual(text_utils._unit_visible_value({"visible": "bad"}), 0.0)
+        self.assertTrue(text_utils._unit_is_space({"text": " ", "visible": 1.0}))
+        self.assertFalse(text_utils._unit_is_space({"text": " ", "visible": -1.0}))
+        self.assertEqual(text_utils._find_last_visible_space_idx([]), None)
+        self.assertEqual(
+            text_utils._find_last_visible_space_idx(
+                [
+                    {"text": "A", "visible": 1.0, "is_newline": False},
+                    {"text": " ", "visible": 1.0, "is_newline": False},
+                    {"text": "B", "visible": 1.0, "is_newline": False},
+                    {"text": "\t", "visible": 1.0, "is_newline": False},
+                ],
+            ),
+            4,
+        )
+
+        self.assertTrue(text_utils._starts_with_capital_visible_letter("Abc"))
+        self.assertFalse(text_utils._starts_with_capital_visible_letter("abc"))
+        self.assertTrue(text_utils._starts_with_noncapital_visible_letter("abc"))
+        self.assertFalse(text_utils._starts_with_noncapital_visible_letter("Abc"))
+
+        self.assertTrue(text_utils._should_force_break_after_line("", 12, next_line="next"))
+        self.assertFalse(
+            text_utils._should_force_break_after_line(
+                "Hello,",
+                20,
+                next_line="World",
+                ending_policy="allow_comma",
+            )
+        )
+        self.assertFalse(
+            text_utils._should_force_break_after_line(
+                "No punctuation yet",
+                20,
+                next_line="Next",
+                ending_policy="no_punctuation_only",
+            )
+        )
+        self.assertTrue(
+            text_utils._should_force_break_after_line(
+                "This;",
+                20,
+                next_line="next",
+                ending_policy="default",
+            )
+        )
+        self.assertFalse(
+            text_utils._should_force_break_after_line(
+                "and continue...",
+                30,
+                next_line="then",
+                allow_ellipsis_lowercase_continuation=True,
+            )
+        )
+
+        self.assertFalse(text_utils._should_force_break_after_line("A", 30, next_line="x"))
+
+        text_utils.CAPITAL_START_FORCE_BREAK = True
+        try:
+            collapsed = text_utils._build_smart_collapse_body_text(
+                ["Hello", "World"],
+                120,
+                ending_policy="default",
+            )
+            self.assertIn("\n", collapsed)
+            self.assertEqual(collapsed, "Hello\nWorld")
+        finally:
+            text_utils.CAPITAL_START_FORCE_BREAK = original_capital_policy
+
+    def test_wrap_text_word_aware_fallback_reprocessing_paths(self) -> None:
+        original_parse_units_for_measure = text_utils.parse_units_for_measure
+
+        text_utils.parse_units_for_measure = (
+            lambda _text: [{"text": "Long", "visible": 10.0, "is_newline": False}]
+        )
+        try:
+            self.assertEqual(
+                text_utils.wrap_text_word_aware("ignored", 3),
+                ["Long"],
+            )
+        finally:
+            text_utils.parse_units_for_measure = original_parse_units_for_measure
+
+        text_utils.parse_units_for_measure = (
+            lambda _text: [
+                {"text": "A", "visible": 1.0, "is_newline": False},
+                {"text": " ", "visible": 1.0, "is_newline": False},
+                {"text": "b", "visible": 1.0, "is_newline": False},
+                {"text": "LongToken", "visible": 10.0, "is_newline": False},
+            ]
+        )
+        try:
+            self.assertEqual(
+                text_utils.wrap_text_word_aware("ignored", 2),
+                ["A", "b", "LongToken"],
+            )
+        finally:
+            text_utils.parse_units_for_measure = original_parse_units_for_measure
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -96,6 +96,53 @@ class NormalizationsDialogTests(unittest.TestCase):
         self.assertEqual(dialog.normalize_codes_btn.text(), "Normalize Codes... (0)")
         dialog.deleteLater()
 
+    def test_refresh_counts_uses_safe_zero_when_counting_fails(self) -> None:
+        counts_called = {
+            "normalize": 0,
+            "trim": 0,
+            "collapse_current": 0,
+            "collapse_all": 0,
+        }
+
+        def _raises_normalize() -> int:
+            counts_called["normalize"] += 1
+            raise RuntimeError("normalize failed")
+
+        def _raises_trim() -> int:
+            counts_called["trim"] += 1
+            raise RuntimeError("trim failed")
+
+        def _raises_collapse_current() -> int:
+            counts_called["collapse_current"] += 1
+            raise RuntimeError("collapse current failed")
+
+        def _raises_collapse_all() -> int:
+            counts_called["collapse_all"] += 1
+            raise RuntimeError("collapse all failed")
+
+        def _normalize() -> None:
+            counts_called["normalize"] += 1
+
+        dialog = NormalizationsDialog(
+            on_normalize_codes=_normalize,
+            on_trim_extra_ellipses=lambda: None,
+            on_smart_collapse_all=lambda: None,
+            on_variable_lengths=lambda: None,
+            count_normalize_codes=_raises_normalize,
+            count_trim_extra_ellipses=_raises_trim,
+            count_smart_collapse_current_file=_raises_collapse_current,
+            count_smart_collapse_all_files=_raises_collapse_all,
+        )
+
+        self.assertEqual(dialog.normalize_codes_btn.text(), "Normalize Codes... (0)")
+        self.assertEqual(dialog.trim_ellipses_btn.text(), "Trim Extra Ellipses... (0)")
+        self.assertEqual(dialog.smart_collapse_btn.text(), "Smart Collapse All... (0 | 0)")
+        self.assertEqual(counts_called["normalize"], 1)
+        self.assertEqual(counts_called["trim"], 1)
+        self.assertEqual(counts_called["collapse_current"], 1)
+        self.assertEqual(counts_called["collapse_all"], 1)
+        dialog.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()
