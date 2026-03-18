@@ -7,10 +7,16 @@ from unittest.mock import patch
 
 from dialogue_visual_editor.helpers.core.parser import (
     _collect_tyrano_implicit_dialogue_block,
+    _build_json_text_segment,
+    _build_note_text_segments,
+    _build_plugins_text_segments,
+    _build_tyrano_choice_segments,
+    _build_tyrano_dialogue_segments,
     _extract_tyrano_config_assignment_value,
     _extract_tyrano_script_assignment_string_value,
     _coerce_tyrano_config_lines,
     _coerce_tyrano_script_chunks,
+    _build_tyrano_script_string_segments,
     _extract_tyrano_standalone_dialogue_marker,
     _extract_tyrano_tag_attribute_value,
     _find_matching_bracket_end,
@@ -28,6 +34,8 @@ from dialogue_visual_editor.helpers.core.parser import (
     _is_tyrano_iscript_end_line,
     _is_tyrano_iscript_start_line,
     _js_bracket_delta_outside_strings,
+    _build_tyrano_tag_text_segments,
+    _build_system_text_segments,
     _name_index_spec_for_file,
     _normalize_tyrano_script_string_key,
     _nearest_non_empty_line,
@@ -58,6 +66,11 @@ from dialogue_visual_editor.helpers.core.parser import (
     is_tyrano_script_path,
     load_plugins_js_file,
     plugins_js_source_from_data,
+    parse_dialogue_data,
+    parse_dialogue_file,
+    tyrano_config_source_from_data,
+    tyrano_config_title_from_data,
+    tyrano_script_source_from_data,
 )
 
 
@@ -354,6 +367,484 @@ class ParserInternalCoverageTests(unittest.TestCase):
         self.assertIsNone(
             _extract_tyrano_tag_attribute_value("name=test", "not-present")
         )
+
+    def test_build_tyrano_script_string_segments_javascript_owner_and_end_list(self) -> None:
+        path = Path("scene.js")
+        chunks = [
+            {"kind": "raw_line", "line": "CHARA = {"},
+            {"kind": "raw_line", "line": "name: 'Rin'"},
+            {"kind": "raw_line", "line": "end_list = ["},
+            {"kind": "raw_line", "line": "  { id: '双子', name: 'Mio' },"},
+            {"kind": "raw_line", "line": "]"},
+            {"kind": "raw_line", "line": "fullName: 'Luna'"},
+            {"kind": "raw_line", "line": "};"},
+            {"kind": "raw_line", "line": "id: 'ignore'"},
+        ]
+        data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_chunks__": chunks,
+            "__dve_tyrano_script_newline__": "\n",
+            "__dve_tyrano_script_has_trailing_newline__": True,
+        }
+
+        segments = _build_tyrano_script_string_segments(path, data)
+        self.assertEqual(len(segments), 3)
+        self.assertEqual([segment.lines for segment in segments], [["Rin"], ["双子"], ["Luna"]])
+        self.assertEqual(
+            [getattr(segment, "tyrano_tag_text_join_mode", "") for segment in segments],
+            ["script_string", "script_string_end_id", "script_string"],
+        )
+        self.assertIn("CHARA.name", segments[0].context)
+        self.assertIn("END_LIST[1].id", segments[1].context)
+
+        filtered = _build_tyrano_script_string_segments(
+            path=path,
+            data=data,
+            excluded_chunk_indexes={5},
+        )
+        self.assertEqual(len(filtered), 2)
+        self.assertEqual([segment.lines for segment in filtered], [["Rin"], ["双子"]])
+
+    def test_build_tyrano_script_string_segments_collects_iscript_assignments(self) -> None:
+        path = Path("scene.ks")
+        data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_chunks__": [
+                {"kind": "raw_line", "line": "[iscript]"},
+                {"kind": "raw_line", "line": "mp.name = 'タイトル'"},
+                {"kind": "raw_line", "line": "f.ending = '双子'"},
+                {"kind": "raw_line", "line": "[endscript]"},
+                {"kind": "raw_line", "line": "f.ending = '外側の行'"},
+            ],
+            "__dve_tyrano_script_newline__": "\n",
+            "__dve_tyrano_script_has_trailing_newline__": True,
+        }
+
+        segments = _build_tyrano_script_string_segments(path, data)
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0].lines, ["タイトル"])
+        self.assertEqual(segments[1].lines, ["双子"])
+        self.assertEqual(
+            [segment.tyrano_tag_text_join_mode for segment in segments],
+            ["script_string", "script_string_end_id_ref"],
+        )
+        self.assertIn("f.ending -> END_LIST.id", segments[1].context)
+
+    def test_tyrano_choice_and_tag_builder_indexes(self) -> None:
+        path = Path("scene.ks")
+        chunks = [
+            {"kind": "raw_line", "line": '[glink text="Choice 1" target="*A"]'},
+            {"kind": "raw_line", "line": '[mylink text="Choice 2" target="*B"]'},
+            {"kind": "raw_line", "line": '[jump target="*C"]'},
+            {"kind": "raw_line", "line": '[button text="Support" target="*D"]'},
+        ]
+        data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_chunks__": chunks,
+            "__dve_tyrano_script_newline__": "\n",
+            "__dve_tyrano_script_has_trailing_newline__": True,
+        }
+
+        choice_segments, choice_chunk_indexes = _build_tyrano_choice_segments(path, data)
+        self.assertEqual(len(choice_segments), 1)
+        self.assertEqual(choice_segments[0].lines, ["Choice 1", "Choice 2"])
+        self.assertEqual(choice_chunk_indexes, {0, 1})
+
+        tag_segments = _build_tyrano_tag_text_segments(
+            path=path,
+            data=data,
+            excluded_chunk_indexes=choice_chunk_indexes,
+        )
+        self.assertEqual(len(tag_segments), 1)
+        self.assertEqual(tag_segments[0].lines, ["Support"])
+
+    def test_parse_dialogue_data_parses_generic_command_and_plugin_lists(self) -> None:
+        path = Path("Random.json")
+        data = [
+            {"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, "Hero"]},
+            {"code": 401, "indent": 0, "parameters": ["First line"]},
+            {"code": 102, "indent": 0, "parameters": [["A", "B"], 0, 0, 2, 0]},
+            {"code": 402, "indent": 0, "parameters": [0, "A"]},
+            {"code": 402, "indent": 0, "parameters": [1, "B"]},
+            {"code": 404, "indent": 0, "parameters": []},
+            {
+                "code": 357,
+                "indent": 0,
+                "parameters": [
+                    "DTextPicture",
+                    "dText",
+                    "文字列",
+                    {
+                        "text": "\\i[7]\\C[27]テキスト\\C[0]",
+                        "flag": "false",
+                        "align": "left",
+                        "windowColor": "#ff99ff",
+                        "num": "12",
+                        "payload": "補助テキスト",
+                    },
+                ],
+            },
+            {
+                "code": 355,
+                "indent": 0,
+                "parameters": [
+                    "$gameMessage.setSpeakerName(\"Narr\")"
+                ],
+            },
+            {"code": 655, "indent": 0, "parameters": ['$gameMessage.add("Line")']},
+            {"code": 655, "indent": 0, "parameters": ["$gameMessage.setSpeakerName(\"Narr\")"]},
+            {"code": 655, "indent": 0, "parameters": ["$gameMessage.setFaceImage('顔', 2)"]},
+            {"code": 655, "indent": 0, "parameters": ["$gameMessage.setBackground(1)"]},
+            {"code": 655, "indent": 0, "parameters": ["$gameMessage.setPositionType(3)"]},
+        ]
+
+        session = parse_dialogue_data(path, data)
+        kinds = [segment.segment_kind for segment in session.segments]
+        self.assertEqual(
+            kinds,
+            ["dialogue", "choice", "plugin_command_text", "plugin_command_text", "script_message"],
+        )
+
+        dialogue_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "dialogue"
+        )
+        self.assertEqual(dialogue_segment.lines, ["First line"])
+
+        choice_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "choice"
+        )
+        self.assertEqual(choice_segment.lines, ["A", "B"])
+
+        plugin_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "plugin_command_text"
+        ]
+        self.assertEqual(len(plugin_segments), 2)
+        self.assertEqual(
+            {getattr(segment, "plugin_command_text_path", ()) for segment in plugin_segments},
+            {(6, "parameters", 3, "text"), (6, "parameters", 3, "payload")},
+        )
+
+        script_segment = next(
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "script_message"
+        )
+        self.assertEqual(script_segment.lines, ["Line"])
+        self.assertEqual(script_segment.speaker_name, "Narr")
+        self.assertEqual(script_segment.face_name, "顔")
+        self.assertEqual(script_segment.face_index, 2)
+        self.assertEqual(script_segment.background, 1)
+        self.assertEqual(script_segment.position, 3)
+
+    def test_parse_dialogue_data_branches_without_payload_lines(self) -> None:
+        config_data = {
+            "__dve_tyrano_config_marker__": "tyrano_config",
+            "__dve_tyrano_config_newline__": "\n",
+            "__dve_tyrano_config_has_trailing_newline__": True,
+            "__dve_tyrano_config_lines__": [";comment", "System.title = "],
+        }
+        config_session = parse_dialogue_data(Path("config.tjs"), config_data)
+        self.assertEqual(config_session.segments, [])
+        self.assertTrue(getattr(config_session, "is_name_index_session", False))
+
+        plugin_data = {
+            "__dve_plugins_js_marker__": "plugins_js",
+            "__dve_plugins_js_array__": [],
+            "__dve_plugins_js_prefix__": "",
+            "__dve_plugins_js_suffix__": "",
+        }
+        plugin_session = parse_dialogue_data(Path("plugins.js"), plugin_data)
+        self.assertEqual(plugin_session.segments, [])
+        self.assertTrue(getattr(plugin_session, "is_name_index_session", False))
+
+        tyrano_data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_chunks__": [{"kind": "raw_line", "line": "const x = 1;"}],
+            "__dve_tyrano_script_newline__": "\n",
+            "__dve_tyrano_script_has_trailing_newline__": True,
+        }
+        tyrano_session = parse_dialogue_data(Path("scene.ks"), tyrano_data)
+        self.assertEqual(tyrano_session.segments, [])
+
+    def test_additional_text_helper_and_file_spec_branches(self) -> None:
+        self.assertEqual(_name_index_spec_for_file("armors.json")[0], "armor")
+        self.assertEqual(_name_index_spec_for_file("enemies.json")[0], "enemy")
+        self.assertEqual(_name_index_spec_for_file("weapons.json")[0], "weapon")
+        self.assertEqual(_name_index_spec_for_file("mapinfos.json")[0], "mapinfo")
+        self.assertEqual(_name_index_spec_for_file("skills.json")[0], "skill")
+        self.assertEqual(_name_index_spec_for_file("states.json")[0], "state")
+        self.assertEqual(_name_index_spec_for_file("tilesets.json")[0], "tileset")
+        self.assertEqual(_name_index_spec_for_file("troops.json")[0], "troop")
+
+        self.assertFalse(_is_tyrano_dialogue_text_line(""))
+        self.assertFalse(_is_tyrano_dialogue_text_line("["))
+        self.assertFalse(_is_tyrano_dialogue_text_line("[ ]tail"))
+        self.assertTrue(_is_tyrano_dialogue_text_line("[abc]tail"))
+        self.assertEqual(_tyrano_speaker_name_from_line("plain"), "")
+
+        self.assertEqual(split_tyrano_dialogue_line_and_suffix(123), ("", ""))
+        self.assertEqual(split_tyrano_dialogue_line_and_suffix("plain"), ("plain", ""))
+        self.assertEqual(_split_tyrano_inline_line_breaks(""), ([""], [""]))
+        self.assertEqual(_replace_tyrano_inline_line_breaks_with_newlines(""), "")
+        self.assertEqual(_replace_tyrano_attribute_line_breaks_with_newlines(""), "")
+        self.assertEqual(_extract_tyrano_standalone_dialogue_marker(""), "")
+        self.assertEqual(_split_tyrano_leading_indent(""), ("", ""))
+
+    def test_bracket_and_plugins_source_error_branches(self) -> None:
+        escaped_source = r'["a\"b"]'
+        self.assertEqual(_find_matching_bracket_end(escaped_source, 0), len(escaped_source) - 1)
+
+        with patch("dialogue_visual_editor.helpers.core.parser.json.loads", return_value={"x": 1}):
+            with self.assertRaises(ValueError):
+                _parse_plugins_js_source("var $plugins = [1];")
+
+        with self.assertRaises(ValueError):
+            plugins_js_source_from_data({})
+
+    def test_additional_flow_grouping_and_implicit_block_paths(self) -> None:
+        self.assertEqual(_tyrano_flow_depth_delta(""), 0)
+        self.assertEqual(_tyrano_flow_depth_delta("[macro]"), 0)
+        self.assertFalse(_has_tyrano_dialogue_marker_near_window(["A", "B"], 0, 2))
+        self.assertFalse(_is_tyrano_conditional_dialogue_window(["A", "B"], 1, 1))
+
+        grouped = _group_tyrano_dialogue_text_items(
+            [
+                {"kind": "text", "line": "A"},
+                {"kind": "raw", "line": "[if cond]"},
+                {"kind": "text", "line": "B"},
+                {"kind": "raw", "line": "X"},
+                123,
+            ]
+        )
+        self.assertEqual(grouped, [[(0, "A")], [(2, "B")]])
+
+        self.assertIsNone(_collect_tyrano_implicit_dialogue_block(["A"], -1))
+        self.assertIsNone(_collect_tyrano_implicit_dialogue_block(["   "], 0))
+        self.assertIsNone(
+            _collect_tyrano_implicit_dialogue_block(["#Hero", "[if cond]", "[endif]"], 0)
+        )
+
+        block = _collect_tyrano_implicit_dialogue_block(
+            ["Hello", "[if cond]", "[r]", "[endif]"],
+            0,
+        )
+        self.assertIsNotNone(block)
+        assert block is not None
+        body_items, next_index = block
+        self.assertEqual(next_index, 4)
+        self.assertEqual(body_items[0], {"kind": "text", "line": "Hello"})
+
+        parsed = _parse_tyrano_script_source("[tb_start_text mode=1]\nA\n")
+        self.assertEqual(parsed["__dve_tyrano_script_chunks__"][0], {"kind": "raw_line", "line": "[tb_start_text mode=1]"})
+
+    def test_config_title_and_tag_attribute_edge_paths(self) -> None:
+        self.assertIsNone(_extract_tyrano_config_assignment_value("x", ""))
+        self.assertIsNone(_extract_tyrano_config_assignment_value("System.title", "System.title"))
+        self.assertEqual(
+            _extract_tyrano_config_assignment_value("System.title =   A   ", "System.title"),
+            (17, 18, "A", ""),
+        )
+
+        self.assertEqual(_unescape_tyrano_tag_attribute_value(r"\q"), r"\q")
+        self.assertIsNone(_extract_tyrano_tag_attribute_value("line", ""))
+        self.assertIsNone(
+            _extract_tyrano_tag_attribute_value('[data-text="x" text = ]', "text")
+        )
+        self.assertIsNone(
+            _extract_tyrano_tag_attribute_value('[text value="x"]', "text")
+        )
+
+    def test_source_builders_and_data_validation_error_paths(self) -> None:
+        self.assertFalse(is_tyrano_script_data([]))
+        self.assertFalse(is_tyrano_config_data([]))
+        self.assertEqual(_coerce_tyrano_config_lines([]), [])
+        self.assertEqual(_coerce_tyrano_script_chunks([]), [])
+
+        with self.assertRaises(ValueError):
+            tyrano_script_source_from_data({})
+        with self.assertRaises(ValueError):
+            tyrano_config_source_from_data({})
+        self.assertEqual(tyrano_config_title_from_data({}), "")
+        self.assertEqual(
+            tyrano_config_title_from_data(
+                {
+                    "__dve_tyrano_config_marker__": "tyrano_config",
+                    "__dve_tyrano_config_lines__": ["System.title = 'X'"],
+                    "__dve_tyrano_config_title_line_index__": "0",
+                }
+            ),
+            "",
+        )
+        self.assertEqual(
+            tyrano_config_title_from_data(
+                {
+                    "__dve_tyrano_config_marker__": "tyrano_config",
+                    "__dve_tyrano_config_lines__": ["no title line"],
+                    "__dve_tyrano_config_title_line_index__": 0,
+                }
+            ),
+            "",
+        )
+
+    def test_segment_builder_edge_paths_and_note_helpers(self) -> None:
+        self.assertEqual(_build_plugins_text_segments(Path("plugins.js"), {}), [])
+
+        segment = _build_json_text_segment(
+            path=Path("Map001.json"),
+            uid="Map001.json:N:raw",
+            context="Map001.json > events[1].note",
+            text="A\nB",
+            path_tokens=("events", 1, "note"),
+            speaker="Narrator",
+            segment_kind="note_text",
+        )
+        self.assertEqual(segment.lines, ["A", "B"])
+        self.assertEqual(getattr(segment, "json_text_path", ()), ("events", 1, "note"))
+        self.assertEqual(segment.speaker_name, "Narrator")
+
+        notes = _build_note_text_segments(
+            Path("Map001.json"),
+            {"events": [{"note": "abc"}, {"note": "日本語"}, {"note": ""}]},
+        )
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(getattr(notes[0], "note_text_path", ()), ("events", 1, "note"))
+
+        system_segments = _build_system_text_segments(
+            Path("System.json"),
+            {
+                "terms": {
+                    "basic": ["", "攻撃"],
+                    "commands": ["", "実行"],
+                    "params": ["", "最大HP"],
+                    "messages": {"victory": "勝利", "blank": "   "},
+                }
+            },
+        )
+        contexts = {segment.context for segment in system_segments}
+        self.assertIn("System.json > system.terms.basic[1]", contexts)
+        self.assertIn("System.json > system.terms.commands[1]", contexts)
+        self.assertIn("System.json > system.terms.params[1]", contexts)
+        self.assertIn("System.json > system.terms.messages.victory", contexts)
+
+    def test_tyrano_segment_builder_edge_branches(self) -> None:
+        dialogue_data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_chunks__": [
+                {"kind": "dialogue_block", "body_items": "bad"},
+                {"kind": "dialogue_block", "body_items": [{"kind": "raw", "line": "X"}]},
+                {"kind": "dialogue_block", "body_items": [{"kind": "speaker", "line": "#A"}]},
+                {"kind": "dialogue_block", "body_items": [123, {"kind": "speaker", "line": "#B"}, {"kind": "text", "line": " line"}]},
+            ],
+        }
+        dialogue_segments = _build_tyrano_dialogue_segments(Path("scene.ks"), dialogue_data)
+        self.assertEqual(len(dialogue_segments), 2)
+        self.assertEqual(dialogue_segments[0].lines, [""])
+        self.assertEqual(dialogue_segments[1].lines, ["line"])
+
+        choice_data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_chunks__": [
+                {"kind": "dialogue_block", "body_items": []},
+                {"kind": "raw_line", "line": "[glink target='*A']"},
+                {"kind": "raw_line", "line": "[glink text='One' target='*A']"},
+                {"kind": "dialogue_block", "body_items": []},
+                {"kind": "raw_line", "line": "[mylink text='Two' target='*B']"},
+                {"kind": "raw_line", "line": "[mylink target='*B']"},
+            ],
+        }
+        choice_segments, used = _build_tyrano_choice_segments(Path("scene.ks"), choice_data)
+        self.assertEqual([segment.lines for segment in choice_segments], [["One"], ["Two"]])
+        self.assertEqual(used, {2, 4})
+
+        js_data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_chunks__": [
+                {"kind": "raw_line", "line": "end_list = ["},
+                {"kind": "raw_line", "line": "]]"},
+                {"kind": "raw_line", "line": "name: '   '"},
+                {"kind": "raw_line", "line": "end_list = [ { id: 'A']]"},
+            ],
+        }
+        js_segments = _build_tyrano_script_string_segments(Path("scene.js"), js_data)
+        self.assertEqual(len(js_segments), 1)
+        self.assertEqual(js_segments[0].lines, ["A"])
+        self.assertEqual(getattr(js_segments[0], "tyrano_tag_text_join_mode", ""), "script_string_end_id")
+
+        ks_data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_chunks__": [
+                {"kind": "raw_line", "line": "[iscript]"},
+                {"kind": "raw_line", "line": "' ' : '和文'"},
+            ],
+        }
+        ks_segments = _build_tyrano_script_string_segments(Path("scene.ks"), ks_data)
+        self.assertEqual(len(ks_segments), 1)
+        self.assertIn("(script_text)", ks_segments[0].context)
+
+    def test_parse_dialogue_data_additional_command_and_index_paths(self) -> None:
+        command_data = [
+            {"code": 102, "indent": "bad", "parameters": [["Only"], 0, 0, 2, 0]},
+            {"code": 355, "indent": 0, "parameters": ["tmpl_speaker"]},
+            {"code": 655, "indent": 0, "parameters": ['$gameMessage.add("Line");']},
+            {"code": 655, "indent": 0, "parameters": ["$gameMessage.setBackground(foo);"]},
+            {"code": 655, "indent": 0, "parameters": ["$gameMessage.setPositionType(bar);"]},
+            "raw-token",
+        ]
+        with patch(
+            "dialogue_visual_editor.helpers.core.parser.parse_game_message_templated_call",
+            side_effect=lambda text: ("setSpeakerName", "Temp {{EXPR1}}", '"', ["x"]) if text == "tmpl_speaker" else None,
+        ):
+            command_session = parse_dialogue_data(Path("Map999.json"), command_data)
+
+        choice_segment = next(
+            segment
+            for segment in command_session.segments
+            if segment.segment_kind == "choice"
+        )
+        self.assertEqual(choice_segment.lines, ["Only"])
+        self.assertEqual(choice_segment.code401_template["parameters"], [0, ""])
+
+        script_segment = next(
+            segment
+            for segment in command_session.segments
+            if segment.segment_kind == "script_message"
+        )
+        self.assertEqual(script_segment.speaker_name, "Temp {{EXPR1}}")
+        self.assertEqual(script_segment.lines, ["Line"])
+        self.assertEqual(script_segment.background, 0)
+        self.assertEqual(script_segment.position, 2)
+
+        item_session = parse_dialogue_data(
+            Path("Items.json"),
+            [
+                "skip",
+                {"id": 0, "name": "Ignored", "description": "Ignored"},
+                {"id": 1, "name": "Potion", "description": "Line1\nLine2"},
+            ],
+        )
+        self.assertEqual(len(item_session.segments), 1)
+        item_segment = item_session.segments[0]
+        self.assertEqual(item_segment.lines, ["Potion", "", "Line1", "Line2"])
+        self.assertEqual(getattr(item_segment, "name_index_combined_fields", ()), ("name", "description"))
+
+    def test_parse_dialogue_file_json_fallback_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "Random.json"
+            path.write_text(
+                '[{"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, "Narr"]}, "raw"]',
+                encoding="utf-8",
+            )
+            session = parse_dialogue_file(path)
+
+        self.assertEqual(len(session.segments), 1)
+        self.assertEqual(session.segments[0].lines, [""])
+
 
 
 if __name__ == "__main__":
