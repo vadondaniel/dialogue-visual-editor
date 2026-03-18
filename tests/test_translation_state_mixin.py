@@ -5,7 +5,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+from unittest.mock import patch
+
+from PySide6.QtWidgets import QMessageBox
 
 from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
 from dialogue_visual_editor.helpers.mixins.translation_state_mixin import (
@@ -22,6 +25,42 @@ def _segment(uid: str, text: str, speaker: str = "") -> DialogueSegment:
         original_lines=[text],
         source_lines=[text],
     )
+
+
+class _ModeComboStub:
+    def __init__(self, values: list[str], current_index: int) -> None:
+        self._values = list(values)
+        self._current_index = current_index
+        self.set_index_calls: list[int] = []
+
+    def currentData(self) -> str:
+        return self._values[self._current_index]
+
+    def findData(self, value: str) -> int:
+        try:
+            return self._values.index(value)
+        except ValueError:
+            return -1
+
+    def setCurrentIndex(self, index: int) -> None:
+        self.set_index_calls.append(index)
+        self._current_index = index
+
+
+class _TextControlStub:
+    def __init__(self) -> None:
+        self.values: list[str] = []
+
+    def setText(self, value: str) -> None:
+        self.values.append(value)
+
+
+class _TooltipControlStub:
+    def __init__(self) -> None:
+        self.values: list[str] = []
+
+    def setToolTip(self, value: str) -> None:
+        self.values.append(value)
 
 
 class _Harness(TranslationStateMixin):
@@ -84,6 +123,560 @@ class _Harness(TranslationStateMixin):
 
 
 class TranslationStateMixinTests(unittest.TestCase):
+    def test_update_mode_controls_for_translator_mode(self) -> None:
+        harness = _Harness()
+        combo = _ModeComboStub(["translator", "editor"], 0)
+        save_btn = _TextControlStub()
+        save_all_btn = _TextControlStub()
+        reset_btn = _TextControlStub()
+        auto_split = _TooltipControlStub()
+        harness.editor_mode_combo = cast(Any, combo)
+        harness.save_btn = cast(Any, save_btn)
+        harness.save_all_btn = cast(Any, save_all_btn)
+        harness.reset_json_btn = cast(Any, reset_btn)
+        harness.auto_split_check = cast(Any, auto_split)
+
+        self.assertTrue(harness._is_translator_mode())
+        harness._update_mode_controls()
+
+        self.assertEqual(save_btn.values[-1], "Save")
+        self.assertEqual(save_all_btn.values[-1], "Save All")
+        self.assertEqual(reset_btn.values[-1], "Reset JSON")
+        self.assertEqual(
+            auto_split.values[-1],
+            "Used when building translated snapshot data.",
+        )
+        self.assertEqual(getattr(harness, "_editor_mode_last_data", ""), "translator")
+
+    def test_update_mode_controls_for_editor_mode(self) -> None:
+        harness = _Harness()
+        combo = _ModeComboStub(["translator", "editor"], 1)
+        save_btn = _TextControlStub()
+        save_all_btn = _TextControlStub()
+        reset_btn = _TextControlStub()
+        auto_split = _TooltipControlStub()
+        harness.editor_mode_combo = cast(Any, combo)
+        harness.save_btn = cast(Any, save_btn)
+        harness.save_all_btn = cast(Any, save_all_btn)
+        harness.reset_json_btn = cast(Any, reset_btn)
+        harness.auto_split_check = cast(Any, auto_split)
+
+        self.assertFalse(harness._is_translator_mode())
+        harness._update_mode_controls()
+
+        self.assertEqual(
+            auto_split.values[-1],
+            "Auto-split long dialogue on save.",
+        )
+        self.assertEqual(getattr(harness, "_editor_mode_last_data", ""), "editor")
+
+    def test_on_editor_mode_changed_reverts_when_user_cancels_with_dirty_state(self) -> None:
+        harness = _Harness()
+        combo = _ModeComboStub(["translator", "editor"], 1)
+        harness.editor_mode_combo = cast(Any, combo)
+        harness.sessions = {
+            Path("Map001.json"): FileSession(path=Path("Map001.json"), data=[], bundles=[], segments=[])
+        }
+        harness.sessions[Path("Map001.json")].dirty = True
+        setattr(harness, "_editor_mode_last_data", "translator")
+
+        with patch(
+            "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.warning",
+            return_value=QMessageBox.StandardButton.No,
+        ) as warning_mock:
+            harness._on_editor_mode_changed(1)
+
+        warning_mock.assert_called_once()
+        self.assertEqual(combo.set_index_calls, [0])
+        self.assertFalse(bool(getattr(harness, "_editor_mode_reverting", False)))
+
+    def test_on_editor_mode_changed_applies_callbacks_and_rerenders(self) -> None:
+        harness = _Harness()
+        combo = _ModeComboStub(["translator", "editor"], 1)
+        save_btn = _TextControlStub()
+        save_all_btn = _TextControlStub()
+        reset_btn = _TextControlStub()
+        auto_split = _TooltipControlStub()
+        harness.editor_mode_combo = cast(Any, combo)
+        harness.save_btn = cast(Any, save_btn)
+        harness.save_all_btn = cast(Any, save_all_btn)
+        harness.reset_json_btn = cast(Any, reset_btn)
+        harness.auto_split_check = cast(Any, auto_split)
+        harness.sessions = {
+            Path("Map001.json"): FileSession(path=Path("Map001.json"), data=[], bundles=[], segments=[])
+        }
+        harness.sessions[Path("Map001.json")].dirty = True
+        setattr(harness, "_editor_mode_last_data", "translator")
+        call_order: list[str] = []
+        harness._refresh_all_file_item_text = lambda: call_order.append("refresh")  # type: ignore[attr-defined]
+        harness._sync_translator_mode_ui = lambda: call_order.append("sync")  # type: ignore[attr-defined]
+        harness._update_window_title = lambda: call_order.append("title")  # type: ignore[attr-defined]
+        harness._rerender_current_file = lambda: call_order.append("rerender")  # type: ignore[method-assign]
+
+        with patch(
+            "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.warning",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as warning_mock:
+            harness._on_editor_mode_changed(1)
+
+        warning_mock.assert_called_once()
+        self.assertEqual(call_order, ["refresh", "sync", "title", "rerender"])
+
+    def test_on_editor_mode_changed_uses_current_mode_when_last_mode_invalid(self) -> None:
+        harness = _Harness()
+        combo = _ModeComboStub(["translator"], 0)
+        save_btn = _TextControlStub()
+        save_all_btn = _TextControlStub()
+        reset_btn = _TextControlStub()
+        auto_split = _TooltipControlStub()
+        harness.editor_mode_combo = cast(Any, combo)
+        harness.save_btn = cast(Any, save_btn)
+        harness.save_all_btn = cast(Any, save_all_btn)
+        harness.reset_json_btn = cast(Any, reset_btn)
+        harness.auto_split_check = cast(Any, auto_split)
+        harness.sessions = {}
+        setattr(harness, "_editor_mode_last_data", 123)
+        rerender_calls: list[int] = []
+        harness._rerender_current_file = lambda: rerender_calls.append(1)  # type: ignore[method-assign]
+
+        with patch(
+            "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.warning"
+        ) as warning_mock:
+            harness._on_editor_mode_changed(0)
+
+        warning_mock.assert_not_called()
+        self.assertEqual(rerender_calls, [1])
+
+    def test_normalize_translation_lines_handles_list_str_none_and_other(self) -> None:
+        harness = _Harness()
+        self.assertEqual(harness._normalize_translation_lines(["a", None, 3]), ["a", "", "3"])
+        self.assertEqual(harness._normalize_translation_lines("x\ny"), ["x", "y"])
+        self.assertEqual(harness._normalize_translation_lines(123), [""])
+
+    def test_legacy_tyrano_dialogue_source_text_for_hash_handles_prefix_shapes(self) -> None:
+        segment = _segment("Map001.json:L0:0", "A")
+        self.assertEqual(
+            _Harness._legacy_tyrano_dialogue_source_text_for_hash(segment),
+            "",
+        )
+
+        segment.segment_kind = "tyrano_dialogue"
+        setattr(segment, "tyrano_line_prefixes", "invalid")
+        self.assertEqual(
+            _Harness._legacy_tyrano_dialogue_source_text_for_hash(segment),
+            "",
+        )
+
+        setattr(segment, "tyrano_line_prefixes", ["", ""])
+        self.assertEqual(
+            _Harness._legacy_tyrano_dialogue_source_text_for_hash(segment),
+            "",
+        )
+
+        cast(Any, segment).lines = ["A", None]
+        setattr(segment, "tyrano_line_prefixes", ["[w]", 9])
+        self.assertEqual(
+            _Harness._legacy_tyrano_dialogue_source_text_for_hash(segment),
+            "[w]A\n",
+        )
+
+    def test_set_profile_prompt_settings_normalizes_values(self) -> None:
+        harness = _Harness()
+
+        harness._set_translation_profile_prompt_settings(
+            target_language_code=" EN-US ",
+            prompt_template="   ",
+            profile_id=" ALT ",
+        )
+
+        profile_state = harness._ensure_translation_profile("ALT")
+        self.assertEqual(profile_state.get("target_language_code"), "en-us")
+        self.assertEqual(
+            profile_state.get("prompt_template"),
+            harness._default_translation_prompt_template(),
+        )
+        self.assertEqual(
+            harness._translation_profile_prompt_instructions("ALT"),
+            harness._default_translation_prompt_template(),
+        )
+
+    def test_active_profile_files_state_initializes_files_dict(self) -> None:
+        harness = _Harness()
+        harness.active_translation_profile_id = "   "
+        harness.translation_state = {
+            "version": 2,
+            "active_profile_id": "custom",
+            "profiles": {
+                "custom": {
+                    "name": "Custom",
+                    "uid_counter": 0,
+                    "target_language_code": "en",
+                    "prompt_template": harness._default_translation_prompt_template(),
+                    "speaker_map": {},
+                    "files": [],
+                }
+            },
+        }
+
+        files_state = harness._active_profile_files_state()
+
+        self.assertEqual(harness.active_translation_profile_id, "custom")
+        self.assertIsInstance(files_state, dict)
+        self.assertEqual(files_state, {})
+
+    def test_load_translation_state_returns_early_for_missing_path(self) -> None:
+        harness = _Harness()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            harness.translation_state_path = Path(tmpdir) / "missing_translation_state.json"
+            harness._load_translation_state()
+
+        self.assertEqual(harness.active_translation_profile_id, "default")
+        self.assertEqual(harness.translation_uid_counter, 0)
+
+    def test_load_translation_state_shows_warning_on_invalid_payload(self) -> None:
+        harness = _Harness()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "translation_state.json"
+            state_path.write_text("{invalid json", encoding="utf-8")
+            harness.translation_state_path = state_path
+
+            with patch(
+                "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.warning"
+            ) as warning_mock:
+                harness._load_translation_state()
+
+        warning_mock.assert_called_once()
+
+    def test_load_translation_state_ignores_invalid_entry_shapes(self) -> None:
+        harness = _Harness()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "translation_state.json"
+            payload = {
+                "version": 2,
+                "active_profile_id": "default",
+                "profiles": {
+                    "default": {
+                        "name": "Default",
+                        "uid_counter": 1,
+                        "target_language_code": "en",
+                        "prompt_template": harness._default_translation_prompt_template(),
+                        "speaker_map": {"Hero": "Aki"},
+                        "files": {
+                            "Map001.json": {"entries": []},
+                            "Map002.json": {
+                                "entries": {
+                                    "T0003": {"source_uid": "Map002.json:L0:0"},
+                                    "Tbad": {"source_uid": "Map002.json:L0:1"},
+                                }
+                            },
+                        },
+                    }
+                },
+            }
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
+            harness.translation_state_path = state_path
+            harness._load_translation_state()
+
+        self.assertEqual(harness.translation_uid_counter, 3)
+        self.assertEqual(harness.speaker_translation_map.get("Hero"), "Aki")
+
+    def test_save_translation_state_returns_true_without_path(self) -> None:
+        harness = _Harness()
+        harness.translation_state_path = None
+        self.assertTrue(harness._save_translation_state())
+
+    def test_save_translation_state_handles_write_failure(self) -> None:
+        harness = _Harness()
+        harness.translation_state_path = Path("translation_state.json")
+
+        with patch.object(Path, "open", side_effect=OSError("disk full")):
+            with patch(
+                "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.critical"
+            ) as critical_mock:
+                saved = harness._save_translation_state()
+
+        self.assertFalse(saved)
+        critical_mock.assert_called_once()
+
+    def test_session_has_source_changes_detects_all_sources(self) -> None:
+        harness = _Harness()
+        segment = _segment("Map001.json:L0:0", "line")
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[segment],
+        )
+        self.assertFalse(harness._session_has_source_changes(session))
+
+        setattr(session, "_has_external_source_edits", True)
+        self.assertTrue(harness._session_has_source_changes(session))
+        setattr(session, "_has_external_source_edits", False)
+
+        segment.inserted = True
+        self.assertTrue(harness._session_has_source_changes(session))
+        segment.inserted = False
+
+        segment.merged_segments = [segment]
+        self.assertTrue(harness._session_has_source_changes(session))
+        segment.merged_segments = []
+
+        segment.lines = ["changed"]
+        segment.original_lines = ["original"]
+        self.assertTrue(harness._session_has_source_changes(session))
+
+    def test_session_has_translation_changes_detects_order_and_values(self) -> None:
+        harness = _Harness()
+        segment = _segment("Map001.json:L0:0", "line")
+        segment.tl_uid = "T1"
+        segment.translation_lines = ["TL"]
+        segment.original_translation_lines = ["TL"]
+        segment.translation_speaker = "Hero"
+        segment.original_translation_speaker = "Hero"
+        segment.disable_line1_speaker_inference = False
+        segment.original_disable_line1_speaker_inference = False
+        segment.force_line1_speaker_inference = False
+        segment.original_force_line1_speaker_inference = False
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[segment],
+        )
+
+        setattr(session, "_original_tl_order", ["OTHER"])
+        self.assertTrue(harness._session_has_translation_changes(session))
+
+        setattr(session, "_original_tl_order", ["T1"])
+        self.assertFalse(harness._session_has_translation_changes(session))
+
+        segment.translation_lines = ["NEW"]
+        self.assertTrue(harness._session_has_translation_changes(session))
+        segment.translation_lines = ["TL"]
+
+        segment.translation_speaker = "Mage"
+        self.assertTrue(harness._session_has_translation_changes(session))
+        segment.translation_speaker = "Hero"
+
+        segment.disable_line1_speaker_inference = True
+        self.assertTrue(harness._session_has_translation_changes(session))
+        segment.disable_line1_speaker_inference = False
+
+        segment.force_line1_speaker_inference = True
+        self.assertTrue(harness._session_has_translation_changes(session))
+
+    def test_mark_session_translation_saved_normalizes_and_clears_inserted_translation_only(self) -> None:
+        harness = _Harness()
+        base = _segment("Map001.json:L0:0", "line")
+        base.tl_uid = "T1"
+        cast(Any, base).translation_lines = "joined\ntext"
+        base.translation_speaker = "  Hero  "
+        base.disable_line1_speaker_inference = True
+        base.force_line1_speaker_inference = False
+
+        tl_only = _segment("Map001.json:TI:T2", "", "")
+        tl_only.translation_only = True
+        tl_only.inserted = True
+        tl_only.tl_uid = "T2"
+        tl_only.translation_lines = ["TL only"]
+
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[base, tl_only],
+        )
+
+        harness._mark_session_translation_saved(session)
+
+        self.assertEqual(base.translation_lines, ["joined", "text"])
+        self.assertEqual(base.original_translation_lines, ["joined", "text"])
+        self.assertEqual(base.translation_speaker, "Hero")
+        self.assertEqual(base.original_translation_speaker, "Hero")
+        self.assertFalse(tl_only.inserted)
+        self.assertEqual(getattr(session, "_original_tl_order", []), ["T1", "T2"])
+
+    def test_exact_reference_candidates_prefers_cross_file_rows(self) -> None:
+        harness = _Harness()
+        own_source = "same"
+        own_path = Path("Map001.json")
+        own_uid = "Map001.json:L0:0"
+        exact_groups = {
+            own_source: [
+                {"path": own_path, "uid": own_uid},
+                {"path": own_path, "uid": "Map001.json:L0:1"},
+                {"path": Path("Map002.json"), "uid": "Map002.json:L0:0"},
+            ]
+        }
+
+        rows, cross = harness._exact_reference_candidates(
+            own_source=own_source,
+            own_path=own_path,
+            own_uid=own_uid,
+            exact_groups=exact_groups,
+        )
+        self.assertTrue(cross)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["path"], Path("Map002.json"))
+
+        no_cross_rows, no_cross = harness._exact_reference_candidates(
+            own_source=own_source,
+            own_path=own_path,
+            own_uid=own_uid,
+            exact_groups={own_source: [{"path": own_path, "uid": "Map001.json:L0:1"}]},
+        )
+        self.assertFalse(no_cross)
+        self.assertEqual(len(no_cross_rows), 1)
+
+    def test_build_exact_reference_summary_handles_empty_variants_and_counts(self) -> None:
+        harness = _Harness()
+        own_source = "JP"
+        own_path = Path("Map001.json")
+        own_uid = "Map001.json:L0:0"
+
+        none_summary = harness._build_exact_reference_summary(
+            own_source=own_source,
+            own_path=own_path,
+            own_uid=own_uid,
+            exact_groups={},
+        )
+        self.assertIn("Exact JA matches: none.", none_summary)
+
+        unfilled_summary = harness._build_exact_reference_summary(
+            own_source=own_source,
+            own_path=own_path,
+            own_uid=own_uid,
+            exact_groups={
+                own_source: [
+                    {
+                        "path": Path("Map002.json"),
+                        "uid": "Map002.json:L0:1",
+                        "file": "Map002.json",
+                        "block_number": 2,
+                        "translation_text": "",
+                    }
+                ]
+            },
+        )
+        self.assertIn("No EN translations in matches yet.", unfilled_summary)
+
+        filled_summary = harness._build_exact_reference_summary(
+            own_source=own_source,
+            own_path=own_path,
+            own_uid=own_uid,
+            exact_groups={
+                own_source: [
+                    {
+                        "path": Path("Map002.json"),
+                        "uid": "Map002.json:L0:1",
+                        "file": "Map002.json",
+                        "block_number": 2,
+                        "translation_text": "Hello",
+                    },
+                    {
+                        "path": Path("Map003.json"),
+                        "uid": "Map003.json:L0:1",
+                        "file": "Map003.json",
+                        "block_number": 5,
+                        "translation_text": "Hello",
+                    },
+                    {
+                        "path": Path("Map004.json"),
+                        "uid": "Map004.json:L0:1",
+                        "file": "Map004.json",
+                        "block_number": 7,
+                        "translation_text": "Hi",
+                    },
+                    {
+                        "path": Path("Map005.json"),
+                        "uid": "Map005.json:L0:1",
+                        "file": "Map005.json",
+                        "block_number": 8,
+                        "translation_text": "",
+                    },
+                ]
+            },
+        )
+        self.assertIn("Filled EN: 3/4.", filled_summary)
+        self.assertIn("2 variants.", filled_summary)
+        self.assertIn("Empty EN: 1 entry.", filled_summary)
+
+    def test_other_profile_translation_rows_uses_hash_fallback_and_skips_same_text(self) -> None:
+        harness = _Harness()
+        current = _segment("Map001.json:L0:0", "JP")
+        current.translation_lines = ["Current TL"]
+        source_hash = harness._segment_source_hash(current)
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[current],
+        )
+        harness.active_translation_profile_id = "jp"
+        harness.translation_state = {
+            "version": 2,
+            "active_profile_id": "jp",
+            "profiles": {
+                "jp": {
+                    "name": "Japanese",
+                    "uid_counter": 0,
+                    "target_language_code": "ja",
+                    "prompt_template": harness._default_translation_prompt_template(),
+                    "speaker_map": {},
+                    "files": {},
+                },
+                "en": {
+                    "name": "English",
+                    "uid_counter": 1,
+                    "target_language_code": "en",
+                    "prompt_template": harness._default_translation_prompt_template(),
+                    "speaker_map": {},
+                    "files": {
+                        "Map001.json": {
+                            "entries": {
+                                "T_en": {
+                                    "source_uid": "Map001.json:L0:9",
+                                    "source_hash": source_hash,
+                                    "translation_lines": ["Hello"],
+                                }
+                            }
+                        }
+                    },
+                },
+            },
+        }
+
+        rows = harness._other_profile_translation_rows_for_segment(session, current)
+        self.assertEqual(rows, [("en", "English", "Hello")])
+
+        current.translation_lines = ["Hello"]
+        same_rows = harness._other_profile_translation_rows_for_segment(session, current)
+        self.assertEqual(same_rows, [])
+
+    def test_translation_state_for_session_includes_translation_only_payload_fields(self) -> None:
+        harness = _Harness()
+        segment = _segment("Map001.json:TI:T1", "", "")
+        segment.translation_only = True
+        segment.tl_uid = "T1"
+        segment.translation_lines = ["Inserted TL"]
+        segment.source_lines = ["Inserted source"]
+        segment.original_lines = ["Inserted source"]
+        session = FileSession(
+            path=Path("Map001.json"),
+            data=[],
+            bundles=[],
+            segments=[segment],
+        )
+
+        state = harness._translation_state_for_session(session)
+        entry = state["entries"]["T1"]
+        self.assertEqual(entry["segment_uid"], segment.uid)
+        self.assertEqual(entry["context"], segment.context)
+        self.assertIn("code101", entry)
+        self.assertIn("code401_template", entry)
+        self.assertEqual(entry["source_lines"], ["Inserted source"])
+        self.assertEqual(entry["original_lines"], ["Inserted source"])
+
     def test_reference_summary_collapses_translation_only_followups_into_anchor_match(self) -> None:
         harness = _Harness()
         session_a_path = Path("Map001.json")

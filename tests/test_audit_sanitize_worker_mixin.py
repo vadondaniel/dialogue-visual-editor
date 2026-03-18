@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from dialogue_visual_editor.helpers.audit.audit_constants import SANITIZE_CHAR_RULES
 from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
@@ -184,6 +184,33 @@ class AuditSanitizeWorkerMixinTests(unittest.TestCase):
         self.assertEqual(payload["entries"], 1)
         self.assertEqual(payload["block_count"], 1)
 
+    def test_compute_occurrences_worker_handles_original_and_translation_misses(self) -> None:
+        harness = _Harness()
+        selected_find_text = SANITIZE_CHAR_RULES[0][2]
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[
+                _segment("uid-1", f"before{selected_find_text}after", "plain"),
+                _segment("uid-2", "plain", "plain"),
+            ],
+        )
+
+        payload = harness._compute_audit_sanitize_occurrences_worker(
+            [(session.path, session)],
+            scope="both",
+            selected_find_text=selected_find_text,
+            selected_ignored=set(),
+        )
+
+        self.assertEqual(payload["total_hits"], 1)
+        self.assertEqual(payload["entries"], 1)
+        self.assertEqual(payload["block_count"], 1)
+        record = payload["records"][0]
+        self.assertEqual(record["uid"], "uid-1")
+        self.assertEqual(record["occurrences"][0]["field_label"], "OG")
+
     def test_queue_worker_skips_duplicate_requests(self) -> None:
         harness = _Harness()
         request = {
@@ -201,6 +228,24 @@ class AuditSanitizeWorkerMixinTests(unittest.TestCase):
         harness.audit_sanitize_worker_pending_request = dict(request)
         harness._queue_audit_sanitize_worker(request)
         self.assertEqual(harness.audit_sanitize_worker_pending_request, request)
+
+    def test_queue_worker_starts_worker_for_new_request_when_idle(self) -> None:
+        harness = _Harness()
+        request = {
+            "mode": "full",
+            "path_sessions": [],
+            "scope": "both",
+            "selected_rule_id": "r",
+            "selected_find_text": "x",
+            "ignored_entries_by_rule": {},
+        }
+
+        harness._queue_audit_sanitize_worker(request)
+
+        self.assertIsNone(harness.audit_sanitize_worker_pending_request)
+        self.assertEqual(harness.audit_sanitize_worker_running_request, request)
+        self.assertIsNotNone(harness.audit_sanitize_worker_future)
+        self.assertEqual(harness.audit_sanitize_worker_timer.starts[-1], 18)
 
     def test_start_next_worker_submits_occurrence_mode(self) -> None:
         harness = _Harness()
@@ -235,6 +280,14 @@ class AuditSanitizeWorkerMixinTests(unittest.TestCase):
         self.assertIsNone(harness.audit_sanitize_worker_running_request)
         self.assertTrue(harness.audit_sanitize_summary_label.texts)
 
+    def test_start_next_worker_returns_when_no_pending_request(self) -> None:
+        harness = _Harness()
+
+        harness._start_next_audit_sanitize_worker()
+
+        self.assertIsNone(harness.audit_sanitize_worker_future)
+        self.assertIsNone(harness.audit_sanitize_worker_running_request)
+
     def test_poll_worker_restarts_timer_when_future_not_done(self) -> None:
         harness = _Harness()
         harness.audit_sanitize_worker_future = _PendingFuture()
@@ -242,6 +295,24 @@ class AuditSanitizeWorkerMixinTests(unittest.TestCase):
         harness._poll_audit_sanitize_worker()
 
         self.assertEqual(harness.audit_sanitize_worker_timer.starts[-1], 18)
+
+    def test_poll_worker_starts_next_when_idle_with_pending_request(self) -> None:
+        harness = _Harness()
+        pending = {
+            "mode": "full",
+            "path_sessions": [],
+            "scope": "both",
+            "selected_rule_id": "r",
+            "selected_find_text": "x",
+            "ignored_entries_by_rule": {},
+        }
+        harness.audit_sanitize_worker_pending_request = pending
+
+        harness._poll_audit_sanitize_worker()
+
+        self.assertEqual(harness.audit_sanitize_worker_running_request, pending)
+        self.assertIsNone(harness.audit_sanitize_worker_pending_request)
+        self.assertIsNotNone(harness.audit_sanitize_worker_future)
 
     def test_poll_worker_applies_payload_when_request_matches(self) -> None:
         harness = _Harness()
@@ -260,6 +331,161 @@ class AuditSanitizeWorkerMixinTests(unittest.TestCase):
         harness._poll_audit_sanitize_worker()
 
         self.assertIsNotNone(harness.applied_payload_args)
+
+    def test_poll_worker_starts_next_when_future_errors_and_pending_exists(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_worker_future = _ImmediateFuture(
+            result_error=RuntimeError("future failed")
+        )
+        harness.audit_sanitize_worker_running_request = {"mode": "full"}
+        pending = {
+            "mode": "full",
+            "path_sessions": [],
+            "scope": "both",
+            "selected_rule_id": "r",
+            "selected_find_text": "x",
+            "ignored_entries_by_rule": {},
+        }
+        harness.audit_sanitize_worker_pending_request = pending
+
+        harness._poll_audit_sanitize_worker()
+
+        self.assertEqual(harness.audit_sanitize_worker_running_request, pending)
+        self.assertIsNone(harness.audit_sanitize_worker_pending_request)
+        self.assertIsNotNone(harness.audit_sanitize_worker_future)
+        self.assertEqual(harness.audit_sanitize_summary_label.texts, [])
+
+    def test_poll_worker_sets_error_label_when_future_errors_without_pending(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_worker_future = _ImmediateFuture(
+            result_error=RuntimeError("future failed")
+        )
+        harness.audit_sanitize_worker_running_request = {"mode": "full"}
+
+        harness._poll_audit_sanitize_worker()
+
+        self.assertIsNone(harness.audit_sanitize_worker_future)
+        self.assertIsNone(harness.audit_sanitize_worker_running_request)
+        self.assertIn("Sanitize scan failed:", harness.audit_sanitize_summary_label.texts[-1])
+
+    def test_poll_worker_starts_next_when_success_but_pending_exists(self) -> None:
+        harness = _Harness()
+        selected = harness.selected_rule_payload or {}
+        harness.audit_sanitize_worker_future = _ImmediateFuture(
+            result_value={"counts": {}, "records": [], "total_hits": 0, "entries": 0, "block_count": 0}
+        )
+        harness.audit_sanitize_worker_running_request = {
+            "mode": "full",
+            "generation": harness.audit_cache_generation,
+            "scope": harness.scope,
+            "selected_rule_id": selected["rule_id"],
+            "selected_find_text": selected["find_text"],
+        }
+        pending = {
+            "mode": "full",
+            "path_sessions": [],
+            "scope": "both",
+            "selected_rule_id": "r",
+            "selected_find_text": "x",
+            "ignored_entries_by_rule": {},
+        }
+        harness.audit_sanitize_worker_pending_request = pending
+
+        harness._poll_audit_sanitize_worker()
+
+        self.assertEqual(harness.audit_sanitize_worker_running_request, pending)
+        self.assertIsNone(harness.audit_sanitize_worker_pending_request)
+        self.assertIsNotNone(harness.audit_sanitize_worker_future)
+        self.assertIsNone(harness.applied_payload_args)
+
+    def test_poll_worker_ignores_non_dict_running_request(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_worker_future = _ImmediateFuture(
+            result_value={"counts": {}, "records": [], "total_hits": 0, "entries": 0, "block_count": 0}
+        )
+        harness.audit_sanitize_worker_running_request = cast(Any, "invalid")
+
+        harness._poll_audit_sanitize_worker()
+
+        self.assertIsNone(harness.applied_payload_args)
+
+    def test_poll_worker_returns_when_required_ui_state_missing(self) -> None:
+        harness = _Harness()
+        harness.audit_sanitize_occurrences_list = None
+        selected = harness.selected_rule_payload or {}
+        harness.audit_sanitize_worker_future = _ImmediateFuture(
+            result_value={"counts": {}, "records": [], "total_hits": 0, "entries": 0, "block_count": 0}
+        )
+        harness.audit_sanitize_worker_running_request = {
+            "mode": "full",
+            "generation": harness.audit_cache_generation,
+            "scope": harness.scope,
+            "selected_rule_id": selected["rule_id"],
+            "selected_find_text": selected["find_text"],
+        }
+
+        harness._poll_audit_sanitize_worker()
+
+        self.assertIsNone(harness.applied_payload_args)
+
+    def test_poll_worker_skips_payload_when_scope_mismatches(self) -> None:
+        harness = _Harness()
+        selected = harness.selected_rule_payload or {}
+        harness.audit_sanitize_worker_future = _ImmediateFuture(
+            result_value={"counts": {}, "records": [], "total_hits": 0, "entries": 0, "block_count": 0}
+        )
+        harness.audit_sanitize_worker_running_request = {
+            "mode": "full",
+            "generation": harness.audit_cache_generation,
+            "scope": "original",
+            "selected_rule_id": selected["rule_id"],
+            "selected_find_text": selected["find_text"],
+        }
+
+        harness._poll_audit_sanitize_worker()
+
+        self.assertIsNone(harness.applied_payload_args)
+
+    def test_poll_worker_skips_payload_when_rule_selection_changed(self) -> None:
+        harness = _Harness()
+        selected = harness.selected_rule_payload or {}
+        harness.audit_sanitize_worker_future = _ImmediateFuture(
+            result_value={"counts": {}, "records": [], "total_hits": 0, "entries": 0, "block_count": 0}
+        )
+        harness.audit_sanitize_worker_running_request = {
+            "mode": "full",
+            "generation": harness.audit_cache_generation,
+            "scope": harness.scope,
+            "selected_rule_id": "different",
+            "selected_find_text": selected["find_text"],
+        }
+
+        harness._poll_audit_sanitize_worker()
+
+        self.assertIsNone(harness.applied_payload_args)
+
+    def test_poll_worker_occurrences_mode_merges_with_zeroed_counts_when_key_mismatches(self) -> None:
+        harness = _Harness()
+        selected = harness.selected_rule_payload or {}
+        harness.audit_sanitize_counts_cache = {selected["rule_id"]: 9}
+        harness.audit_sanitize_counts_cache_key = (harness.audit_cache_generation + 1, harness.scope)
+        harness.audit_sanitize_worker_future = _ImmediateFuture(
+            result_value={"records": [], "total_hits": 1, "entries": 1, "block_count": 1}
+        )
+        harness.audit_sanitize_worker_running_request = {
+            "mode": "occurrences",
+            "generation": harness.audit_cache_generation,
+            "scope": harness.scope,
+            "selected_rule_id": selected["rule_id"],
+            "selected_find_text": selected["find_text"],
+        }
+
+        harness._poll_audit_sanitize_worker()
+
+        self.assertIsNotNone(harness.applied_payload_args)
+        payload = cast(dict[str, Any], harness.applied_payload_args)["payload"]
+        self.assertEqual(len(payload["counts"]), len(SANITIZE_CHAR_RULES))
+        self.assertEqual(payload["counts"][selected["rule_id"]], 0)
 
     def test_poll_worker_skips_payload_when_generation_mismatches(self) -> None:
         harness = _Harness()
@@ -282,4 +508,3 @@ class AuditSanitizeWorkerMixinTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
