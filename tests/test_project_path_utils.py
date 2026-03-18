@@ -35,6 +35,18 @@ class ProjectPathUtilsTests(unittest.TestCase):
             with patch.object(Path, "rglob", side_effect=OSError("fail")):
                 self.assertFalse(_contains_ks_files(folder))
 
+    def test_contains_ks_files_returns_false_when_no_ks_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            folder = Path(tmpdir)
+            _touch(folder / "notes.txt", "no text")
+            self.assertFalse(_contains_ks_files(folder))
+
+    def test_contains_ks_files_returns_false_for_non_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            folder = Path(tmpdir) / "plain.txt"
+            folder.write_text("text", encoding="utf-8")
+            self.assertFalse(_contains_ks_files(folder))
+
     def test_candidate_project_data_folders_falls_back_when_resolve_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             selected = Path(tmpdir) / "www"
@@ -44,6 +56,52 @@ class ProjectPathUtilsTests(unittest.TestCase):
 
         self.assertEqual(candidates[0], selected)
 
+    def test_resolve_project_data_folder_falls_back_to_selected_when_selected_resolve_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            selected = Path(tmpdir) / "project"
+            selected.mkdir(parents=True, exist_ok=True)
+            original_resolve = Path.resolve
+
+            def _failing_resolve(path: Path, *args, **kwargs) -> Path:
+                if path == selected:
+                    raise OSError("cannot resolve")
+                return original_resolve(path, *args, **kwargs)
+
+            with patch.object(Path, "resolve", _failing_resolve):
+                resolved = resolve_project_data_folder(selected)
+
+            self.assertEqual(resolved, selected)
+
+    def test_project_root_folder_for_data_folder_falls_back_when_resolve_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            selected = Path(tmpdir) / "project"
+            original_resolve = Path.resolve
+
+            def _failing_resolve(path: Path, *args, **kwargs) -> Path:
+                if path == selected:
+                    raise OSError("cannot resolve")
+                return original_resolve(path, *args, **kwargs)
+
+            with patch.object(Path, "resolve", _failing_resolve):
+                root = project_root_folder_for_data_folder(selected)
+
+            self.assertEqual(root, selected)
+
+    def test_project_root_folder_for_data_folder_returns_root_when_parent_is_self(self) -> None:
+        selected = Path("data")
+        sentinel = SimpleNamespace(name="data")
+        sentinel.parent = sentinel
+        original_resolve = Path.resolve
+
+        def _fake_resolve(path: Path, *args, **kwargs) -> SimpleNamespace:
+            if path == selected:
+                return sentinel
+            return original_resolve(path, *args, **kwargs)
+
+        with patch.object(Path, "resolve", _fake_resolve):
+            root = project_root_folder_for_data_folder(selected)
+
+        self.assertIs(root, sentinel)
     def test_project_root_non_data_folder_returns_resolved_folder(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root_dir = Path(tmpdir) / "SomeFolder"
@@ -111,6 +169,13 @@ class ProjectPathUtilsTests(unittest.TestCase):
             data_dir = Path(tmpdir) / "MyGame" / "data"
             data_dir.mkdir(parents=True, exist_ok=True)
             root = project_root_folder_for_data_folder(data_dir)
+            self.assertEqual(root, (Path(tmpdir) / "MyGame").resolve())
+
+    def test_project_root_folder_for_scenario_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scenario_dir = Path(tmpdir) / "MyGame" / "data" / "scenario"
+            scenario_dir.mkdir(parents=True, exist_ok=True)
+            root = project_root_folder_for_data_folder(scenario_dir)
             self.assertEqual(root, (Path(tmpdir) / "MyGame").resolve())
 
     def test_project_root_folder_for_www_data(self) -> None:
