@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
+import dialogue_visual_editor.helpers.core.script_message_utils as script_message_utils
 from dialogue_visual_editor.helpers.core.script_message_utils import (
     _GAME_MESSAGE_BACKGROUND_PREFIX_RE,
     _decode_js_string_term,
@@ -97,6 +99,12 @@ class ScriptMessageUtilsTests(unittest.TestCase):
         )
         self.assertEqual(parsed, ('A\\"B', "fn(1,(2))"))
 
+    def test_parse_set_face_image_scans_parentheses_in_first_argument(self) -> None:
+        parsed = parse_game_message_set_face_image_call(
+            "$gameMessage.setFaceImage(faceFn(1,(2)), 3);"
+        )
+        self.assertEqual(parsed, ("faceFn(1,(2))", "3"))
+
     def test_parse_set_face_image_rejects_invalid_argument_forms(self) -> None:
         self.assertIsNone(
             parse_game_message_set_face_image_call('$gameMessage.setFaceImage("Actor1");')
@@ -166,6 +174,17 @@ class ScriptMessageUtilsTests(unittest.TestCase):
         self.assertIsNone(parse_game_message_templated_call('$gameMessage.add("A" + "B");'))
         self.assertIsNone(parse_game_message_templated_call("$gameMessage.add(foo + bar);"))
 
+    def test_parse_game_message_templated_call_skips_empty_expression_terms(self) -> None:
+        with patch.object(
+            script_message_utils,
+            "_split_top_level_plus_expression",
+            return_value=['"A"', "   ", "m"],
+        ):
+            parsed = parse_game_message_templated_call(
+                '$gameMessage.add("A" + m);'
+            )
+        self.assertEqual(parsed, ("add", "A{{EXPR1}}", '"', ["m"]))
+
     def test_split_expression_and_argument_helpers_handle_nested_structures(self) -> None:
         terms = _split_top_level_plus_expression(
             '"A" + fn(1 + 2, arr[3]) + "B" + obj["k{1}"]'
@@ -226,6 +245,59 @@ class ScriptMessageUtilsTests(unittest.TestCase):
             expression_terms=[],
         )
         self.assertEqual(built, '$gameMessage.setSpeakerName("Hero");')
+
+    def test_build_game_message_templated_call_invalid_placeholder_index_falls_back(self) -> None:
+        class _FakeMatch:
+            def __init__(self, text: str) -> None:
+                self._text = text
+
+            def start(self) -> int:
+                return 0
+
+            def end(self) -> int:
+                return len(self._text)
+
+            def group(self, index: int = 0) -> str:
+                if index == 1:
+                    return "bad-index"
+                return self._text
+
+        class _FakePattern:
+            def __init__(self, text: str) -> None:
+                self._text = text
+
+            def finditer(self, _value: str) -> list[_FakeMatch]:
+                return [_FakeMatch(self._text)]
+
+        with patch.object(
+            script_message_utils,
+            "_GAME_MESSAGE_EXPR_PLACEHOLDER_RE",
+            _FakePattern("{{EXPRbad}}"),
+        ):
+            built = build_game_message_templated_call(
+                "add",
+                "{{EXPRbad}}",
+                '"',
+                expression_terms=["exprA"],
+            )
+        self.assertEqual(built, '$gameMessage.add("{{EXPRbad}}" + exprA);')
+
+    def test_build_game_message_templated_call_forces_empty_parts_fallback(self) -> None:
+        original_enumerate = enumerate
+
+        def _enumerate_without_terms(sequence: object, *args: object) -> object:
+            if sequence == ["exprA"]:
+                return iter(())
+            return original_enumerate(sequence, *args)
+
+        with patch("builtins.enumerate", side_effect=_enumerate_without_terms):
+            built = build_game_message_templated_call(
+                "add",
+                "",
+                '"',
+                expression_terms=["exprA"],
+            )
+        self.assertEqual(built, '$gameMessage.add("");')
 
 
 if __name__ == "__main__":
