@@ -1,0 +1,7 @@
+[run]
+source =
+    dialogue_visual_editor/helpers/core
+
+[report]
+fail_under = 80
+show_missing = True
