@@ -6,12 +6,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dialogue_visual_editor.helpers.core.parser import (
+    _append_tyrano_standalone_marker_to_previous_text,
     _collect_tyrano_implicit_dialogue_block,
+    _collect_choice_branch_entries,
+    _collect_script_block_entries,
     _build_json_text_segment,
+    _build_map_display_name_segment,
     _build_note_text_segments,
+    _build_plugin_command_text_segments_for_entry,
     _build_plugins_text_segments,
     _build_tyrano_choice_segments,
     _build_tyrano_dialogue_segments,
+    _choice_lines_from_code102,
     _extract_tyrano_config_assignment_value,
     _extract_tyrano_script_assignment_string_value,
     _coerce_tyrano_config_lines,
@@ -844,6 +850,251 @@ class ParserInternalCoverageTests(unittest.TestCase):
 
         self.assertEqual(len(session.segments), 1)
         self.assertEqual(session.segments[0].lines, [""])
+
+    def test_assignment_and_helper_branch_edges(self) -> None:
+        self.assertIsNone(_extract_tyrano_script_assignment_string_value("name:"))
+        self.assertIsNone(_extract_tyrano_script_assignment_string_value("f.ending ="))
+
+        property_payload = _extract_tyrano_script_assignment_string_value(r'name: "A\"B"')
+        self.assertIsNotNone(property_payload)
+        assert property_payload is not None
+        self.assertEqual(property_payload[2], 'A"B')
+
+        assignment_payload = _extract_tyrano_script_assignment_string_value(r'f.ending = "C\"D"')
+        self.assertIsNotNone(assignment_payload)
+        assert assignment_payload is not None
+        self.assertEqual(assignment_payload[2], 'C"D')
+
+        self.assertFalse(
+            _should_extract_tyrano_js_script_string("assignment", "", in_end_list_context=False)
+        )
+        self.assertFalse(
+            _should_extract_tyrano_js_script_string("unknown", "name", in_end_list_context=False)
+        )
+        self.assertEqual(_js_bracket_delta_outside_strings(r'"A\["'), 0)
+
+        self.assertFalse(_append_tyrano_standalone_marker_to_previous_text([], ""))
+        text_items = [{"kind": "text", "line": "A"}]
+        self.assertTrue(_append_tyrano_standalone_marker_to_previous_text(text_items, "[r]"))
+        self.assertEqual(text_items[0]["line"], "A[r]")
+        self.assertFalse(
+            _append_tyrano_standalone_marker_to_previous_text(
+                [{"kind": "speaker", "line": ""}],
+                "[r]",
+            )
+        )
+        self.assertFalse(
+            _append_tyrano_standalone_marker_to_previous_text(
+                [{"kind": "raw", "line": "x"}],
+                "[r]",
+            )
+        )
+        self.assertFalse(
+            _append_tyrano_standalone_marker_to_previous_text(
+                [{"kind": "raw", "line": "   "}],
+                "[r]",
+            )
+        )
+
+        self.assertIsNone(_collect_tyrano_implicit_dialogue_block(["[r]"], 0))
+
+        self.assertEqual(
+            _coerce_tyrano_config_lines(
+                {
+                    "__dve_tyrano_config_marker__": "tyrano_config",
+                    "__dve_tyrano_config_lines__": "invalid",
+                }
+            ),
+            [],
+        )
+        self.assertEqual(
+            _coerce_tyrano_script_chunks(
+                {
+                    "__dve_tyrano_script_marker__": "tyrano_script",
+                    "__dve_tyrano_script_chunks__": "invalid",
+                }
+            ),
+            [],
+        )
+
+        self.assertIsNone(_extract_tyrano_tag_attribute_value("[glink text=", "text"))
+        self.assertIsNone(_extract_tyrano_tag_attribute_value('[glink text="abc]', "text"))
+
+        self.assertEqual(_choice_lines_from_code102({"parameters": []}), [""])
+        self.assertEqual(_choice_lines_from_code102({"parameters": ["bad"]}), [""])
+        self.assertEqual(
+            _choice_lines_from_code102({"parameters": [["A", None, 5]]}),
+            ["A", "", "5"],
+        )
+
+        self.assertEqual(_collect_choice_branch_entries([123], 0), [])
+
+        script_entries, next_index = _collect_script_block_entries(
+            [{"code": 401, "indent": 0, "parameters": ["x"]}],
+            0,
+        )
+        self.assertEqual(script_entries, [])
+        self.assertEqual(next_index, 0)
+
+        script_entries, next_index = _collect_script_block_entries(
+            [
+                {"code": 355, "indent": 0, "parameters": ["x"]},
+                {"code": 401, "indent": 0, "parameters": ["stop"]},
+            ],
+            0,
+        )
+        self.assertEqual(len(script_entries), 1)
+        self.assertEqual(next_index, 1)
+
+        self.assertTrue(_plugin_command_argument_part_is_non_meaningful("   "))
+        self.assertTrue(_plugin_command_argument_part_is_non_meaningful("rgb(1,2,3)"))
+        self.assertTrue(_plugin_command_argument_value_is_non_meaningful("   "))
+        self.assertTrue(_plugin_command_argument_value_is_non_meaningful("[1, 2, 3]"))
+        self.assertFalse(_plugin_command_argument_value_is_non_meaningful("[1,,2]"))
+
+        choice_segments, used_indexes = _build_tyrano_choice_segments(
+            Path("scene.ks"),
+            {
+                "__dve_tyrano_script_marker__": "tyrano_script",
+                "__dve_tyrano_script_chunks__": [
+                    {"kind": "raw_line", "line": "[jump target='*A']"},
+                ],
+            },
+        )
+        self.assertEqual(choice_segments, [])
+        self.assertEqual(used_indexes, set())
+
+    def test_plugin_map_rebuild_and_name_index_edges(self) -> None:
+        self.assertEqual(
+            _build_plugins_text_segments(
+                Path("plugins.js"),
+                {
+                    "__dve_plugins_js_marker__": "plugins_js",
+                    "__dve_plugins_js_array__": "invalid",
+                },
+            ),
+            [],
+        )
+
+        plugin_segments = _build_plugins_text_segments(
+            Path("plugins.js"),
+            {
+                "__dve_plugins_js_marker__": "plugins_js",
+                "__dve_plugins_js_array__": [
+                    7,
+                    {"name": "Alpha", "description": "Desc", "parameters": "invalid"},
+                    {
+                        "name": "Beta",
+                        "parameters": {
+                            "blank": "   ",
+                            3: "x",
+                            "num": 5,
+                            "dialog": "Hello",
+                        },
+                    },
+                ],
+            },
+        )
+        self.assertEqual(len(plugin_segments), 2)
+        contexts = {segment.context for segment in plugin_segments}
+        self.assertIn("plugins.js > plugin[2].description", contexts)
+        self.assertIn("plugins.js > plugin[3].parameters.dialog", contexts)
+
+        self.assertIsNone(
+            _build_map_display_name_segment(
+                Path("Actors.json"),
+                {"displayName": "Town"},
+            )
+        )
+
+        self.assertEqual(
+            _build_plugin_command_text_segments_for_entry(
+                path=Path("Map001.json"),
+                context="Map001.json > event[1]",
+                list_id="events",
+                list_path_tokens=["events", 1],
+                command_index=5,
+                command_entry={"parameters": ["Plugin", "", "Command"]},
+            ),
+            [],
+        )
+        self.assertEqual(
+            _build_plugin_command_text_segments_for_entry(
+                path=Path("Map001.json"),
+                context="Map001.json > event[1]",
+                list_id="events",
+                list_path_tokens=["events", 1],
+                command_index=5,
+                command_entry={"parameters": ["Plugin", "", "Command", "invalid"]},
+            ),
+            [],
+        )
+
+        command_segments = _build_plugin_command_text_segments_for_entry(
+            path=Path("Map001.json"),
+            context="Map001.json > event[1]",
+            list_id="events",
+            list_path_tokens=["events", 1],
+            command_index=5,
+            command_entry={
+                "indent": 2,
+                "parameters": [
+                    "Plugin",
+                    "",
+                    "Command",
+                    {
+                        1: "skip-key",
+                        "not_str_value": 123,
+                        "blank": "   ",
+                        "text": "Line",
+                    },
+                ],
+            },
+        )
+        self.assertEqual(len(command_segments), 1)
+        self.assertEqual(command_segments[0].lines, ["Line"])
+
+        rebuilt = tyrano_script_source_from_data(
+            {
+                "__dve_tyrano_script_marker__": "tyrano_script",
+                "__dve_tyrano_script_newline__": "\n",
+                "__dve_tyrano_script_has_trailing_newline__": False,
+                "__dve_tyrano_script_chunks__": [
+                    {
+                        "kind": "dialogue_block",
+                        "body_items": [
+                            123,
+                            {"line": "A"},
+                        ],
+                    }
+                ],
+            }
+        )
+        self.assertEqual(rebuilt, "A")
+
+        dialogue_data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_chunks__": [
+                {
+                    "kind": "dialogue_block",
+                    "body_items": [{"kind": "text", "line": "A"}],
+                }
+            ],
+        }
+        with patch(
+            "dialogue_visual_editor.helpers.core.parser._split_tyrano_inline_line_breaks",
+            return_value=([], []),
+        ):
+            dialogue_segments = _build_tyrano_dialogue_segments(Path("scene.ks"), dialogue_data)
+        self.assertEqual(len(dialogue_segments), 1)
+        self.assertEqual(dialogue_segments[0].lines, [""])
+
+        actor_session = parse_dialogue_data(
+            Path("Actors.json"),
+            [{"id": 1, "name": "Hero"}],
+        )
+        self.assertEqual(len(actor_session.segments), 1)
+        self.assertEqual(actor_session.segments[0].lines, ["Hero"])
 
 
 

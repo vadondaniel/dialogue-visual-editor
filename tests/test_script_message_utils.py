@@ -4,6 +4,7 @@ import unittest
 
 from dialogue_visual_editor.helpers.core.script_message_utils import (
     _GAME_MESSAGE_BACKGROUND_PREFIX_RE,
+    _decode_js_string_term,
     _decode_js_string_literal,
     _encode_js_string_literal,
     _has_top_level_comma,
@@ -26,6 +27,10 @@ class ScriptMessageUtilsTests(unittest.TestCase):
 
     def test_decode_js_string_literal_keeps_trailing_backslash(self) -> None:
         self.assertEqual(_decode_js_string_literal("abc\\"), "abc\\")
+
+    def test_decode_js_string_literal_falls_back_for_unknown_escape(self) -> None:
+        self.assertEqual(_decode_js_string_literal(r"\q"), "q")
+        self.assertEqual(_decode_js_string_literal(r"\x1"), "x1")
 
     def test_encode_js_string_literal_escapes_control_chars_and_quote(self) -> None:
         encoded = _encode_js_string_literal("\"\n\r\t\b\f\v\0\x01\\", '"')
@@ -52,6 +57,14 @@ class ScriptMessageUtilsTests(unittest.TestCase):
     def test_parse_rejects_missing_closing_parenthesis(self) -> None:
         self.assertIsNone(parse_game_message_call('$gameMessage.add("Line";'))
 
+    def test_parse_call_handles_whitespace_and_unterminated_literal(self) -> None:
+        self.assertIsNone(parse_game_message_call("$gameMessage.add(   "))
+        self.assertIsNone(parse_game_message_call('$gameMessage.add("abc'))
+        self.assertEqual(
+            parse_game_message_call('$gameMessage.add("x")   ;   '),
+            ("add", "x", '"'),
+        )
+
     def test_build_round_trip(self) -> None:
         built = build_game_message_call(
             "setSpeakerName",
@@ -77,6 +90,12 @@ class ScriptMessageUtilsTests(unittest.TestCase):
             '$gameMessage.setFaceImage("Actor1", 3);'
         )
         self.assertEqual(parsed, ("Actor1", "3"))
+
+    def test_parse_set_face_image_handles_escaped_quotes_and_nested_parentheses(self) -> None:
+        parsed = parse_game_message_set_face_image_call(
+            '$gameMessage.setFaceImage("A\\\\\\"B", fn(1,(2)));'
+        )
+        self.assertEqual(parsed, ('A\\"B', "fn(1,(2))"))
 
     def test_parse_set_face_image_rejects_invalid_argument_forms(self) -> None:
         self.assertIsNone(
@@ -142,6 +161,11 @@ class ScriptMessageUtilsTests(unittest.TestCase):
         )
         self.assertIsNone(parse_game_message_templated_call('$gameMessage.add("A", "B");'))
 
+    def test_parse_game_message_templated_call_rejects_no_args_or_no_expression(self) -> None:
+        self.assertIsNone(parse_game_message_templated_call("$gameMessage.add();"))
+        self.assertIsNone(parse_game_message_templated_call('$gameMessage.add("A" + "B");'))
+        self.assertIsNone(parse_game_message_templated_call("$gameMessage.add(foo + bar);"))
+
     def test_split_expression_and_argument_helpers_handle_nested_structures(self) -> None:
         terms = _split_top_level_plus_expression(
             '"A" + fn(1 + 2, arr[3]) + "B" + obj["k{1}"]'
@@ -149,6 +173,14 @@ class ScriptMessageUtilsTests(unittest.TestCase):
         self.assertEqual(terms, ['"A"', "fn(1 + 2, arr[3])", '"B"', 'obj["k{1}"]'])
         self.assertFalse(_has_top_level_comma('fn(1, 2)'))
         self.assertTrue(_has_top_level_comma('"A", "B"'))
+
+    def test_split_expression_helper_handles_brace_depth(self) -> None:
+        terms = _split_top_level_plus_expression('"A" + {k: 1} + "B"')
+        self.assertEqual(terms, ['"A"', "{k: 1}", '"B"'])
+
+    def test_decode_string_term_rejects_non_string_or_unbalanced_quote(self) -> None:
+        self.assertIsNone(_decode_js_string_term("ab"))
+        self.assertIsNone(_decode_js_string_term('"ab\''))
 
     def test_parse_arguments_helper_handles_nested_calls_and_trailing_text(self) -> None:
         args = _parse_game_message_arguments(
@@ -162,6 +194,21 @@ class ScriptMessageUtilsTests(unittest.TestCase):
         )
         self.assertIsNone(args_with_trailing)
 
+    def test_parse_arguments_helper_rejects_unclosed_and_handles_post_close_whitespace(self) -> None:
+        self.assertIsNone(
+            _parse_game_message_arguments(
+                "$gameMessage.setBackground(fn(1,2);",
+                _GAME_MESSAGE_BACKGROUND_PREFIX_RE,  # type: ignore[name-defined]
+            )
+        )
+        self.assertEqual(
+            _parse_game_message_arguments(
+                "$gameMessage.setBackground(1)   ",
+                _GAME_MESSAGE_BACKGROUND_PREFIX_RE,  # type: ignore[name-defined]
+            ),
+            "1",
+        )
+
     def test_build_game_message_templated_call_handles_unknown_placeholder_index(self) -> None:
         built = build_game_message_templated_call(
             "unknown",
@@ -170,6 +217,15 @@ class ScriptMessageUtilsTests(unittest.TestCase):
             expression_terms=["actualExpr"],
         )
         self.assertEqual(built, '$gameMessage.add("{{EXPR9}}" + actualExpr);')
+
+    def test_build_game_message_templated_call_without_expression_terms_uses_plain_builder(self) -> None:
+        built = build_game_message_templated_call(
+            "setSpeakerName",
+            "Hero",
+            '"',
+            expression_terms=[],
+        )
+        self.assertEqual(built, '$gameMessage.setSpeakerName("Hero");')
 
 
 if __name__ == "__main__":

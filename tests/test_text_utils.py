@@ -334,6 +334,98 @@ class TextUtilsTests(unittest.TestCase):
         finally:
             text_utils.parse_units_for_measure = original_parse_units_for_measure
 
+    def test_additional_name_line_and_visible_length_edges(self) -> None:
+        self.assertEqual(text_utils.visible_length("A\nB"), 2)
+        self.assertFalse(text_utils.looks_like_name_line("   "))
+        self.assertFalse(text_utils.looks_like_name_line(":"))
+        self.assertFalse(text_utils.looks_like_name_line("A" * 41))
+        self.assertFalse(text_utils.looks_like_name_line("Hero!"))
+        self.assertFalse(text_utils.looks_like_name_line("1234"))
+        self.assertTrue(text_utils.looks_like_name_line("A '"))
+        self.assertFalse(text_utils.looks_like_name_line("A " + ("B" * 21)))
+        self.assertTrue(text_utils.looks_like_name_line("King of Hearts"))
+        self.assertFalse(text_utils.looks_like_name_line("Na@me"))
+
+    def test_additional_overflow_and_unit_skip_paths(self) -> None:
+        original_parse_units_for_measure = text_utils.parse_units_for_measure
+        text_utils.parse_units_for_measure = (
+            lambda _text: [{"text": "\n", "visible": 1.0, "is_newline": True}]
+        )
+        try:
+            self.assertIsNone(text_utils.first_overflow_char_index("ignored", 1))
+        finally:
+            text_utils.parse_units_for_measure = original_parse_units_for_measure
+
+        text_utils.parse_units_for_measure = (
+            lambda _text: [{"text": "A", "visible": "bad", "is_newline": False}]
+        )
+        try:
+            self.assertIsNone(text_utils.first_overflow_char_index("ignored", 1))
+        finally:
+            text_utils.parse_units_for_measure = original_parse_units_for_measure
+
+    def test_additional_split_and_wrap_edge_paths(self) -> None:
+        self.assertEqual(text_utils.normalize_control_code_word_case(""), ("", 0))
+        self.assertEqual(text_utils.trim_extra_ellipsis_runs(""), ("", 0))
+        self.assertEqual(text_utils.chunk_lines([], 2), [[""]])
+
+        kept, moved = text_utils.split_lines_by_row_budget(["A", "B"], 0.5)
+        self.assertEqual(kept, ["A"])
+        self.assertEqual(moved, ["B"])
+
+        row_chunks = text_utils.chunk_lines_by_row_budget(["A", "B", "C"], 1.0)
+        self.assertEqual(row_chunks, [["A"], ["B"], ["C"]])
+
+        self.assertEqual(text_utils.wrap_lines_hard_break([], 10), [""])
+        self.assertEqual(text_utils.collapse_lines_join_paragraphs([], 10), [""])
+        self.assertEqual(text_utils.smart_collapse_lines([], 10), [""])
+
+    def test_additional_private_visible_character_helpers(self) -> None:
+        self.assertTrue(text_utils._has_visible_nonspace_characters("\n \\C[1]A"))
+        self.assertIsNone(text_utils._last_visible_nonspace_character(r"\C[1] \n"))
+        self.assertFalse(text_utils._starts_with_capital_visible_letter("\nA"))
+        self.assertTrue(text_utils._starts_with_capital_visible_letter(r"\C[1] A"))
+        self.assertFalse(text_utils._starts_with_noncapital_visible_letter("\na"))
+        self.assertTrue(text_utils._starts_with_noncapital_visible_letter(r"\C[1] a"))
+
+    def test_additional_force_break_and_wrap_hard_break_paths(self) -> None:
+        self.assertFalse(
+            text_utils._should_force_break_after_line(
+                "Wait...",
+                30,
+                next_line="next",
+                allow_colon_triplet_endings=True,
+            )
+        )
+        self.assertTrue(
+            text_utils._should_force_break_after_line(
+                "End)",
+                30,
+                next_line="next",
+            )
+        )
+
+        original_has_visible = text_utils._has_visible_nonspace_characters
+        original_last_visible = text_utils._last_visible_nonspace_character
+        text_utils._has_visible_nonspace_characters = lambda _text: True
+        text_utils._last_visible_nonspace_character = lambda _text: None
+        try:
+            self.assertFalse(
+                text_utils._should_force_break_after_line(
+                    "x",
+                    30,
+                    next_line="next",
+                )
+            )
+        finally:
+            text_utils._has_visible_nonspace_characters = original_has_visible
+            text_utils._last_visible_nonspace_character = original_last_visible
+
+        self.assertEqual(
+            text_utils._wrap_text_hard_break("A\nB", 2),
+            ["A", "B"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
