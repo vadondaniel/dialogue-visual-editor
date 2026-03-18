@@ -426,6 +426,149 @@ class TextUtilsTests(unittest.TestCase):
             ["A", "B"],
         )
 
+    def test_additional_defensive_parsing_and_split_fallback_paths(self) -> None:
+        class _FakeMatch:
+            def __init__(self, value: str) -> None:
+                self._value = value
+
+            def group(self, _index: int) -> str:
+                return self._value
+
+        class _FakeRegex:
+            def __init__(self, value: str) -> None:
+                self._value = value
+
+            def match(self, _token: str) -> _FakeMatch:
+                return _FakeMatch(self._value)
+
+        original_font_regex = text_utils._FONT_SIZE_SET_TOKEN_RE
+        original_variable_regex = text_utils._VARIABLE_TOKEN_RE
+        original_name_regex = text_utils._NAME_TOKEN_RE
+        original_line_display_row_costs = text_utils.line_display_row_costs
+
+        try:
+            text_utils._FONT_SIZE_SET_TOKEN_RE = cast(object, _FakeRegex("bad-int"))
+            self.assertEqual(text_utils.next_message_font_size_for_token(r"\FS[1]", 22), 22)
+
+            text_utils._VARIABLE_TOKEN_RE = cast(object, _FakeRegex("bad-id"))
+            self.assertEqual(text_utils._variable_visible_units_for_token(r"\V[1]", 28), 0.0)
+
+            text_utils._NAME_TOKEN_RE = cast(object, _FakeRegex("bad-id"))
+            self.assertEqual(text_utils._name_visible_units_for_token(r"\N[1]", 28), 0.0)
+
+            class _BrokenSplitString(str):
+                def replace(self, _old: str, _new: str) -> "_BrokenSplitString":
+                    return self
+
+                def split(self, _sep: str | None = None, _maxsplit: int = -1) -> list[str]:
+                    return []
+
+            self.assertEqual(text_utils.split_lines_preserve_empty(_BrokenSplitString("x")), [""])
+
+            class _TruthyEmptyIterable:
+                def __bool__(self) -> bool:
+                    return True
+
+                def __iter__(self):
+                    return iter(())
+
+            kept, moved = text_utils.split_lines_by_row_budget(
+                cast(list[str], _TruthyEmptyIterable()),
+                2.0,
+            )
+            self.assertEqual(kept, [""])
+            self.assertEqual(moved, [])
+
+            text_utils.line_display_row_costs = lambda _lines: []
+            kept, moved = text_utils.split_lines_by_row_budget(["A", "B"], 10.0)
+            self.assertEqual(kept, ["A"])
+            self.assertEqual(moved, ["B"])
+        finally:
+            text_utils._FONT_SIZE_SET_TOKEN_RE = original_font_regex
+            text_utils._VARIABLE_TOKEN_RE = original_variable_regex
+            text_utils._NAME_TOKEN_RE = original_name_regex
+            text_utils.line_display_row_costs = original_line_display_row_costs
+
+    def test_additional_wrap_and_last_visible_character_branches(self) -> None:
+        original_parse_units_for_measure = text_utils.parse_units_for_measure
+        original_unit_is_space = text_utils._unit_is_space
+
+        try:
+            text_utils.parse_units_for_measure = (
+                lambda _text: [
+                    {"text": "\n", "visible": 1.0, "is_newline": True},
+                    {"text": "A", "visible": 1.0, "is_newline": False},
+                ]
+            )
+            self.assertEqual(text_utils._last_visible_nonspace_character("ignored"), "A")
+
+            text_utils.parse_units_for_measure = (
+                lambda _text: [{"text": " ", "visible": 2.0, "is_newline": False}]
+            )
+            self.assertEqual(text_utils.wrap_text_word_aware("ignored", 1), [""])
+
+            text_utils.parse_units_for_measure = (
+                lambda _text: [
+                    {"text": "A", "visible": 1.0, "is_newline": False},
+                    {"text": "B", "visible": 1.0, "is_newline": False},
+                    {"text": "C", "visible": 1.0, "is_newline": False},
+                    {"text": "LONG", "visible": 5.0, "is_newline": False},
+                ]
+            )
+            call_counts_word: dict[str, int] = {}
+
+            def _fake_word_space(unit: dict[str, object]) -> bool:
+                token = unit.get("text", "")
+                if not isinstance(token, str):
+                    return False
+                call_counts_word[token] = call_counts_word.get(token, 0) + 1
+                if token == "B":
+                    return True
+                if token == "C":
+                    return call_counts_word[token] >= 2
+                return False
+
+            text_utils._unit_is_space = _fake_word_space
+            wrapped = text_utils.wrap_text_word_aware("ignored", 3)
+            self.assertTrue(len(wrapped) >= 2)
+        finally:
+            text_utils.parse_units_for_measure = original_parse_units_for_measure
+            text_utils._unit_is_space = original_unit_is_space
+
+        self.assertEqual(text_utils._wrap_text_hard_break(" A", 10), ["A"])
+        self.assertEqual(text_utils._wrap_text_hard_break("A ", 1), ["A"])
+        self.assertEqual(text_utils._wrap_text_hard_break("A- ", 2), ["A-"])
+
+        try:
+            text_utils.parse_units_for_measure = (
+                lambda _text: [
+                    {"text": "A", "visible": 1.0, "is_newline": False},
+                    {"text": "B", "visible": 1.0, "is_newline": False},
+                    {"text": "C", "visible": 1.0, "is_newline": False},
+                    {"text": "D", "visible": 1.0, "is_newline": False},
+                    {"text": "LONG", "visible": 5.0, "is_newline": False},
+                ]
+            )
+            call_counts_hard: dict[str, int] = {}
+
+            def _fake_hard_space(unit: dict[str, object]) -> bool:
+                token = unit.get("text", "")
+                if not isinstance(token, str):
+                    return False
+                call_counts_hard[token] = call_counts_hard.get(token, 0) + 1
+                if token == "B":
+                    return True
+                if token in {"C", "D"}:
+                    return call_counts_hard[token] >= 2
+                return False
+
+            text_utils._unit_is_space = _fake_hard_space
+            broken = text_utils._wrap_text_hard_break("ignored", 4)
+            self.assertTrue(len(broken) >= 1)
+        finally:
+            text_utils.parse_units_for_measure = original_parse_units_for_measure
+            text_utils._unit_is_space = original_unit_is_space
+
 
 if __name__ == "__main__":
     unittest.main()
