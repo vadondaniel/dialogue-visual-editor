@@ -61,6 +61,42 @@ class _ButtonStub:
         self.enabled = bool(enabled)
 
 
+class _WorkerTimerStub:
+    def __init__(self) -> None:
+        self.started: list[int] = []
+
+    def start(self, interval_ms: int) -> None:
+        self.started.append(int(interval_ms))
+
+
+class _WorkerFutureStub:
+    def __init__(self, *, done: bool, payload: Any = None, error: Exception | None = None) -> None:
+        self._done = done
+        self._payload = payload
+        self._error = error
+
+    def done(self) -> bool:
+        return self._done
+
+    def result(self) -> Any:
+        if self._error is not None:
+            raise self._error
+        return self._payload
+
+
+class _WorkerExecutorStub:
+    def __init__(self, future: _WorkerFutureStub | None = None, error: Exception | None = None) -> None:
+        self.future = future or _WorkerFutureStub(done=False)
+        self.error = error
+        self.submit_calls = 0
+
+    def submit(self, _fn: Any, *_args: Any) -> _WorkerFutureStub:
+        self.submit_calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.future
+
+
 class _Harness(AuditSearchMixin):
     def __init__(self) -> None:
         self.audit_search_results_list = QListWidget()
@@ -144,6 +180,62 @@ class _Harness(AuditSearchMixin):
 
     def _run_audit_search(self) -> None:
         self.run_search_calls += 1
+
+
+class _WorkerHarness(AuditSearchMixin):
+    def __init__(self) -> None:
+        self.audit_cache_generation = 1
+        self.audit_search_worker_future: Any = None
+        self.audit_search_worker_running_request: Any = None
+        self.audit_search_worker_pending_request: Any = None
+        self.audit_search_worker_timer = _WorkerTimerStub()
+        self.audit_worker_executor: Any = _WorkerExecutorStub()
+
+        self.audit_search_query_edit: Any = _LineEditStub("alpha")
+        self.audit_search_scope_combo: Any = _ComboStub("both")
+        self.audit_search_case_sensitive_check: Any = _CheckStub(False)
+        self.audit_search_results_list: Any = QListWidget()
+        self.audit_search_status_label: Any = QLabel()
+        self.audit_search_goto_btn: Any = _ButtonStub()
+        self.audit_search_replace_selected_btn: Any = _ButtonStub()
+        self.audit_search_replace_all_btn: Any = _ButtonStub()
+        self.audit_search_progress_overlay: Any = object()
+
+        self.audit_search_cache_key: Any = None
+        self.audit_search_cache_records: list[dict[str, Any]] = []
+        self.audit_search_render_records: list[dict[str, Any]] = []
+        self.audit_search_render_index = 0
+        self.audit_search_render_generation = 0
+        self.audit_search_render_query = ""
+        self.audit_search_render_needle = ""
+        self.audit_search_render_natural_mode = False
+        self.audit_search_render_case_sensitive = False
+        self.audit_search_render_scope = "both"
+        self.audit_search_render_timer = _WorkerTimerStub()
+        self.audit_render_batch_interval_ms = 7
+        self.audit_search_displayed_key: Any = None
+        self.audit_search_display_complete = False
+        self.overlay_messages: list[str] = []
+
+    @staticmethod
+    def _search_request_key(request: dict[str, Any] | None) -> tuple[Any, ...]:
+        if not isinstance(request, dict):
+            return ()
+        return (
+            request.get("generation"),
+            request.get("scope"),
+            request.get("needle"),
+            request.get("case_sensitive"),
+            request.get("natural_mode"),
+        )
+
+    def _set_audit_progress_overlay(
+        self,
+        _target_widget: Any,
+        _overlay: Any,
+        text: str,
+    ) -> None:
+        self.overlay_messages.append(str(text))
 
 
 def _add_result_item(
@@ -239,6 +331,40 @@ class AuditSearchUiUtilsTests(unittest.TestCase):
         harness._go_to_selected_audit_result()
         self.assertEqual(harness.jump_calls, [("Map001.json", "u1")])
 
+    def test_selected_payload_and_go_to_guard_paths(self) -> None:
+        harness = _Harness()
+        harness.audit_search_results_list = None
+        self.assertIsNone(harness._selected_audit_search_payload())
+        harness._go_to_selected_audit_result()
+        self.assertEqual(harness.jump_calls, [])
+
+        harness.audit_search_results_list = QListWidget()
+        self.assertIsNone(harness._selected_audit_search_payload())
+        harness._go_to_selected_audit_result()
+        self.assertEqual(harness.jump_calls, [])
+
+        non_dict = QListWidgetItem("bad")
+        non_dict.setData(Qt.ItemDataRole.UserRole, "bad")
+        harness.audit_search_results_list.addItem(non_dict)
+        harness.audit_search_results_list.setCurrentItem(non_dict)
+        self.assertIsNone(harness._selected_audit_search_payload())
+        harness._go_to_selected_audit_result()
+
+        missing_path = QListWidgetItem("missing path")
+        missing_path.setData(Qt.ItemDataRole.UserRole, {"uid": "u1"})
+        harness.audit_search_results_list.addItem(missing_path)
+        harness.audit_search_results_list.setCurrentItem(missing_path)
+        self.assertIsNone(harness._selected_audit_search_payload())
+        harness._go_to_selected_audit_result()
+
+        missing_uid = QListWidgetItem("missing uid")
+        missing_uid.setData(Qt.ItemDataRole.UserRole, {"path": "Map001.json"})
+        harness.audit_search_results_list.addItem(missing_uid)
+        harness.audit_search_results_list.setCurrentItem(missing_uid)
+        self.assertIsNone(harness._selected_audit_search_payload())
+        harness._go_to_selected_audit_result()
+        self.assertEqual(harness.jump_calls, [])
+
     def test_replace_regex_and_inline_diff(self) -> None:
         harness = _Harness()
         regex = harness._replace_regex_for_case("alpha", case_sensitive=False)
@@ -260,6 +386,34 @@ class AuditSearchUiUtilsTests(unittest.TestCase):
         self.assertIn("line-through", html_diff)
         self.assertEqual(no_find_html, "text")
         self.assertEqual(no_find_count, 0)
+
+    def test_refresh_replace_preview_guard_paths(self) -> None:
+        harness = _Harness()
+        harness.audit_search_results_list = None
+        harness._refresh_audit_search_replace_preview()
+
+        harness.audit_search_results_list = QListWidget()
+        harness.audit_search_query_edit = None
+        harness._refresh_audit_search_replace_preview()
+
+        harness.audit_search_query_edit = _LineEditStub("alpha")
+        harness.audit_search_replace_edit = _LineEditStub("beta")
+        bad_payload = QListWidgetItem("bad")
+        bad_payload.setData(Qt.ItemDataRole.UserRole, "bad")
+        bad_path = QListWidgetItem("bad path")
+        bad_path.setData(
+            Qt.ItemDataRole.UserRole,
+            {
+                "path": "",
+                "uid": "u1",
+                "entry_text": 3,
+                "matched_field": None,
+                "matched_text": None,
+            },
+        )
+        harness.audit_search_results_list.addItem(bad_payload)
+        harness.audit_search_results_list.addItem(bad_path)
+        harness._refresh_audit_search_replace_preview()
 
     def test_replace_selected_result_branches_and_success(self) -> None:
         harness = _Harness()
@@ -350,6 +504,175 @@ class AuditSearchUiUtilsTests(unittest.TestCase):
             harness.statusBar().messages[-1],
             "Replaced 2 matches in 1 result entry.",
         )
+
+    def test_replace_all_required_widget_and_invalid_payload_paths(self) -> None:
+        harness = _Harness()
+        harness.audit_search_scope_combo = None
+        harness._replace_all_audit_search_results()
+        self.assertEqual(harness.statusBar().messages, [])
+
+        harness = _Harness()
+        harness.audit_search_display_complete = True
+        harness.audit_search_query_edit.setText("alpha")
+        bad = QListWidgetItem("bad")
+        bad.setData(Qt.ItemDataRole.UserRole, "bad")
+        missing_path = QListWidgetItem("missing path")
+        missing_path.setData(Qt.ItemDataRole.UserRole, {"uid": "u1", "matched_scope": "both"})
+        missing_uid = QListWidgetItem("missing uid")
+        missing_uid.setData(Qt.ItemDataRole.UserRole, {"path": "Map001.json", "matched_scope": "both"})
+        harness.audit_search_results_list.addItem(bad)
+        harness.audit_search_results_list.addItem(missing_path)
+        harness.audit_search_results_list.addItem(missing_uid)
+
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            harness._replace_all_audit_search_results()
+        self.assertEqual(harness.statusBar().messages[-1], "No replacements applied.")
+
+    def test_replace_all_success_refreshes_translator_when_current_not_touched(self) -> None:
+        harness = _Harness()
+        harness.audit_search_display_complete = True
+        harness.audit_search_query_edit.setText("alpha")
+        harness.audit_search_replace_edit.setText("omega")
+        harness.current_path = Path("Map999.json")
+        _add_result_item(harness, path="Map001.json", uid="u1", matched_scope="both")
+        harness.replace_outcomes[("Map001.json", "u1", "both")] = (True, 1)
+
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            harness._replace_all_audit_search_results()
+
+        self.assertEqual(harness.refresh_translator_calls, 1)
+        self.assertEqual(harness.render_session_calls, 0)
+        self.assertEqual(harness.statusBar().messages[-1], "Replaced 1 match in 1 result entry.")
+
+    def test_worker_queue_start_and_poll_branches(self) -> None:
+        harness = _WorkerHarness()
+        request = {
+            "generation": 1,
+            "query": "alpha",
+            "scope": "both",
+            "needle": "alpha",
+            "case_sensitive": False,
+            "natural_mode": True,
+            "path_sessions": [],
+        }
+
+        harness.audit_search_worker_running_request = dict(request)
+        harness._queue_audit_search_worker(dict(request))
+        self.assertIsNone(harness.audit_search_worker_pending_request)
+
+        harness.audit_search_worker_running_request = None
+        harness.audit_search_worker_pending_request = dict(request)
+        harness._queue_audit_search_worker(dict(request))
+        self.assertEqual(harness.audit_search_worker_pending_request, request)
+
+        start_calls = {"count": 0}
+        harness.audit_search_worker_pending_request = None
+        harness._start_next_audit_search_worker()
+        harness.audit_search_worker_pending_request = dict(request)
+        harness.audit_worker_executor = _WorkerExecutorStub(error=RuntimeError("boom"))
+        harness._start_next_audit_search_worker()
+        self.assertIn("Search scan failed: boom", harness.audit_search_status_label.text())
+
+        harness = _WorkerHarness()
+        harness.audit_search_worker_pending_request = dict(request)
+        harness._start_next_audit_search_worker = lambda: start_calls.__setitem__("count", start_calls["count"] + 1)  # type: ignore[method-assign]
+        harness._poll_audit_search_worker()
+        self.assertEqual(start_calls["count"], 1)
+
+        harness = _WorkerHarness()
+        harness.audit_search_worker_future = _WorkerFutureStub(done=False)
+        harness._poll_audit_search_worker()
+        self.assertEqual(harness.audit_search_worker_timer.started, [18])
+
+        harness = _WorkerHarness()
+        start_calls = {"count": 0}
+        harness.audit_search_worker_future = _WorkerFutureStub(done=True, error=RuntimeError("x"))
+        harness.audit_search_worker_running_request = dict(request)
+        harness.audit_search_worker_pending_request = dict(request)
+        harness._start_next_audit_search_worker = lambda: start_calls.__setitem__("count", start_calls["count"] + 1)  # type: ignore[method-assign]
+        harness._poll_audit_search_worker()
+        self.assertEqual(start_calls["count"], 1)
+
+        harness = _WorkerHarness()
+        harness.audit_search_worker_future = _WorkerFutureStub(done=True, error=RuntimeError("x"))
+        harness.audit_search_worker_running_request = dict(request)
+        harness._poll_audit_search_worker()
+        self.assertIn("Search scan failed: x", harness.audit_search_status_label.text())
+
+    def test_worker_poll_result_guards_and_success_paths(self) -> None:
+        request = {
+            "generation": 1,
+            "query": "alpha",
+            "scope": "both",
+            "needle": "alpha",
+            "case_sensitive": False,
+            "natural_mode": True,
+            "path_sessions": [],
+        }
+
+        harness = _WorkerHarness()
+        start_calls = {"count": 0}
+        harness.audit_search_worker_future = _WorkerFutureStub(done=True, payload=[])
+        harness.audit_search_worker_running_request = dict(request)
+        harness.audit_search_worker_pending_request = {"generation": 2}
+        harness._start_next_audit_search_worker = lambda: start_calls.__setitem__("count", start_calls["count"] + 1)  # type: ignore[method-assign]
+        harness._poll_audit_search_worker()
+        self.assertEqual(start_calls["count"], 1)
+
+        harness = _WorkerHarness()
+        harness.audit_search_worker_future = _WorkerFutureStub(done=True, payload=[])
+        harness.audit_search_worker_running_request = "bad"
+        harness._poll_audit_search_worker()
+
+        harness = _WorkerHarness()
+        mismatch_request = dict(request)
+        mismatch_request["generation"] = 0
+        harness.audit_search_worker_future = _WorkerFutureStub(done=True, payload=[])
+        harness.audit_search_worker_running_request = mismatch_request
+        harness._poll_audit_search_worker()
+
+        harness = _WorkerHarness()
+        harness.audit_search_worker_future = _WorkerFutureStub(done=True, payload=[])
+        harness.audit_search_worker_running_request = dict(request)
+        harness.audit_search_results_list = None
+        harness._poll_audit_search_worker()
+
+        harness = _WorkerHarness()
+        harness.audit_search_worker_future = _WorkerFutureStub(done=True, payload=[])
+        harness.audit_search_worker_running_request = dict(request)
+        harness.audit_search_query_edit.setText("beta")
+        harness._poll_audit_search_worker()
+
+        harness = _WorkerHarness()
+        harness.audit_search_worker_future = _WorkerFutureStub(done=True, payload=[])
+        harness.audit_search_worker_running_request = dict(request)
+        harness._poll_audit_search_worker()
+        self.assertIn("No matches for 'alpha' in both.", harness.audit_search_status_label.text())
+        self.assertFalse(harness.audit_search_replace_selected_btn.enabled)
+        self.assertFalse(harness.audit_search_replace_all_btn.enabled)
+        self.assertEqual(harness.audit_search_displayed_key, (1, "both", "alpha", False, True))
+        self.assertTrue(harness.audit_search_display_complete)
+
+        harness = _WorkerHarness()
+        harness.audit_search_worker_future = _WorkerFutureStub(
+            done=True,
+            payload=[
+                {
+                    "path": Path("Map001.json"),
+                    "uid": "u1",
+                    "entry_text": "Block 1",
+                    "matched_field": "Original",
+                    "matched_text": "alpha",
+                }
+            ],
+        )
+        harness.audit_search_worker_running_request = dict(request)
+        harness._poll_audit_search_worker()
+        self.assertIn("Found 1 match for 'alpha' in both.", harness.audit_search_status_label.text())
+        self.assertEqual(harness.overlay_messages[-1], "Rendering 0/1")
+        self.assertEqual(harness.audit_search_render_timer.started, [7])
+        self.assertEqual(len(harness.audit_search_render_records), 1)
+        self.assertFalse(harness.audit_search_display_complete)
 
 
 if __name__ == "__main__":

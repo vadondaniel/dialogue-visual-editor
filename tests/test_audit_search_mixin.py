@@ -42,6 +42,14 @@ class _Harness(AuditSearchMixin):
         return [""]
 
     @staticmethod
+    def _audit_highlight_style() -> str:
+        return "background:#ff0;"
+
+    @staticmethod
+    def _relative_path(path: Path) -> str:
+        return path.as_posix()
+
+    @staticmethod
     def _audit_entry_text_for_segment(
         session: FileSession,
         segment: DialogueSegment,
@@ -63,6 +71,28 @@ class _Harness(AuditSearchMixin):
         return
 
 
+class _TimerStub:
+    def __init__(self) -> None:
+        self.started = 0
+
+    def start(self) -> None:
+        self.started += 1
+
+
+class _CheckedAction:
+    def __init__(self, checked: bool) -> None:
+        self._checked = checked
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+
+class _RaisingAction:
+    @staticmethod
+    def isChecked() -> bool:
+        raise RuntimeError("boom")
+
+
 def _segment(uid: str, source: str, translation: str, *, kind: str = "dialogue") -> DialogueSegment:
     return DialogueSegment(
         uid=uid,
@@ -78,6 +108,27 @@ def _segment(uid: str, source: str, translation: str, *, kind: str = "dialogue")
 
 
 class AuditSearchMixinTests(unittest.TestCase):
+    def test_natural_mode_helpers_and_case_sensitive_guard_paths(self) -> None:
+        harness = _Harness()
+
+        self.assertFalse(harness._audit_search_uses_natural_mode(""))
+        self.assertEqual(harness._natural_match_spans("", "a", False), [])
+        self.assertEqual(harness._natural_match_spans(r"\C[2]   \N[1]", "a", False), [])
+
+        harness.audit_search_timer = None
+        harness._schedule_audit_search()
+        timer = _TimerStub()
+        harness.audit_search_timer = timer
+        harness._schedule_audit_search()
+        self.assertEqual(timer.started, 1)
+
+        harness.audit_search_case_sensitive_check = None
+        self.assertFalse(harness._audit_search_case_sensitive_enabled())
+        harness.audit_search_case_sensitive_check = _RaisingAction()
+        self.assertFalse(harness._audit_search_case_sensitive_enabled())
+        harness.audit_search_case_sensitive_check = _CheckedAction(True)
+        self.assertTrue(harness._audit_search_case_sensitive_enabled())
+
     def test_audit_search_needle_preserves_whitespace_literal_query(self) -> None:
         harness = _Harness()
         query = " úr "
@@ -188,6 +239,133 @@ class AuditSearchMixinTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(replacements, 1)
         self.assertEqual(session.segments[0].translation_lines, ["Hi", "There"])
+
+    def test_highlight_and_add_result_guard_paths(self) -> None:
+        harness = _Harness()
+        highlighted_no_match = harness._highlight_audit_match_html(
+            "A < B",
+            "XYZ",
+            "xyz",
+            False,
+            False,
+        )
+        highlighted_prefix = harness._highlight_audit_match_html(
+            "xAlpha",
+            "Alpha",
+            "alpha",
+            False,
+            False,
+        )
+        self.assertEqual(highlighted_no_match, "A &lt; B")
+        self.assertIn("x", highlighted_prefix)
+        self.assertIn("background:", highlighted_prefix)
+
+        harness.audit_search_results_list = None
+        harness._add_audit_search_result(
+            path=Path("Map001.json"),
+            uid="u1",
+            entry_text="Block 1",
+            matched_field="Original",
+            matched_text="Alpha",
+            query="Alpha",
+            needle="alpha",
+            natural_mode=False,
+            case_sensitive=False,
+        )
+
+    def test_compute_worker_fallbacks_and_name_index_actor_id_labels(self) -> None:
+        class _NameHarness(_Harness):
+            @staticmethod
+            def _is_name_index_session(_session: FileSession) -> bool:
+                return True
+
+            @staticmethod
+            def _actor_id_from_uid(_uid: str) -> int:
+                return 7
+
+        harness = _NameHarness()
+        harness._audit_entry_text_for_segment = None
+
+        def _raise_normalize(_segment: DialogueSegment, _lines: list[str]) -> list[str]:
+            raise RuntimeError("normalize failed")
+
+        harness._normalize_audit_translation_lines_for_segment = _raise_normalize
+        path = Path("Actors.json")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[_segment("Actors.json:A:7:name", "Alpha", "Alpha", kind="name_index")],
+        )
+
+        records = harness._compute_audit_search_records_worker(
+            [(path, session)],
+            scope="both",
+            needle="alpha",
+            natural_mode=False,
+            case_sensitive=False,
+        )
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0]["entry_text"], "Actor ID 7")
+
+    def test_replace_in_session_entry_defensive_paths(self) -> None:
+        harness = _Harness()
+        changed, replacements = harness._replace_in_session_entry(
+            "Missing.json",
+            "u1",
+            "a",
+            "b",
+            "both",
+            True,
+        )
+        self.assertFalse(changed)
+        self.assertEqual(replacements, 0)
+
+        path = Path("Map001.json")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[_segment("u1", "aa", "aa")],
+        )
+        harness.sessions[path] = session
+        changed, replacements = harness._replace_in_session_entry(
+            str(path),
+            "missing",
+            "a",
+            "b",
+            "both",
+            True,
+        )
+        self.assertFalse(changed)
+        self.assertEqual(replacements, 0)
+
+        changed, replacements = harness._replace_in_session_entry(
+            str(path),
+            "u1",
+            "a",
+            "b",
+            "original",
+            True,
+        )
+        self.assertTrue(changed)
+        self.assertEqual(replacements, 2)
+        self.assertEqual(session.segments[0].lines, ["bb"])
+
+        session.segments[0].translation_lines = ["aa"]
+        harness._normalize_audit_translation_lines_for_segment = None
+        changed, replacements = harness._replace_in_session_entry(
+            str(path),
+            "u1",
+            "a",
+            "b",
+            "translation",
+            True,
+        )
+        self.assertTrue(changed)
+        self.assertEqual(replacements, 2)
+        self.assertEqual(session.segments[0].translation_lines, ["bb"])
 
 
 if __name__ == "__main__":
