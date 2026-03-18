@@ -97,6 +97,61 @@ class LoggingUtilsTests(unittest.TestCase):
         self.assertEqual(logging_utils._configured_log_path, first_path)
         self.assertEqual(self.root_logger.level, logging.DEBUG)
 
+    def test_configure_file_logging_prefers_first_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first_dir = Path(tmpdir) / "first"
+            second_dir = Path(tmpdir) / "second"
+            first_path = logging_utils.configure_file_logging(
+                log_dir=first_dir,
+                level=logging.INFO,
+            )
+            second_path = logging_utils.configure_file_logging(
+                log_dir=second_dir,
+                level=logging.ERROR,
+            )
+
+            self.assertEqual(first_path, second_path)
+            self.assertEqual(first_path, first_dir / "dialogue_visual_editor.log")
+            self.assertFalse(second_dir.exists())
+            for handler in list(self.root_logger.handlers):
+                if isinstance(handler, RotatingFileHandler) and Path(
+                    handler.baseFilename
+                ) == first_path:
+                    self.root_logger.removeHandler(handler)
+                    handler.close()
+
+    def test_install_global_exception_hooks_thread_hook_with_missing_exception_type(
+        self,
+    ) -> None:
+        logger = Mock()
+        thread_calls: list[threading.ExceptHookArgs] = []
+
+        def previous_thread_hook(args: threading.ExceptHookArgs) -> None:
+            thread_calls.append(args)
+
+        def previous_sys_hook(
+            exc_type: type[BaseException],
+            exc_value: BaseException,
+            _exc_tb: object,
+        ) -> None:
+            pass
+
+        sys.excepthook = previous_sys_hook
+        threading.excepthook = previous_thread_hook
+        sys.unraisablehook = None  # type: ignore[assignment]
+
+        with patch.object(logging_utils.logging, "getLogger", return_value=logger):
+            logging_utils.install_global_exception_hooks("dialogue_visual_editor.tests")
+
+        null_thread_args = threading.ExceptHookArgs((None, None, None, None))
+        threading.excepthook(null_thread_args)  # type: ignore[arg-type]
+
+        self.assertEqual(len(thread_calls), 1)
+        self.assertEqual(thread_calls[0], null_thread_args)
+        self.assertEqual(logger.critical.call_count, 1)
+        self.assertEqual(logger.critical.call_args_list[0].kwargs["exc_info"], (None, None, None))
+        self.assertEqual(logger.critical.call_args_list[0].args[1], "unknown")
+
     def test_configure_file_logging_reuses_existing_handler(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             target_dir = Path(tmpdir) / "logs"
@@ -165,6 +220,12 @@ class LoggingUtilsTests(unittest.TestCase):
                 and Path(handler.baseFilename) == configured_path
             ]
             self.assertEqual(len(matching_handlers), 1)
+            for handler in list(self.root_logger.handlers):
+                if isinstance(handler, RotatingFileHandler) and Path(
+                    handler.baseFilename
+                ) == configured_path:
+                    self.root_logger.removeHandler(handler)
+                    handler.close()
 
     def test_configure_file_logging_adds_new_handler_for_different_existing_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -193,6 +254,10 @@ class LoggingUtilsTests(unittest.TestCase):
             self.assertIn(existing_path, handler_paths)
             self.assertIn(configured_path, handler_paths)
             self.assertEqual(len(handler_paths), 2)
+            for handler in list(self.root_logger.handlers):
+                if isinstance(handler, RotatingFileHandler):
+                    self.root_logger.removeHandler(handler)
+                    handler.close()
 
     def test_install_global_exception_hooks_delegates_to_existing_hooks(
         self,
