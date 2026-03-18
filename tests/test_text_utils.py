@@ -585,6 +585,37 @@ class TextUtilsTests(unittest.TestCase):
             [""],
         )
 
+    def test_wrap_text_hard_break_recomputes_break_index_for_remainder(self) -> None:
+        original_parse_units_for_measure = text_utils.parse_units_for_measure
+        original_unit_is_space = text_utils._unit_is_space
+        try:
+            text_utils.parse_units_for_measure = (
+                lambda _text: [
+                    {"text": "A", "visible": 1.0, "is_newline": False},
+                    {"text": " ", "visible": 1.0, "is_newline": False},
+                    {"text": "X", "visible": 1.0, "is_newline": False},
+                    {"text": "B", "visible": 1.0, "is_newline": False},
+                    {"text": "C", "visible": 1.0, "is_newline": False},
+                ]
+            )
+            b_calls = 0
+
+            def _fake_space(unit: dict[str, object]) -> bool:
+                nonlocal b_calls
+                token = unit.get("text", "")
+                if token == " ":
+                    return True
+                if token == "B":
+                    b_calls += 1
+                    return b_calls >= 2
+                return False
+
+            text_utils._unit_is_space = _fake_space
+            self.assertEqual(text_utils._wrap_text_hard_break("ignored", 4), ["A", "XBC"])
+        finally:
+            text_utils.parse_units_for_measure = original_parse_units_for_measure
+            text_utils._unit_is_space = original_unit_is_space
+
 
 if __name__ == "__main__":
     unittest.main()

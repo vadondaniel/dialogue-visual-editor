@@ -1176,6 +1176,50 @@ class ParserInternalCoverageTests(unittest.TestCase):
         self.assertEqual(session.segments[0].segment_kind, "script_message")
         self.assertEqual(session.segments[0].lines, ["Line"])
 
+    def test_remaining_parser_uncovered_control_flow_paths(self) -> None:
+        self.assertIsNone(_collect_tyrano_implicit_dialogue_block(["#Hero"], 0))
+        with patch(
+            "dialogue_visual_editor.helpers.core.parser._is_tyrano_dialogue_text_line",
+            side_effect=[True, False],
+        ):
+            self.assertIsNone(_collect_tyrano_implicit_dialogue_block(["plain"], 0))
+
+        with patch(
+            "dialogue_visual_editor.helpers.core.parser._extract_tyrano_tag_attribute_value",
+            side_effect=[
+                (0, 1, "A", '"'),
+                None,
+            ],
+        ):
+            segments, used_indexes = _build_tyrano_choice_segments(
+                Path("scene.ks"),
+                {
+                    "__dve_tyrano_script_marker__": "tyrano_script",
+                    "__dve_tyrano_script_chunks__": [
+                        {"kind": "raw_line", "line": "[glink text='A' target='*A']"},
+                    ],
+                },
+            )
+        self.assertEqual(segments, [])
+        self.assertEqual(used_indexes, set())
+
+        class _WeirdAssignLine(str):
+            def find(self, sub: str, start: int = 0, end: int | None = None) -> int:
+                if sub == "=":
+                    return len(self) + 1
+                if end is None:
+                    return super().find(sub, start)
+                return super().find(sub, start, end)
+
+        payload = _extract_tyrano_config_assignment_value(
+            _WeirdAssignLine("System.title = abc"),
+            "System.title",
+        )
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload[0], payload[1])
+        self.assertEqual(payload[2], "")
+
 
 
 if __name__ == "__main__":
