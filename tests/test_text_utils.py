@@ -496,8 +496,8 @@ class TextUtilsTests(unittest.TestCase):
         try:
             text_utils.parse_units_for_measure = (
                 lambda _text: [
-                    {"text": "\n", "visible": 1.0, "is_newline": True},
                     {"text": "A", "visible": 1.0, "is_newline": False},
+                    {"text": "\n", "visible": 1.0, "is_newline": True},
                 ]
             )
             self.assertEqual(text_utils._last_visible_nonspace_character("ignored"), "A")
@@ -545,7 +545,6 @@ class TextUtilsTests(unittest.TestCase):
                     {"text": "A", "visible": 1.0, "is_newline": False},
                     {"text": "B", "visible": 1.0, "is_newline": False},
                     {"text": "C", "visible": 1.0, "is_newline": False},
-                    {"text": "D", "visible": 1.0, "is_newline": False},
                     {"text": "LONG", "visible": 5.0, "is_newline": False},
                 ]
             )
@@ -558,16 +557,33 @@ class TextUtilsTests(unittest.TestCase):
                 call_counts_hard[token] = call_counts_hard.get(token, 0) + 1
                 if token == "B":
                     return True
-                if token in {"C", "D"}:
-                    return call_counts_hard[token] >= 2
+                if token == "C":
+                    return call_counts_hard[token] >= 3
                 return False
 
             text_utils._unit_is_space = _fake_hard_space
-            broken = text_utils._wrap_text_hard_break("ignored", 4)
+            broken = text_utils._wrap_text_hard_break("ignored", 3)
             self.assertTrue(len(broken) >= 1)
         finally:
             text_utils.parse_units_for_measure = original_parse_units_for_measure
             text_utils._unit_is_space = original_unit_is_space
+
+    def test_smart_collapse_handles_truthy_empty_iterable_input(self) -> None:
+        class _TruthyEmptyLines:
+            def __bool__(self) -> bool:
+                return True
+
+            def __iter__(self):
+                return iter(())
+
+        self.assertEqual(
+            text_utils.smart_collapse_lines(
+                cast(list[str], _TruthyEmptyLines()),
+                20,
+                infer_name_from_first_line=True,
+            ),
+            [""],
+        )
 
 
 if __name__ == "__main__":

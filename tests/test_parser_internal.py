@@ -43,6 +43,7 @@ from dialogue_visual_editor.helpers.core.parser import (
     _build_tyrano_tag_text_segments,
     _build_system_text_segments,
     _name_index_spec_for_file,
+    _normalize_tyrano_choice_text_for_editor,
     _normalize_tyrano_script_string_key,
     _nearest_non_empty_line,
     _parse_plugins_js_source,
@@ -1095,6 +1096,85 @@ class ParserInternalCoverageTests(unittest.TestCase):
         )
         self.assertEqual(len(actor_session.segments), 1)
         self.assertEqual(actor_session.segments[0].lines, ["Hero"])
+
+    def test_remaining_parser_defensive_branches(self) -> None:
+        self.assertIsNone(_collect_tyrano_implicit_dialogue_block(["#Hero", "[r]"], 0))
+        self.assertEqual(_normalize_tyrano_choice_text_for_editor(""), "")
+
+        with patch(
+            "dialogue_visual_editor.helpers.core.parser.is_tyrano_config_data",
+            return_value=True,
+        ):
+            self.assertEqual(
+                _coerce_tyrano_config_lines({"__dve_tyrano_config_lines__": "bad"}),
+                [],
+            )
+        with patch(
+            "dialogue_visual_editor.helpers.core.parser.is_tyrano_script_data",
+            return_value=True,
+        ):
+            self.assertEqual(
+                _coerce_tyrano_script_chunks({"__dve_tyrano_script_chunks__": "bad"}),
+                [],
+            )
+
+        with patch(
+            "dialogue_visual_editor.helpers.core.parser.is_plugins_js_data",
+            return_value=True,
+        ):
+            self.assertEqual(
+                _build_plugins_text_segments(
+                    Path("plugins.js"),
+                    {"__dve_plugins_js_array__": "bad"},
+                ),
+                [],
+            )
+
+        with patch(
+            "dialogue_visual_editor.helpers.core.parser.is_command_entry",
+            return_value=True,
+        ):
+            self.assertEqual(
+                _collect_choice_branch_entries(
+                    [
+                        {"code": 102, "indent": 0, "parameters": [[]]},
+                        123,
+                        {"code": 404, "indent": 0, "parameters": []},
+                    ],
+                    0,
+                ),
+                [],
+            )
+
+        choice_segments, used = _build_tyrano_choice_segments(
+            Path("scene.ks"),
+            {
+                "__dve_tyrano_script_marker__": "tyrano_script",
+                "__dve_tyrano_script_chunks__": [
+                    {"kind": "raw_line", "line": "[glink target='*A']"},
+                ],
+            },
+        )
+        self.assertEqual(choice_segments, [])
+        self.assertEqual(used, set())
+
+        with patch(
+            "dialogue_visual_editor.helpers.core.parser.copy.deepcopy",
+            return_value={},
+        ):
+            session = parse_dialogue_data(
+                Path("Map001.json"),
+                [
+                    {
+                        "code": 355,
+                        "indent": "bad",
+                        "parameters": ['$gameMessage.add("Line");'],
+                    }
+                ],
+            )
+        self.assertEqual(len(session.segments), 1)
+        self.assertEqual(session.segments[0].segment_kind, "script_message")
+        self.assertEqual(session.segments[0].lines, ["Line"])
 
 
 
