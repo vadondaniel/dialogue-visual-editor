@@ -132,6 +132,129 @@ class LoggingUtilsTests(unittest.TestCase):
                 self.root_logger.removeHandler(handler)
                 handler.close()
 
+    def test_default_log_directory_uses_home_when_localappdata_is_missing(self) -> None:
+        fallback_home = Path("C:/Users/UnitTest")
+        with patch.dict(logging_utils.os.environ, {}, clear=True):
+            with patch.object(logging_utils.Path, "home", return_value=fallback_home):
+                target = logging_utils._default_log_directory()
+
+        self.assertEqual(
+            target,
+            fallback_home / ".dialogue_visual_editor" / "logs",
+        )
+
+    def test_configure_file_logging_creates_directory_and_registers_handler(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_dir = Path(tmpdir) / "nested" / "logs"
+            with patch.object(logging_utils.logging, "captureWarnings") as capture_warnings:
+                configured_path = logging_utils.configure_file_logging(
+                    log_dir=target_dir,
+                    level=logging.WARNING,
+                )
+
+            self.assertEqual(configured_path, target_dir / "dialogue_visual_editor.log")
+            self.assertTrue(target_dir.is_dir())
+            self.assertEqual(capture_warnings.call_count, 1)
+            self.assertEqual(capture_warnings.call_args.args[0], True)
+            self.assertEqual(self.root_logger.level, logging.WARNING)
+
+            matching_handlers = [
+                handler
+                for handler in self.root_logger.handlers
+                if isinstance(handler, RotatingFileHandler)
+                and Path(handler.baseFilename) == configured_path
+            ]
+            self.assertEqual(len(matching_handlers), 1)
+
+    def test_configure_file_logging_adds_new_handler_for_different_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_dir = Path(tmpdir)
+            existing_dir = target_dir / "existing"
+            existing_dir.mkdir(parents=True, exist_ok=True)
+            existing_path = existing_dir / "dialogue_visual_editor.log"
+            existing_handler = RotatingFileHandler(
+                existing_path,
+                maxBytes=1024,
+                backupCount=1,
+                encoding="utf-8",
+            )
+            self.root_logger.addHandler(existing_handler)
+
+            configured_path = logging_utils.configure_file_logging(
+                log_dir=target_dir,
+                level=logging.INFO,
+            )
+
+            handler_paths = {
+                Path(handler.baseFilename)
+                for handler in self.root_logger.handlers
+                if isinstance(handler, RotatingFileHandler)
+            }
+            self.assertIn(existing_path, handler_paths)
+            self.assertIn(configured_path, handler_paths)
+            self.assertEqual(len(handler_paths), 2)
+
+    def test_install_global_exception_hooks_delegates_to_existing_hooks(
+        self,
+    ) -> None:
+        logger = Mock()
+        sys_calls: list[tuple[type[BaseException], BaseException]] = []
+        thread_calls: list[threading.ExceptHookArgs] = []
+        unraisable_calls: list[object] = []
+
+        def previous_sys_hook(
+            exc_type: type[BaseException],
+            exc_value: BaseException,
+            _exc_tb: object,
+        ) -> None:
+            sys_calls.append((exc_type, exc_value))
+
+        def previous_thread_hook(args: threading.ExceptHookArgs) -> None:
+            thread_calls.append(args)
+
+        def previous_unraisable_hook(unraisable: object) -> None:
+            unraisable_calls.append(unraisable)
+
+        sys.excepthook = previous_sys_hook
+        threading.excepthook = previous_thread_hook
+        sys.unraisablehook = previous_unraisable_hook
+
+        with patch.object(logging_utils.logging, "getLogger", return_value=logger) as get_logger:
+            logging_utils.install_global_exception_hooks("dialogue_visual_editor.custom")
+
+        self.assertEqual(get_logger.call_args.args[0], "dialogue_visual_editor.custom")
+
+        try:
+            raise RuntimeError("worker failed")
+        except RuntimeError:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+
+        self.assertIsNotNone(exc_type)
+        self.assertIsNotNone(exc_value)
+        sys.excepthook(exc_type, exc_value, exc_traceback)  # type: ignore[arg-type]
+        self.assertEqual(len(sys_calls), 1)
+        self.assertEqual(logger.critical.call_count, 1)
+
+        worker = threading.Thread(name="Worker-2")
+        thread_args = threading.ExceptHookArgs(
+            (exc_type, exc_value, exc_traceback, worker)
+        )
+        threading.excepthook(thread_args)  # type: ignore[arg-type]
+        self.assertEqual(len(thread_calls), 1)
+        self.assertIs(thread_calls[0], thread_args)
+        self.assertEqual(logger.critical.call_count, 2)
+
+        unraisable = SimpleNamespace(
+            err_msg="during async op",
+            exc_type=exc_type,
+            exc_value=exc_value,
+            exc_traceback=exc_traceback,
+        )
+        sys.unraisablehook(unraisable)
+        self.assertEqual(len(unraisable_calls), 1)
+        self.assertEqual(logger.error.call_count, 1)
+        self.assertIs(unraisable_calls[0], unraisable)
+
     def test_install_global_exception_hooks_logs_and_delegates(self) -> None:
         logger = Mock()
         sys_calls: list[tuple[type[BaseException], BaseException]] = []
