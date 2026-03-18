@@ -1,7 +1,8 @@
 [run]
 source =
-    dialogue_visual_editor/helpers/core
+    dialogue_visual_editor
+omit =
+    dialogue_visual_editor/tests/*
 
 [report]
-fail_under = 80
 show_missing = True

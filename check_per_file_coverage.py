@@ -23,6 +23,13 @@ def _is_excluded(path: str, suffixes: list[str]) -> bool:
     return any(normalized.endswith(suffix) for suffix in suffixes)
 
 
+def _has_excluded_prefix(path: str, prefixes: list[str]) -> bool:
+    if not prefixes:
+        return False
+    normalized = _normalize_path(path)
+    return any(normalized.startswith(prefix.rstrip("/") + "/") for prefix in prefixes)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Fail when any measured file falls below a coverage threshold."
@@ -42,8 +49,14 @@ def main() -> int:
     parser.add_argument(
         "--include-prefix",
         action="append",
-        default=["dialogue_visual_editor/helpers/core/"],
+        default=["dialogue_visual_editor/"],
         help="Only evaluate files whose normalized path starts with this prefix.",
+    )
+    parser.add_argument(
+        "--exclude-prefix",
+        action="append",
+        default=["dialogue_visual_editor/tests/"],
+        help="Skip files whose normalized path starts with this prefix.",
     )
     parser.add_argument(
         "--exclude-suffix",
@@ -66,6 +79,8 @@ def main() -> int:
     for file_path, file_info in files_data.items():
         normalized = _normalize_path(file_path)
         if not _in_scope(normalized, args.include_prefix):
+            continue
+        if _has_excluded_prefix(normalized, args.exclude_prefix):
             continue
         if _is_excluded(normalized, args.exclude_suffix):
             continue
@@ -98,4 +113,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
