@@ -1789,6 +1789,37 @@ class PersistenceExportMixinTests(unittest.TestCase):
             )
         )
 
+    def test_layout_problem_trailing_color_respects_control_mismatch_ignore(self) -> None:
+        harness = _Harness()
+        harness.problem_trailing_color_code_check = _BoolControl(True)
+        segment = _dialogue_segment("Map001.json:L0:0", r"\C[14]Press\C[0]")
+        segment.translation_lines = [r"\C[14]Press"]
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+
+        self.assertTrue(
+            harness._segment_has_layout_problem(
+                session,
+                segment,
+                translator_mode=True,
+            )
+        )
+        self.assertEqual(
+            harness._set_control_mismatch_ignored_for_segment(session, segment),
+            1,
+        )
+        self.assertFalse(
+            harness._segment_has_layout_problem(
+                session,
+                segment,
+                translator_mode=True,
+            )
+        )
+
     def test_layout_problem_detects_japanese_text_for_misc_segment(self) -> None:
         harness = _Harness()
         harness.problem_contains_japanese_check = _BoolControl(True)

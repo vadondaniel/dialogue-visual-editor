@@ -303,6 +303,12 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
         *,
         session: Optional[FileSession] = None,
     ) -> bool:
+        if self._segment_control_mismatch_ignored(
+            segment,
+            session=session,
+            translator_mode=translator_mode,
+        ):
+            return False
         source_lines = self._resolve_problem_source_lines_for_segment(
             segment,
             translator_mode,

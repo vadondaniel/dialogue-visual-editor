@@ -1237,6 +1237,9 @@ class RenderMixin(_RenderHostTypingFallback):
                 segment_prompt_type_resolver=getattr(self, "_segment_prompt_type", None),
             )
             self._configure_dialogue_widget_translation_context(widget, segment)
+            widget.set_trailing_color_problem_enabled(
+                bool(self.problem_trailing_color_code_check.isChecked())
+            )
         self._bind_block_widget_signals(widget)
         return widget
 
@@ -1378,6 +1381,9 @@ class RenderMixin(_RenderHostTypingFallback):
             self.hide_control_codes_check.isChecked())
         widget.set_control_mismatch_highlighting_enabled(
             bool(self.problem_control_mismatch_check.isChecked())
+        )
+        widget.set_trailing_color_problem_enabled(
+            bool(self.problem_trailing_color_code_check.isChecked())
         )
         widget.set_japanese_char_problem_enabled(
             bool(self.problem_contains_japanese_check.isChecked())

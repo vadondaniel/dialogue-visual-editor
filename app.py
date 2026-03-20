@@ -3446,11 +3446,15 @@ class DialogueVisualEditor(
 
     def _refresh_block_control_mismatch_highlighting(self) -> None:
         control_mismatch_enabled = bool(self.problem_control_mismatch_check.isChecked())
+        trailing_color_enabled = bool(self.problem_trailing_color_code_check.isChecked())
         japanese_problem_enabled = bool(self.problem_contains_japanese_check.isChecked())
         for widget in self.block_widgets.values():
             setter = getattr(widget, "set_control_mismatch_highlighting_enabled", None)
             if callable(setter):
                 setter(control_mismatch_enabled)
+            trailing_setter = getattr(widget, "set_trailing_color_problem_enabled", None)
+            if callable(trailing_setter):
+                trailing_setter(trailing_color_enabled)
             japanese_setter = getattr(widget, "set_japanese_char_problem_enabled", None)
             if callable(japanese_setter):
                 japanese_setter(japanese_problem_enabled)
@@ -3467,7 +3471,9 @@ class DialogueVisualEditor(
         if segment is None or actor_mode:
             self.translator_source_view.setExtraSelections([])
             return
-        if not self.problem_control_mismatch_check.isChecked():
+        control_mismatch_enabled = bool(self.problem_control_mismatch_check.isChecked())
+        trailing_color_enabled = bool(self.problem_trailing_color_code_check.isChecked())
+        if not control_mismatch_enabled and not trailing_color_enabled:
             self.translator_source_view.setExtraSelections([])
             return
         if self.current_path is not None:
@@ -3476,6 +3482,17 @@ class DialogueVisualEditor(
                 segment,
                 session=session,
                 translator_mode=True,
+            ):
+                self.translator_source_view.setExtraSelections([])
+                return
+            if (
+                (not control_mismatch_enabled)
+                and trailing_color_enabled
+                and (not self._segment_has_trailing_color_code_problem(
+                    segment,
+                    True,
+                    session=session,
+                ))
             ):
                 self.translator_source_view.setExtraSelections([])
                 return

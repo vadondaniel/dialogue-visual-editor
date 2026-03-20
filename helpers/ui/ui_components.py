@@ -97,6 +97,7 @@ _JAPANESE_PROBLEM_FG_DARK = "#fdba74"
 _JAPANESE_PROBLEM_FG_LIGHT = "#9a3412"
 _JAPANESE_PROBLEM_UNDERLINE_DARK = "#fb923c"
 _JAPANESE_PROBLEM_UNDERLINE_LIGHT = "#c2410c"
+_TRAILING_COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]\s*$")
 
 
 def _extract_control_token_matches(text: str) -> list[tuple[str, int, int]]:
@@ -2239,6 +2240,7 @@ class DialogueBlockWidget(QFrame):
         self.control_mismatch_highlighting_enabled = bool(
             highlight_control_mismatch
         )
+        self.trailing_color_problem_enabled = False
         self.japanese_char_problem_enabled = bool(highlight_contains_japanese)
         self.actor_mode = actor_mode
         self.name_index_kind = name_index_kind.strip().lower()
@@ -2729,7 +2731,10 @@ class DialogueBlockWidget(QFrame):
         if self.actor_mode or (not self._uses_translation_storage()):
             return False
         is_ignored = self._is_control_mismatch_ignored()
-        has_problem = self._has_control_mismatch_problem()
+        has_problem = (
+            self._has_control_mismatch_problem()
+            or self._has_trailing_color_code_problem()
+        )
         if not is_ignored and not has_problem:
             return False
 
@@ -3684,6 +3689,13 @@ class DialogueBlockWidget(QFrame):
         self.japanese_char_problem_enabled = new_value
         self._refresh_status()
 
+    def set_trailing_color_problem_enabled(self, enabled: bool) -> None:
+        new_value = bool(enabled)
+        if self.trailing_color_problem_enabled == new_value:
+            return
+        self.trailing_color_problem_enabled = new_value
+        self._refresh_status()
+
     def _normalize_control_mismatch_lines(self, value: Any) -> list[str]:
         if isinstance(value, list):
             normalized = [
@@ -3792,6 +3804,47 @@ class DialogueBlockWidget(QFrame):
             for _start, _end, status in translation_spans
         )
 
+    def _trailing_color_code_problem_details(self) -> Optional[tuple[str, Optional[str]]]:
+        if not self.trailing_color_problem_enabled:
+            return None
+        if not self._uses_translation_storage():
+            return None
+        if self.actor_mode:
+            return None
+        if self._is_control_mismatch_ignored():
+            return None
+        source_text = "\n".join(self._source_lines_for_control_mismatch())
+        translation_text = "\n".join(
+            self._translation_lines_for_control_mismatch()
+        )
+        if not translation_text.strip():
+            return None
+        source_match = _TRAILING_COLOR_CODE_RE.search(source_text)
+        if source_match is None:
+            return None
+        tl_match = _TRAILING_COLOR_CODE_RE.search(translation_text)
+        source_code = source_match.group(1)
+        if tl_match is None:
+            return source_code, None
+        tl_code = tl_match.group(1)
+        if tl_code == source_code:
+            return None
+        return source_code, tl_code
+
+    def _has_trailing_color_code_problem(self) -> bool:
+        return self._trailing_color_code_problem_details() is not None
+
+    def _trailing_color_problem_summary_text(self) -> str:
+        details = self._trailing_color_code_problem_details()
+        if details is None:
+            return ""
+        source_code, tl_code = details
+        tl_label = "missing" if tl_code is None else f"\\C[{tl_code}]"
+        return (
+            "trailing \\C[n] mismatch at end "
+            f"(JP \\C[{source_code}] vs TL {tl_label})"
+        )
+
     def _is_control_mismatch_ignored(self) -> bool:
         resolver = self.control_mismatch_ignored_resolver
         if not callable(resolver):
@@ -3825,7 +3878,10 @@ class DialogueBlockWidget(QFrame):
             return []
         if not self._uses_translation_storage():
             return []
-        if not self.control_mismatch_highlighting_enabled:
+        if (
+            (not self.control_mismatch_highlighting_enabled)
+            and (not self._has_trailing_color_code_problem())
+        ):
             return []
         if self._displaying_masked_text:
             return []
@@ -4276,6 +4332,8 @@ class DialogueBlockWidget(QFrame):
         storage_lines = self._storage_lines_from_editor_lines(lines)
         max_rows_budget = float(max(1, self.max_lines))
         control_mismatch_problem = self._has_control_mismatch_problem()
+        trailing_color_problem = self._has_trailing_color_code_problem()
+        trailing_color_summary = self._trailing_color_problem_summary_text()
         japanese_text_problem = self._has_japanese_text_problem()
         line1_override_changed = (
             bool(self.segment.disable_line1_speaker_inference)
@@ -4332,10 +4390,16 @@ class DialogueBlockWidget(QFrame):
             text = f"{line_count} {entry_label}, {char_count} {char_label}"
             if control_mismatch_problem:
                 text += ", control mismatch"
+            if trailing_color_problem:
+                text += f", {trailing_color_summary}"
             if japanese_text_problem:
                 text += ", contains Japanese"
             self._set_status_text(text)
-            has_warning = control_mismatch_problem or japanese_text_problem
+            has_warning = (
+                control_mismatch_problem
+                or trailing_color_problem
+                or japanese_text_problem
+            )
             self._has_warning = has_warning
             if has_warning:
                 self.status_label.setStyleSheet(
@@ -4414,6 +4478,8 @@ class DialogueBlockWidget(QFrame):
                 text += f", move {overflow_count} down"
         if control_mismatch_problem:
             text += ", control mismatch"
+        if trailing_color_problem:
+            text += f", {trailing_color_summary}"
         if japanese_text_problem:
             text += ", contains Japanese"
 
@@ -4422,6 +4488,7 @@ class DialogueBlockWidget(QFrame):
             bool(over_width)
             or max_lines_over
             or control_mismatch_problem
+            or trailing_color_problem
             or japanese_text_problem
         )
         self._has_warning = has_warning
