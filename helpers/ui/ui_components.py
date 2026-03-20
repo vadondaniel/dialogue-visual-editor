@@ -22,6 +22,7 @@ from PySide6.QtGui import (
     QTextOption,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QColorDialog,
     QDialog,
@@ -914,12 +915,14 @@ class InferredSpeakerCandidatesDialog(QDialog):
             ]
         )
         self.tree.setUniformRowHeights(True)
+        self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._sync_action_buttons)
         self.tree.itemDoubleClicked.connect(self._on_go_to_entry_clicked)
         root.addWidget(self.tree, 1)
 
         actions = QHBoxLayout()
-        self.accept_btn = QPushButton("Accept as Speaker")
+        self.accept_btn = QPushButton("Accept Selected as Speaker")
         self.set_translation_btn = QPushButton(
             f"Set {self.target_language_code}..."
         )
@@ -955,13 +958,36 @@ class InferredSpeakerCandidatesDialog(QDialog):
         payload = item.data(0, Qt.ItemDataRole.UserRole)
         return payload if isinstance(payload, dict) else None
 
-    def _sync_action_buttons(self) -> None:
-        has_selection = self._selected_row() is not None
-        self.accept_btn.setEnabled(has_selection)
-        self.set_translation_btn.setEnabled(has_selection)
-        self.go_to_entry_btn.setEnabled(has_selection)
+    def _selected_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+        for item in self.tree.selectedItems():
+            payload = item.data(0, Qt.ItemDataRole.UserRole)
+            if not isinstance(payload, dict):
+                continue
+            speaker_key = str(payload.get("speaker_key", "")).strip()
+            if not speaker_key or speaker_key in seen_keys:
+                continue
+            seen_keys.add(speaker_key)
+            rows.append(payload)
+        if rows:
+            return rows
+        row = self._selected_row()
+        return [row] if row is not None else []
 
-    def _refresh_rows(self, select_speaker_key: Optional[str] = None) -> None:
+    def _sync_action_buttons(self) -> None:
+        selected_count = len(self._selected_rows())
+        has_selection = selected_count > 0
+        has_single_selection = selected_count == 1
+        self.accept_btn.setEnabled(has_selection)
+        self.set_translation_btn.setEnabled(has_single_selection)
+        self.go_to_entry_btn.setEnabled(has_single_selection)
+
+    def _refresh_rows(
+        self,
+        select_speaker_key: Optional[str] = None,
+        select_speaker_keys: Optional[set[str]] = None,
+    ) -> None:
         rows = self.editor._collect_inferred_speaker_candidates_for_manager()
         self._candidate_rows = rows if isinstance(rows, list) else []
         self.tree.clear()
@@ -971,8 +997,15 @@ class InferredSpeakerCandidatesDialog(QDialog):
             self._sync_action_buttons()
             return
 
-        row_to_select = 0
-        for idx, row in enumerate(self._candidate_rows):
+        keys_to_select = set(select_speaker_keys or set())
+        if select_speaker_key is not None:
+            normalized_single = str(select_speaker_key).strip()
+            if normalized_single:
+                keys_to_select.add(normalized_single)
+
+        first_item: Optional[QTreeWidgetItem] = None
+        first_selected_item: Optional[QTreeWidgetItem] = None
+        for row in self._candidate_rows:
             speaker_key = str(row.get("speaker_key", "")).strip()
             if not speaker_key:
                 continue
@@ -1000,30 +1033,50 @@ class InferredSpeakerCandidatesDialog(QDialog):
             elif sample_path:
                 item.setToolTip(3, sample_path)
             self.tree.addTopLevelItem(item)
-            if select_speaker_key is not None and speaker_key == select_speaker_key:
-                row_to_select = idx
+            if first_item is None:
+                first_item = item
+            if speaker_key in keys_to_select:
+                item.setSelected(True)
+                if first_selected_item is None:
+                    first_selected_item = item
 
-        candidate_item = self.tree.topLevelItem(row_to_select)
-        if candidate_item is not None:
-            self.tree.setCurrentItem(candidate_item)
+        if first_selected_item is not None:
+            self.tree.setCurrentItem(first_selected_item)
+        elif first_item is not None:
+            self.tree.setCurrentItem(first_item)
         self.status_label.setText(
             f"{len(self._candidate_rows)} candidates ranked by occurrence."
         )
         self._sync_action_buttons()
 
     def _on_accept_clicked(self) -> None:
-        row = self._selected_row()
-        if row is None:
+        rows = self._selected_rows()
+        if not rows:
             return
-        speaker_key = str(row.get("speaker_key", "")).strip()
-        if not speaker_key:
+        speaker_keys: list[str] = []
+        seen_keys: set[str] = set()
+        for row in rows:
+            speaker_key = str(row.get("speaker_key", "")).strip()
+            if not speaker_key or speaker_key in seen_keys:
+                continue
+            seen_keys.add(speaker_key)
+            speaker_keys.append(speaker_key)
+        if not speaker_keys:
             return
-        changed = self.editor._accept_inferred_speaker_candidate_for_manager(speaker_key)
-        block_label = "entry" if changed == 1 else "entries"
-        self.status_label.setText(
-            f"Accepted '{speaker_key}' as inferred speaker for {changed} {block_label}."
+
+        changed_total = 0
+        for speaker_key in speaker_keys:
+            changed_total += self.editor._accept_inferred_speaker_candidate_for_manager(
+                speaker_key
+            )
+        block_label = "entry" if changed_total == 1 else "entries"
+        speaker_label = "speaker" if len(speaker_keys) == 1 else "speakers"
+        status_text = (
+            f"Accepted {len(speaker_keys)} inferred {speaker_label} for "
+            f"{changed_total} {block_label}."
         )
-        self._refresh_rows(select_speaker_key=speaker_key)
+        self._refresh_rows(select_speaker_keys=set(speaker_keys))
+        self.status_label.setText(status_text)
 
     def _on_set_translation_clicked(self) -> None:
         row = self._selected_row()
@@ -1046,9 +1099,10 @@ class InferredSpeakerCandidatesDialog(QDialog):
         self._refresh_rows(select_speaker_key=speaker_key)
 
     def _on_go_to_entry_clicked(self, *_args: Any) -> None:
-        row = self._selected_row()
-        if row is None:
+        rows = self._selected_rows()
+        if len(rows) != 1:
             return
+        row = rows[0]
         path_raw = str(row.get("sample_path", "")).strip()
         uid_raw = str(row.get("sample_uid", "")).strip()
         if not path_raw or not uid_raw:
