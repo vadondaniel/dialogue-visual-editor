@@ -239,6 +239,24 @@ _DEFAULT_NAME_LENGTH_ESTIMATE = 8
 _MAX_NAME_LENGTH_ESTIMATE = 64
 
 
+def _coerce_string_lines(value: object) -> list[str]:
+    if isinstance(value, list):
+        raw_lines: list[object] = value
+    elif isinstance(value, tuple):
+        raw_lines = list(value)
+    else:
+        return []
+    normalized: list[str] = []
+    for raw_line in raw_lines:
+        if isinstance(raw_line, str):
+            normalized.append(raw_line)
+        elif raw_line is None:
+            normalized.append("")
+        else:
+            normalized.append(str(raw_line))
+    return normalized
+
+
 class DialogueVisualEditor(
     AuditMixin,
     RenderMixin,
@@ -604,6 +622,9 @@ class DialogueVisualEditor(
 
         self._init_hidden_settings_controls()
         self._build_menu_bar()
+        page_size_spin = self.pagination_page_size_spin
+        if page_size_spin is None:
+            raise RuntimeError("Pagination page size spinbox was not initialized.")
 
         self.thin_width_spin.valueChanged.connect(
             self._on_layout_constraints_changed)
@@ -611,7 +632,7 @@ class DialogueVisualEditor(
             self._on_layout_constraints_changed)
         self.max_lines_spin.valueChanged.connect(
             self._on_layout_constraints_changed)
-        self.pagination_page_size_spin.valueChanged.connect(
+        page_size_spin.valueChanged.connect(
             self._on_pagination_page_size_changed
         )
         self.thin_width_spin.valueChanged.connect(
@@ -620,7 +641,7 @@ class DialogueVisualEditor(
             self._sync_settings_limits_menu_labels)
         self.max_lines_spin.valueChanged.connect(
             self._sync_settings_limits_menu_labels)
-        self.pagination_page_size_spin.valueChanged.connect(
+        page_size_spin.valueChanged.connect(
             self._sync_settings_pagination_menu_labels
         )
         self.infer_speaker_check.toggled.connect(self._rerender_current_file)
@@ -638,7 +659,7 @@ class DialogueVisualEditor(
             self._on_project_setting_changed)
         self.max_lines_spin.valueChanged.connect(
             self._on_project_setting_changed)
-        self.pagination_page_size_spin.valueChanged.connect(
+        page_size_spin.valueChanged.connect(
             self._on_project_setting_changed
         )
         self.auto_split_check.toggled.connect(self._on_project_setting_changed)
@@ -1001,7 +1022,10 @@ class DialogueVisualEditor(
         parent_layout.addWidget(row)
 
     def _pagination_page_size(self) -> int:
-        return max(1, int(self.pagination_page_size_spin.value()))
+        page_size_spin = self.pagination_page_size_spin
+        if page_size_spin is None:
+            return DEFAULT_PAGE_SIZE
+        return max(1, int(page_size_spin.value()))
 
     def _set_pagination_controls_enabled(self, enabled: bool) -> None:
         for control in (
@@ -2592,8 +2616,14 @@ class DialogueVisualEditor(
     def _sync_settings_pagination_menu_labels(self, *_args: Any) -> None:
         page_size_action = self._settings_pagination_page_size_action
         if page_size_action is not None:
+            page_size_spin = self.pagination_page_size_spin
+            page_size_value = (
+                int(page_size_spin.value())
+                if page_size_spin is not None
+                else DEFAULT_PAGE_SIZE
+            )
             page_size_action.setText(
-                f"Page Size: {int(self.pagination_page_size_spin.value())}..."
+                f"Page Size: {page_size_value}..."
             )
 
     def _smart_collapse_min_soft_ratio(self) -> float:
@@ -2749,8 +2779,11 @@ class DialogueVisualEditor(
         )
 
     def _set_pagination_page_size_from_menu(self) -> None:
+        page_size_spin = self.pagination_page_size_spin
+        if page_size_spin is None:
+            return
         self._prompt_int_for_spin(
-            self.pagination_page_size_spin,
+            page_size_spin,
             "Pagination Page Size",
             "Entries per page:",
         )
@@ -4299,13 +4332,15 @@ class DialogueVisualEditor(
         if bool(getattr(segment, "disable_line1_speaker_inference", False)):
             return ""
         source_lines_resolver = getattr(self, "_source_lines_for_line1_inference", None)
+        source_lines_raw: object
         if callable(source_lines_resolver):
             try:
-                lines = source_lines_resolver(segment)
+                source_lines_raw = source_lines_resolver(segment)
             except Exception:
-                lines = self._segment_source_lines_for_display(segment)
+                source_lines_raw = self._segment_source_lines_for_display(segment)
         else:
-            lines = self._segment_source_lines_for_display(segment)
+            source_lines_raw = self._segment_source_lines_for_display(segment)
+        lines = _coerce_string_lines(source_lines_raw)
         if not lines:
             return ""
         if len(lines) <= 1:
@@ -4350,13 +4385,15 @@ class DialogueVisualEditor(
         infer_speaker_enabled: Optional[bool] = None,
     ) -> list[str]:
         source_lines_resolver = getattr(self, "_source_lines_for_line1_inference", None)
+        source_lines_raw: object
         if callable(source_lines_resolver):
             try:
-                lines = source_lines_resolver(segment)
+                source_lines_raw = source_lines_resolver(segment)
             except Exception:
-                lines = self._segment_source_lines_for_display(segment)
+                source_lines_raw = self._segment_source_lines_for_display(segment)
         else:
-            lines = self._segment_source_lines_for_display(segment)
+            source_lines_raw = self._segment_source_lines_for_display(segment)
+        lines = _coerce_string_lines(source_lines_raw)
         if self._segment_has_inferred_line1_speaker(
             segment,
             infer_speaker_enabled=infer_speaker_enabled,
@@ -4579,13 +4616,15 @@ class DialogueVisualEditor(
         ):
             return normalized_visible
         source_lines_resolver = getattr(self, "_source_lines_for_line1_inference", None)
+        source_lines_raw: object
         if callable(source_lines_resolver):
             try:
-                source_lines = source_lines_resolver(segment)
+                source_lines_raw = source_lines_resolver(segment)
             except Exception:
-                source_lines = self._segment_source_lines_for_display(segment)
+                source_lines_raw = self._segment_source_lines_for_display(segment)
         else:
-            source_lines = self._segment_source_lines_for_display(segment)
+            source_lines_raw = self._segment_source_lines_for_display(segment)
+        source_lines = _coerce_string_lines(source_lines_raw)
         speaker_line = source_lines[0] if source_lines else ""
 
         translated_speaker = segment.translation_speaker.strip()
