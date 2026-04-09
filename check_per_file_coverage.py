@@ -49,13 +49,13 @@ def main() -> int:
     parser.add_argument(
         "--include-prefix",
         action="append",
-        default=["dialogue_visual_editor/"],
+        default=[],
         help="Only evaluate files whose normalized path starts with this prefix.",
     )
     parser.add_argument(
         "--exclude-prefix",
         action="append",
-        default=["dialogue_visual_editor/tests/"],
+        default=["tests/"],
         help="Skip files whose normalized path starts with this prefix.",
     )
     parser.add_argument(

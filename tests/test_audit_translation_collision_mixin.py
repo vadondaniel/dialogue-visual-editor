@@ -7,11 +7,11 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QListWidgetItem
 
-from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
-from dialogue_visual_editor.helpers.audit.audit_translation_collision_mixin import (
+from helpers.audit.audit_core_mixin import AuditCoreMixin
+from helpers.audit.audit_translation_collision_mixin import (
     AuditTranslationCollisionMixin,
 )
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.core.models import DialogueSegment, FileSession
 
 
 def _segment(

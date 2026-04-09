@@ -7,40 +7,40 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from dialogue_visual_editor import check_per_file_coverage as checker
+import check_per_file_coverage as checker
 
 
 class CheckPerFileCoverageTests(unittest.TestCase):
     def test_normalize_and_scope_helpers(self) -> None:
         self.assertEqual(checker._normalize_path(r"a\b\c"), "a/b/c")
-        self.assertTrue(checker._in_scope("dialogue_visual_editor/app.py", []))
+        self.assertTrue(checker._in_scope("app.py", []))
         self.assertTrue(
             checker._in_scope(
-                "dialogue_visual_editor/helpers/core/parser.py",
-                ["dialogue_visual_editor/"],
+                "helpers/core/parser.py",
+                ["helpers/"],
             )
         )
         self.assertFalse(
             checker._in_scope(
                 "third_party/lib.py",
-                ["dialogue_visual_editor/"],
+                ["helpers/"],
             )
         )
 
     def test_excluded_prefix_and_suffix_helpers(self) -> None:
         self.assertFalse(checker._is_excluded("a/b.py", []))
-        self.assertFalse(checker._is_excluded("dialogue_visual_editor/app.py", ["__init__.py"]))
+        self.assertFalse(checker._is_excluded("app.py", ["__init__.py"]))
         self.assertTrue(
             checker._is_excluded(
-                "dialogue_visual_editor/__init__.py",
+                "helpers/__init__.py",
                 ["/__init__.py"],
             )
         )
-        self.assertFalse(checker._has_excluded_prefix("dialogue_visual_editor/app.py", []))
+        self.assertFalse(checker._has_excluded_prefix("app.py", []))
         self.assertTrue(
             checker._has_excluded_prefix(
-                "dialogue_visual_editor/tests/test.py",
-                ["dialogue_visual_editor/tests/"],
+                "tests/test.py",
+                ["tests/"],
             )
         )
 
@@ -82,13 +82,13 @@ class CheckPerFileCoverageTests(unittest.TestCase):
                 json.dumps(
                     {
                         "files": {
-                            "dialogue_visual_editor/tests/test_check.py": {
+                            "tests/test_check.py": {
                                 "summary": {
                                     "num_statements": 10,
                                     "percent_covered": 50.0,
                                 }
                             },
-                            "dialogue_visual_editor/helpers/__init__.py": {
+                            "helpers/__init__.py": {
                                 "summary": {
                                     "num_statements": 10,
                                     "percent_covered": 50.0,
@@ -107,7 +107,7 @@ class CheckPerFileCoverageTests(unittest.TestCase):
                     "--json",
                     str(report_path),
                     "--exclude-prefix",
-                    "dialogue_visual_editor/tests/",
+                    "tests/",
                     "--exclude-suffix",
                     "/__init__.py",
                 ],
@@ -121,10 +121,10 @@ class CheckPerFileCoverageTests(unittest.TestCase):
                 json.dumps(
                     {
                         "files": {
-                            "dialogue_visual_editor/helpers/core/zero.py": {
+                            "helpers/core/zero.py": {
                                 "summary": {"num_statements": 0, "percent_covered": 0.0}
                             },
-                            "dialogue_visual_editor/helpers/core/ok.py": {
+                            "helpers/core/ok.py": {
                                 "summary": {
                                     "num_statements": 10,
                                     "percent_covered": 90.0,
@@ -161,7 +161,7 @@ class CheckPerFileCoverageTests(unittest.TestCase):
                 json.dumps(
                     {
                         "files": {
-                            "dialogue_visual_editor/helpers/core/parser.py": {
+                            "helpers/core/parser.py": {
                                 "summary": {"num_statements": 10, "percent_covered": 95.0}
                             }
                         }
@@ -183,7 +183,7 @@ class CheckPerFileCoverageTests(unittest.TestCase):
                 json.dumps(
                     {
                         "files": {
-                            "dialogue_visual_editor/helpers/core/parser.py": {
+                            "helpers/core/parser.py": {
                                 "summary": {"num_statements": 10, "percent_covered": 70.0}
                             }
                         }

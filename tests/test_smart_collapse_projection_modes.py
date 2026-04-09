@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from dialogue_visual_editor.helpers.mixins.structural_editing_mixin import (
+from helpers.mixins.structural_editing_mixin import (
     _coerce_smart_collapse_rule_counts,
     _merge_smart_collapse_projection_modes,
     _normalize_smart_collapse_projection_mode,

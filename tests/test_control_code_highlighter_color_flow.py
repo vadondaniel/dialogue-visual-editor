@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QTextBlock
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
-from dialogue_visual_editor.helpers.ui.ui_components import ControlCodeHighlighter
+from helpers.ui.ui_components import ControlCodeHighlighter
 
 
 def _block_has_color(block: QTextBlock, color_hex: str) -> bool:

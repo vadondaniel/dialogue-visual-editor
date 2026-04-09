@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
-from dialogue_visual_editor.helpers.mixins.render_mixin import RenderMixin
+from helpers.core.models import DialogueSegment, FileSession
+from helpers.mixins.render_mixin import RenderMixin
 
 
 class _CheckBoxStub:

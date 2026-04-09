@@ -4,10 +4,10 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from dialogue_visual_editor.helpers.audit.audit_name_consistency_mixin import (
+from helpers.audit.audit_name_consistency_mixin import (
     AuditNameConsistencyMixin,
 )
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.core.models import DialogueSegment, FileSession
 
 
 def _segment(

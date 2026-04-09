@@ -11,10 +11,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QListWidgetItem
 
-from dialogue_visual_editor.helpers.audit.audit_control_mismatch_mixin import (
+from helpers.audit.audit_control_mismatch_mixin import (
     AuditControlMismatchMixin,
 )
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.core.models import DialogueSegment, FileSession
 
 
 def _segment(

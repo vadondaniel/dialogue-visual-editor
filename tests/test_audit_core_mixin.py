@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.audit.audit_core_mixin import AuditCoreMixin
+from helpers.core.models import DialogueSegment, FileSession
 
 
 def _segment(uid: str, *, kind: str) -> DialogueSegment:

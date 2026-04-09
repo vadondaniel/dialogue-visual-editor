@@ -7,12 +7,12 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QMessageBox
 
-from dialogue_visual_editor.helpers.core.models import (
+from helpers.core.models import (
     DialogueSegment,
     FileSession,
     NO_SPEAKER_KEY,
 )
-from dialogue_visual_editor.helpers.mixins.structural_editing_mixin import (
+from helpers.mixins.structural_editing_mixin import (
     StructuralEditingMixin,
 )
 
@@ -561,7 +561,7 @@ class StructuralEditingResetFastPathTests(unittest.TestCase):
         harness = _DeleteFallbackHarness(session)
 
         with patch(
-            "dialogue_visual_editor.helpers.mixins.structural_editing_mixin.QMessageBox.question",
+            "helpers.mixins.structural_editing_mixin.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             harness._on_delete_requested("A:2")
@@ -582,7 +582,7 @@ class StructuralEditingResetFastPathTests(unittest.TestCase):
         harness = _DeleteFallbackHarness(session)
 
         with patch(
-            "dialogue_visual_editor.helpers.mixins.structural_editing_mixin.QMessageBox.question",
+            "helpers.mixins.structural_editing_mixin.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             harness._on_delete_requested("A:1")
@@ -599,7 +599,7 @@ class StructuralEditingResetFastPathTests(unittest.TestCase):
         harness = _DeleteFallbackHarness(session)
 
         with patch(
-            "dialogue_visual_editor.helpers.mixins.structural_editing_mixin.QMessageBox.question",
+            "helpers.mixins.structural_editing_mixin.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             harness._on_delete_requested("A:3")

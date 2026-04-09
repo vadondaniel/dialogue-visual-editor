@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from dialogue_visual_editor.helpers.mixins.presentation_mixins import (
+from helpers.mixins.presentation_mixins import (
     PresentationHelpersMixin,
 )
 

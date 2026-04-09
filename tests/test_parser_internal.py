@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from dialogue_visual_editor.helpers.core.parser import (
+from helpers.core.parser import (
     _append_tyrano_standalone_marker_to_previous_text,
     _collect_tyrano_implicit_dialogue_block,
     _collect_choice_branch_entries,
@@ -607,7 +607,7 @@ class ParserInternalCoverageTests(unittest.TestCase):
         escaped_source = r'["a\"b"]'
         self.assertEqual(_find_matching_bracket_end(escaped_source, 0), len(escaped_source) - 1)
 
-        with patch("dialogue_visual_editor.helpers.core.parser.json.loads", return_value={"x": 1}):
+        with patch("helpers.core.parser.json.loads", return_value={"x": 1}):
             with self.assertRaises(ValueError):
                 _parse_plugins_js_source("var $plugins = [1];")
 
@@ -804,7 +804,7 @@ class ParserInternalCoverageTests(unittest.TestCase):
             "raw-token",
         ]
         with patch(
-            "dialogue_visual_editor.helpers.core.parser.parse_game_message_templated_call",
+            "helpers.core.parser.parse_game_message_templated_call",
             side_effect=lambda text: ("setSpeakerName", "Temp {{EXPR1}}", '"', ["x"]) if text == "tmpl_speaker" else None,
         ):
             command_session = parse_dialogue_data(Path("Map999.json"), command_data)
@@ -1083,7 +1083,7 @@ class ParserInternalCoverageTests(unittest.TestCase):
             ],
         }
         with patch(
-            "dialogue_visual_editor.helpers.core.parser._split_tyrano_inline_line_breaks",
+            "helpers.core.parser._split_tyrano_inline_line_breaks",
             return_value=([], []),
         ):
             dialogue_segments = _build_tyrano_dialogue_segments(Path("scene.ks"), dialogue_data)
@@ -1102,7 +1102,7 @@ class ParserInternalCoverageTests(unittest.TestCase):
         self.assertEqual(_normalize_tyrano_choice_text_for_editor(""), "")
 
         with patch(
-            "dialogue_visual_editor.helpers.core.parser.is_tyrano_config_data",
+            "helpers.core.parser.is_tyrano_config_data",
             return_value=True,
         ):
             self.assertEqual(
@@ -1110,7 +1110,7 @@ class ParserInternalCoverageTests(unittest.TestCase):
                 [],
             )
         with patch(
-            "dialogue_visual_editor.helpers.core.parser.is_tyrano_script_data",
+            "helpers.core.parser.is_tyrano_script_data",
             return_value=True,
         ):
             self.assertEqual(
@@ -1119,7 +1119,7 @@ class ParserInternalCoverageTests(unittest.TestCase):
             )
 
         with patch(
-            "dialogue_visual_editor.helpers.core.parser.is_plugins_js_data",
+            "helpers.core.parser.is_plugins_js_data",
             return_value=True,
         ):
             self.assertEqual(
@@ -1131,7 +1131,7 @@ class ParserInternalCoverageTests(unittest.TestCase):
             )
 
         with patch(
-            "dialogue_visual_editor.helpers.core.parser.is_command_entry",
+            "helpers.core.parser.is_command_entry",
             return_value=True,
         ):
             self.assertEqual(
@@ -1159,7 +1159,7 @@ class ParserInternalCoverageTests(unittest.TestCase):
         self.assertEqual(used, set())
 
         with patch(
-            "dialogue_visual_editor.helpers.core.parser.copy.deepcopy",
+            "helpers.core.parser.copy.deepcopy",
             return_value={},
         ):
             session = parse_dialogue_data(
@@ -1179,13 +1179,13 @@ class ParserInternalCoverageTests(unittest.TestCase):
     def test_remaining_parser_uncovered_control_flow_paths(self) -> None:
         self.assertIsNone(_collect_tyrano_implicit_dialogue_block(["#Hero"], 0))
         with patch(
-            "dialogue_visual_editor.helpers.core.parser._is_tyrano_dialogue_text_line",
+            "helpers.core.parser._is_tyrano_dialogue_text_line",
             side_effect=[True, False],
         ):
             self.assertIsNone(_collect_tyrano_implicit_dialogue_block(["plain"], 0))
 
         with patch(
-            "dialogue_visual_editor.helpers.core.parser._extract_tyrano_tag_attribute_value",
+            "helpers.core.parser._extract_tyrano_tag_attribute_value",
             side_effect=[
                 (0, 1, "A", '"'),
                 None,

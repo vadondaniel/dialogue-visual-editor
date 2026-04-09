@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from dialogue_visual_editor.helpers.audit.audit_control_mismatch_mixin import (
+from helpers.audit.audit_control_mismatch_mixin import (
     AuditControlMismatchMixin,
 )
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.core.models import DialogueSegment, FileSession
 
 
 def _segment(
@@ -202,7 +202,7 @@ class AuditControlMismatchMixinTests(unittest.TestCase):
             return_value=[(r"\C[bad]", 0, 7)],
         ):
             with patch(
-                "dialogue_visual_editor.helpers.audit.audit_control_mismatch_mixin.COLOR_CODE_TOKEN_RE",
+                "helpers.audit.audit_control_mismatch_mixin.COLOR_CODE_TOKEN_RE",
                 new=_BadRegex(),
             ):
                 rendered = harness._render_control_mismatch_side_html(r"\C[bad] tail", {0})

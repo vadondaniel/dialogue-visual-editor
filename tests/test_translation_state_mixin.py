@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QMessageBox
 
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
-from dialogue_visual_editor.helpers.mixins.translation_state_mixin import (
+from helpers.core.models import DialogueSegment, FileSession, NO_SPEAKER_KEY
+from helpers.mixins.translation_state_mixin import (
     TranslationStateMixin,
 )
 
@@ -181,7 +181,7 @@ class TranslationStateMixinTests(unittest.TestCase):
         setattr(harness, "_editor_mode_last_data", "translator")
 
         with patch(
-            "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.warning",
+            "helpers.mixins.translation_state_mixin.QMessageBox.warning",
             return_value=QMessageBox.StandardButton.No,
         ) as warning_mock:
             harness._on_editor_mode_changed(1)
@@ -214,7 +214,7 @@ class TranslationStateMixinTests(unittest.TestCase):
         harness._rerender_current_file = lambda: call_order.append("rerender")  # type: ignore[method-assign]
 
         with patch(
-            "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.warning",
+            "helpers.mixins.translation_state_mixin.QMessageBox.warning",
             return_value=QMessageBox.StandardButton.Yes,
         ) as warning_mock:
             harness._on_editor_mode_changed(1)
@@ -240,7 +240,7 @@ class TranslationStateMixinTests(unittest.TestCase):
         harness._rerender_current_file = lambda: rerender_calls.append(1)  # type: ignore[method-assign]
 
         with patch(
-            "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.warning"
+            "helpers.mixins.translation_state_mixin.QMessageBox.warning"
         ) as warning_mock:
             harness._on_editor_mode_changed(0)
 
@@ -341,7 +341,7 @@ class TranslationStateMixinTests(unittest.TestCase):
             harness.translation_state_path = state_path
 
             with patch(
-                "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.warning"
+                "helpers.mixins.translation_state_mixin.QMessageBox.warning"
             ) as warning_mock:
                 harness._load_translation_state()
 
@@ -391,7 +391,7 @@ class TranslationStateMixinTests(unittest.TestCase):
 
         with patch.object(Path, "open", side_effect=OSError("disk full")):
             with patch(
-                "dialogue_visual_editor.helpers.mixins.translation_state_mixin.QMessageBox.critical"
+                "helpers.mixins.translation_state_mixin.QMessageBox.critical"
             ) as critical_mock:
                 saved = harness._save_translation_state()
 

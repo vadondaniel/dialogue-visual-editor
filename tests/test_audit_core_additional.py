@@ -11,8 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
-from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.audit.audit_core_mixin import AuditCoreMixin
+from helpers.core.models import DialogueSegment, FileSession
 
 
 def _segment(uid: str, *, kind: str = "dialogue") -> DialogueSegment:
@@ -334,12 +334,12 @@ class AuditCoreAdditionalTests(unittest.TestCase):
     def test_audit_highlight_style_light_and_dark(self) -> None:
         harness = _Harness()
         with patch(
-            "dialogue_visual_editor.helpers.audit.audit_core_mixin.is_dark_palette",
+            "helpers.audit.audit_core_mixin.is_dark_palette",
             return_value=True,
         ):
             dark = harness._audit_highlight_style()
         with patch(
-            "dialogue_visual_editor.helpers.audit.audit_core_mixin.is_dark_palette",
+            "helpers.audit.audit_core_mixin.is_dark_palette",
             return_value=False,
         ):
             light = harness._audit_highlight_style()
@@ -387,7 +387,7 @@ class AuditCoreAdditionalTests(unittest.TestCase):
         harness = _Harness()
         segment = _segment("u1", kind="choice")
         with patch(
-            "dialogue_visual_editor.helpers.audit.audit_core_mixin.re.split",
+            "helpers.audit.audit_core_mixin.re.split",
             return_value=[],
         ):
             normalized = harness._normalize_audit_translation_lines_for_segment(

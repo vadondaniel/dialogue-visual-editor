@@ -3,11 +3,11 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from dialogue_visual_editor.helpers.audit.audit_term_usage_mixin import (
+from helpers.audit.audit_term_usage_mixin import (
     AuditTermUsageMixin,
 )
-from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.audit.audit_core_mixin import AuditCoreMixin
+from helpers.core.models import DialogueSegment, FileSession
 
 
 def _segment(

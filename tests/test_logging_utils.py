@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from dialogue_visual_editor.helpers.core import logging_utils
+from helpers.core import logging_utils
 
 
 class LoggingUtilsTests(unittest.TestCase):

@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QAbstractItemView, QApplication
 
-from dialogue_visual_editor.helpers.ui.ui_components import (
+from helpers.ui.ui_components import (
     InferredSpeakerCandidatesDialog,
 )
 

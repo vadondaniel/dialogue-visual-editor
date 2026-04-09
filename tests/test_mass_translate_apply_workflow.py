@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
-from dialogue_visual_editor.helpers.ui.mass_translate_dialog import MassTranslateDialog
+from helpers.core.models import DialogueSegment, FileSession
+from helpers.ui.mass_translate_dialog import MassTranslateDialog
 
 
 class _ApplyWorkflowEditorMeta:

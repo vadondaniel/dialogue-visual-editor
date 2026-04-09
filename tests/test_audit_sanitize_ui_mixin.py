@@ -11,11 +11,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QListWidgetItem
 
-from dialogue_visual_editor.helpers.audit.audit_constants import SANITIZE_CHAR_RULES
-from dialogue_visual_editor.helpers.audit.audit_sanitize_ui_mixin import (
+from helpers.audit.audit_constants import SANITIZE_CHAR_RULES
+from helpers.audit.audit_sanitize_ui_mixin import (
     AuditSanitizeUiMixin,
 )
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.core.models import DialogueSegment, FileSession
 
 
 def _segment(uid: str, *, segment_kind: str = "dialogue") -> DialogueSegment:
@@ -1001,7 +1001,7 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         _FakeMenu.choose_label = "Apply Rule"
 
         with patch(
-            "dialogue_visual_editor.helpers.audit.audit_sanitize_ui_mixin.QMenu",
+            "helpers.audit.audit_sanitize_ui_mixin.QMenu",
             _FakeMenu,
         ):
             harness._on_audit_sanitize_rules_context_menu(object())
@@ -1040,7 +1040,7 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
         harness.audit_sanitize_occurrences_list = _FakeList([item], current_row=-1)
 
         with patch(
-            "dialogue_visual_editor.helpers.audit.audit_sanitize_ui_mixin.QMenu",
+            "helpers.audit.audit_sanitize_ui_mixin.QMenu",
             _FakeMenu,
         ):
             _FakeMenu.choose_label = "Go To"

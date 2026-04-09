@@ -8,22 +8,22 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QMessageBox
 
-from dialogue_visual_editor.helpers.core.models import (
+from helpers.core.models import (
     CommandBundle,
     CommandToken,
     DialogueSegment,
     FileSession,
     NO_SPEAKER_KEY,
 )
-from dialogue_visual_editor.helpers.core.parser import (
+from helpers.core.parser import (
     parse_dialogue_file,
     tyrano_config_source_from_data,
     tyrano_script_source_from_data,
 )
-from dialogue_visual_editor.helpers.mixins.persistence_export_mixin import (
+from helpers.mixins.persistence_export_mixin import (
     PersistenceExportMixin,
 )
-from dialogue_visual_editor.helpers.mixins.render_mixin import RenderMixin
+from helpers.mixins.render_mixin import RenderMixin
 
 
 class _BoolControl:
@@ -2301,7 +2301,7 @@ class PersistenceExportMixinTests(unittest.TestCase):
         harness.sessions[session.path] = session
 
         with patch(
-            "dialogue_visual_editor.helpers.mixins.persistence_export_mixin.QMessageBox.question",
+            "helpers.mixins.persistence_export_mixin.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             harness._on_reset_current_file_requested()

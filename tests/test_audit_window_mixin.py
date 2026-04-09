@@ -8,7 +8,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QListWidgetItem, QTabWidget, QWidget
-from dialogue_visual_editor.helpers.audit.audit_window_mixin import AuditWindowMixin
+from helpers.audit.audit_window_mixin import AuditWindowMixin
 
 
 class _Harness(AuditWindowMixin):
@@ -270,7 +270,7 @@ class AuditWindowMixinQtSignalTests(unittest.TestCase):
     def test_case_toggle_icon_dark_palette_branch_and_tab_index_helpers(self) -> None:
         harness = _QtHarness()
         with patch(
-            "dialogue_visual_editor.helpers.audit.audit_window_mixin.is_dark_palette",
+            "helpers.audit.audit_window_mixin.is_dark_palette",
             return_value=True,
         ):
             icon_checked = harness._audit_case_toggle_icon(True)
@@ -295,7 +295,7 @@ class AuditWindowMixinQtSignalTests(unittest.TestCase):
         assert check is not None
 
         with patch(
-            "dialogue_visual_editor.helpers.audit.audit_window_mixin.QTimer.singleShot",
+            "helpers.audit.audit_window_mixin.QTimer.singleShot",
             side_effect=lambda _ms, callback: callback(),
         ) as single_shot:
             check.setChecked(True)

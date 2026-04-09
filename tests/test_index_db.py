@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dialogue_visual_editor.helpers.core.index_db import DialogueIndexDB
-from dialogue_visual_editor.helpers.core.models import DialogueSegment
+from helpers.core.index_db import DialogueIndexDB
+from helpers.core.models import DialogueSegment
 
 
 def _segment(uid: str, speaker: str, line: str) -> DialogueSegment:

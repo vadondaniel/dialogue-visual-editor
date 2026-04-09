@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from PySide6.QtCore import Qt
 
-from dialogue_visual_editor.app import FILE_LIST_SCOPE_ROLE, DialogueVisualEditor
+from app import FILE_LIST_SCOPE_ROLE, DialogueVisualEditor
 
 
 def _call_editor_method(name: str, self_obj: object, *args: Any) -> Any:

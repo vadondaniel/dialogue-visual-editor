@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dialogue_visual_editor.helpers.core.models import NO_SPEAKER_KEY
-from dialogue_visual_editor.helpers.core.parser import (
+from helpers.core.models import NO_SPEAKER_KEY
+from helpers.core.parser import (
     parse_dialogue_data,
     parse_dialogue_file,
     tyrano_config_source_from_data,

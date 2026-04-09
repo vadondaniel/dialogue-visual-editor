@@ -11,8 +11,8 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFocusEvent, QKeyEvent
 from PySide6.QtWidgets import QApplication, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-from dialogue_visual_editor.helpers.core.models import DialogueSegment
-from dialogue_visual_editor.helpers.ui.ui_components import DialogueBlockWidget
+from helpers.core.models import DialogueSegment
+from helpers.ui.ui_components import DialogueBlockWidget
 
 
 def _segment(lines: list[str] | None = None) -> DialogueSegment:

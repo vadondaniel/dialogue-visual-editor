@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
-from dialogue_visual_editor.helpers.mixins.presentation_mixins import PresentationHelpersMixin
+from helpers.core.models import DialogueSegment, FileSession
+from helpers.mixins.presentation_mixins import PresentationHelpersMixin
 
 
 def _actor_segment(uid: str, text: str, *, alias: bool = False) -> DialogueSegment:

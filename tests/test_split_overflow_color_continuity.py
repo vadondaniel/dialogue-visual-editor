@@ -4,10 +4,10 @@ from pathlib import Path
 import unittest
 from typing import Any
 
-from dialogue_visual_editor.helpers.mixins.structural_editing_mixin import (
+from helpers.mixins.structural_editing_mixin import (
     StructuralEditingMixin,
 )
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.core.models import DialogueSegment, FileSession
 
 
 class _Harness(StructuralEditingMixin):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from dialogue_visual_editor.helpers.core.actor_name_change_utils import (
+from helpers.core.actor_name_change_utils import (
     collect_actor_name_change_entries,
 )
 

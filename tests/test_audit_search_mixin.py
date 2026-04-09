@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
-from dialogue_visual_editor.helpers.audit.audit_search_mixin import AuditSearchMixin
-from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
+from helpers.core.models import DialogueSegment, FileSession
+from helpers.audit.audit_search_mixin import AuditSearchMixin
+from helpers.audit.audit_core_mixin import AuditCoreMixin
 
 
 class _Harness(AuditSearchMixin):

@@ -4,12 +4,12 @@ import unittest
 from pathlib import Path
 from typing import Any, Callable, cast
 
-from dialogue_visual_editor.helpers.audit.audit_constants import SANITIZE_CHAR_RULES
-from dialogue_visual_editor.helpers.audit.audit_core_mixin import AuditCoreMixin
-from dialogue_visual_editor.helpers.audit.audit_sanitize_worker_mixin import (
+from helpers.audit.audit_constants import SANITIZE_CHAR_RULES
+from helpers.audit.audit_core_mixin import AuditCoreMixin
+from helpers.audit.audit_sanitize_worker_mixin import (
     AuditSanitizeWorkerMixin,
 )
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.core.models import DialogueSegment, FileSession
 
 
 class _TimerStub:

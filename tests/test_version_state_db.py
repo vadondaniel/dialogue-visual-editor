@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dialogue_visual_editor.helpers.core.version_state_db import (
+from helpers.core.version_state_db import (
     DEFAULT_TRANSLATION_PROFILE_ID,
     DialogueVersionDB,
 )

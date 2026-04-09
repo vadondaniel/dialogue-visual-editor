@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from dialogue_visual_editor.helpers.core.models import (
+from helpers.core.models import (
     NO_SPEAKER_KEY,
     DialogueSegment,
 )

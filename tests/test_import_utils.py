@@ -3,12 +3,12 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from dialogue_visual_editor.helpers.core.import_utils import (
+from helpers.core.import_utils import (
     _uid_group,
     align_source_translated_segments,
     segment_alignment_key,
 )
-from dialogue_visual_editor.helpers.core.models import DialogueSegment
+from helpers.core.models import DialogueSegment
 
 
 def _segment(
@@ -154,7 +154,7 @@ class ImportUtilsTests(unittest.TestCase):
                 return []
 
         with patch(
-            "dialogue_visual_editor.helpers.core.import_utils.SequenceMatcher",
+            "helpers.core.import_utils.SequenceMatcher",
             _NoOpcodeMatcher,
         ):
             mapped, inserts = align_source_translated_segments(source, translated)

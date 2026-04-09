@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from typing import Any, Optional, cast
 
-from dialogue_visual_editor.app import DialogueVisualEditor
+from app import DialogueVisualEditor
 
 
 def _call_editor_method(name: str, self_obj: object, *args: Any) -> Any:

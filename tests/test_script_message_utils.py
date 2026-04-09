@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-import dialogue_visual_editor.helpers.core.script_message_utils as script_message_utils
-from dialogue_visual_editor.helpers.core.script_message_utils import (
+import helpers.core.script_message_utils as script_message_utils
+from helpers.core.script_message_utils import (
     _GAME_MESSAGE_BACKGROUND_PREFIX_RE,
     _decode_js_string_term,
     _decode_js_string_literal,

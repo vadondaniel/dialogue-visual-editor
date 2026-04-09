@@ -6,8 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from dialogue_visual_editor.helpers.core import project_path_utils
-from dialogue_visual_editor.helpers.core.project_path_utils import (
+from helpers.core import project_path_utils
+from helpers.core.project_path_utils import (
     _contains_ks_files,
     _folder_file_names_lower,
     candidate_project_data_folders,

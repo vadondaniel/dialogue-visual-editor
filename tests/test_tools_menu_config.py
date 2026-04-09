@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Any, cast
 
-from dialogue_visual_editor.app import DialogueVisualEditor
+from app import DialogueVisualEditor
 
 
 def _call_editor_method(name: str, self_obj: object, *args: Any) -> Any:

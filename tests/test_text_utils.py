@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Callable, cast
 
-from dialogue_visual_editor.helpers.core import text_utils
+from helpers.core import text_utils
 
 
 class TextUtilsTests(unittest.TestCase):

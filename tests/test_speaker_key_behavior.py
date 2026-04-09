@@ -5,13 +5,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-from dialogue_visual_editor.app import DialogueVisualEditor
-from dialogue_visual_editor.helpers.core.models import (
+from app import DialogueVisualEditor
+from helpers.core.models import (
     DialogueSegment,
     FileSession,
     NO_SPEAKER_KEY,
 )
-from dialogue_visual_editor.helpers.ui.ui_components import SpeakerManagerDialog
+from helpers.ui.ui_components import SpeakerManagerDialog
 
 
 def _call_editor_method(name: str, self_obj: object, *args: Any) -> Any:

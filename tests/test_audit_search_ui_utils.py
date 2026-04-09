@@ -11,8 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QListWidgetItem, QMessageBox
 
-from dialogue_visual_editor.helpers.audit.audit_search_mixin import AuditSearchMixin
-from dialogue_visual_editor.helpers.core.models import DialogueSegment, FileSession
+from helpers.audit.audit_search_mixin import AuditSearchMixin
+from helpers.core.models import DialogueSegment, FileSession
 
 
 class _LineEditStub:
