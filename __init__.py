@@ -1,5 +1,8 @@
 from __future__ import annotations
 
-from .app import DialogueVisualEditor, main
+try:
+    from .app import DialogueVisualEditor, main
+except ImportError:
+    from app import DialogueVisualEditor, main
 
 __all__ = ["DialogueVisualEditor", "main"]
