@@ -4,7 +4,7 @@ from concurrent.futures import Future
 import copy
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
@@ -1932,7 +1932,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             return ""
         if segment.speaker_name != NO_SPEAKER_KEY:
             return ""
-        source_lines_resolver = getattr(self, "_source_lines_for_line1_inference", None)
+        source_lines: list[str]
+        source_lines_resolver = cast(
+            Callable[[DialogueSegment], list[str]] | None,
+            getattr(self, "_source_lines_for_line1_inference", None),
+        )
         if callable(source_lines_resolver):
             try:
                 source_lines = source_lines_resolver(segment)

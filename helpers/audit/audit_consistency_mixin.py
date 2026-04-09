@@ -5,7 +5,7 @@ import copy
 import hashlib
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Optional, Protocol, cast
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QTextCharFormat, QTextCursor, QTextFormat
@@ -25,6 +25,15 @@ from ..mixins.presentation_mixins import is_dark_palette
 class _AuditConsistencyHostTypingFallback:
     if TYPE_CHECKING:
         def __getattr__(self, name: str) -> Any: ...
+
+
+class _DocumentLike(Protocol):
+    def blockCount(self) -> int: ...
+    def documentMargin(self) -> float: ...
+
+
+class _FontMetricsLike(Protocol):
+    def lineSpacing(self) -> int: ...
 
 
 class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
@@ -452,8 +461,9 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             return
         block_count = 0
         if doc is not None and hasattr(doc, "blockCount"):
+            document_like = cast(_DocumentLike, doc)
             try:
-                block_count = int(doc.blockCount())
+                block_count = int(document_like.blockCount())
             except Exception:
                 block_count = 0
         if block_count <= 0 and hasattr(target_edit, "toPlainText"):
@@ -469,11 +479,11 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         if not callable(font_metrics):
             return
         try:
-            line_height = int(font_metrics().lineSpacing())
+            line_height = int(cast(_FontMetricsLike, font_metrics()).lineSpacing())
         except Exception:
             return
         try:
-            doc_margin = int(doc.documentMargin() * 2) if doc is not None else 0
+            doc_margin = int(cast(_DocumentLike, doc).documentMargin() * 2) if doc is not None else 0
         except Exception:
             doc_margin = 0
         try:

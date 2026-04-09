@@ -684,7 +684,13 @@ class RenderMixin(_RenderHostTypingFallback):
         page_size_resolver = getattr(self, "_pagination_page_size", None)
         if callable(page_size_resolver):
             try:
-                value = int(page_size_resolver())
+                raw_value = page_size_resolver()
+                if isinstance(raw_value, bool | int):
+                    value = int(raw_value)
+                elif isinstance(raw_value, float | str):
+                    value = int(raw_value)
+                else:
+                    value = 50
             except Exception:
                 value = 50
             return max(1, value)
@@ -1121,17 +1127,18 @@ class RenderMixin(_RenderHostTypingFallback):
         widget: DialogueBlockWidget,
         segment: DialogueSegment,
     ) -> None:
-        logical_source_resolver = getattr(
-            self,
-            "_logical_translation_source_lines_for_segment",
-            None,
+        source_lines_resolver = cast(
+            Callable[[DialogueSegment], list[str]] | None,
+            getattr(
+                self,
+                "_logical_translation_source_lines_for_segment",
+                None,
+            ),
         )
-        widget.source_hint_lines_resolver = (
-            logical_source_resolver if callable(logical_source_resolver) else None
-        )
-        widget.control_mismatch_source_lines_resolver = (
-            logical_source_resolver if callable(logical_source_resolver) else None
-        )
+        if not callable(source_lines_resolver):
+            source_lines_resolver = None
+        widget.source_hint_lines_resolver = source_lines_resolver
+        widget.control_mismatch_source_lines_resolver = source_lines_resolver
         logical_translation_resolver = getattr(
             self,
             "_logical_translation_lines_for_problem_checks",
@@ -1143,8 +1150,9 @@ class RenderMixin(_RenderHostTypingFallback):
                 "_logical_translation_lines_for_segment",
                 None,
             )
-        widget.control_mismatch_translation_lines_resolver = (
-            logical_translation_resolver if callable(logical_translation_resolver) else None
+        widget.control_mismatch_translation_lines_resolver = cast(
+            Callable[[DialogueSegment], list[str]] | None,
+            logical_translation_resolver if callable(logical_translation_resolver) else None,
         )
         control_mismatch_ignored_resolver = getattr(
             self,
