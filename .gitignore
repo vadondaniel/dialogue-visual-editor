@@ -1,0 +1,8 @@
+.codex/
+.coverage
+.pytest_cache/
+.vscode/
+__pycache__/
+*.pyc
+*state.json
+todo.md
