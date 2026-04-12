@@ -313,6 +313,43 @@ class AuditNameConsistencyMixinTests(unittest.TestCase):
         self.assertEqual(len(matched), 1)
         self.assertEqual(filtered_out, [])
 
+    def test_collect_groups_normalizes_spaces_for_matching_and_filter(self) -> None:
+        harness = _Harness()
+        misc_path = Path("Items.json")
+        misc_session = FileSession(
+            path=misc_path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("Items.json:I:1:name", "魔法　石", "Magic Stone", segment_kind="name_index"),
+            ],
+        )
+        setattr(misc_session, "is_name_index_session", True)
+        setattr(misc_session, "name_index_label", "Item")
+
+        map_path = Path("Map005.json")
+        map_session = FileSession(
+            path=map_path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("Map005.json:L0:0", "魔法\n石を見つけた", "Found MagicStone."),
+            ],
+        )
+        harness.file_paths = [misc_path, map_path]
+        harness.sessions[misc_path] = misc_session
+        harness.sessions[map_path] = map_session
+
+        groups = harness._collect_audit_name_consistency_groups(
+            dialogue_only=True,
+            only_discrepancies=False,
+            filter_text="magicstone",
+        )
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(int(groups[0]["checked_count"]), 1)
+        self.assertFalse(bool(groups[0]["has_discrepancy"]))
+
     def test_collect_groups_ignores_inferred_speaker_line_for_glossary_checks(self) -> None:
         harness = _Harness()
         misc_path = Path("Actors.json")

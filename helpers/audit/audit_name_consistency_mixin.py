@@ -41,6 +41,10 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
         base = strip_control_tokens(value or "").replace("\u3000", " ")
         return re.sub(r"\s+", " ", base).strip()
 
+    def _name_consistency_match_key(self, value: str) -> str:
+        plain = self._name_consistency_plain_text(value)
+        return re.sub(r"\s+", "", plain).casefold()
+
     def _name_consistency_entry_label(
         self,
         session: FileSession,
@@ -355,16 +359,16 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 tl_block = "\n".join(
                     line if isinstance(line, str) else "" for line in tl_lines
                 )
-                source_fold = self._name_consistency_plain_text(source_block).casefold()
+                source_fold = self._name_consistency_match_key(source_block)
                 if not source_fold:
                     continue
-                tl_fold = self._name_consistency_plain_text(tl_block).casefold()
+                tl_fold = self._name_consistency_match_key(tl_block)
                 line_rows: list[tuple[int, str, str]] = []
                 max_len = max(len(source_lines), len(tl_lines))
                 for line_index in range(max_len):
                     source_raw = source_lines[line_index] if line_index < len(source_lines) else ""
                     source_line = source_raw if isinstance(source_raw, str) else ""
-                    source_line_fold = self._name_consistency_plain_text(source_line).casefold()
+                    source_line_fold = self._name_consistency_match_key(source_line)
                     line_rows.append((line_index + 1, source_line, source_line_fold))
                 rows.append(
                     {
@@ -406,7 +410,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
         dialogue_rows = self._collect_dialogue_rows(dialogue_only=dialogue_only)
         if not dialogue_rows:
             return []
-        filter_fold = filter_text.strip().casefold()
+        filter_fold = self._name_consistency_match_key(filter_text)
         groups: list[dict[str, Any]] = []
         for glossary_entry in glossary_entries:
             source_term = str(glossary_entry.get("source_term", ""))
@@ -414,8 +418,8 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             misc_context = str(glossary_entry.get("misc_context", ""))
             misc_path = str(glossary_entry.get("misc_path", ""))
             misc_entry = str(glossary_entry.get("misc_entry", ""))
-            source_term_fold = source_term.casefold()
-            expected_tl_fold = expected_tl.casefold()
+            source_term_fold = self._name_consistency_match_key(source_term)
+            expected_tl_fold = self._name_consistency_match_key(expected_tl)
             if not source_term_fold or not expected_tl_fold:
                 continue
             if filter_fold:
@@ -427,7 +431,8 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                         misc_path,
                         misc_entry,
                     )
-                ).casefold()
+                )
+                combined = self._name_consistency_match_key(combined)
                 if filter_fold not in combined:
                     continue
 

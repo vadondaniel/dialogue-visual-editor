@@ -28,7 +28,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             return False
         if self._is_control_code_search_query(query):
             return False
-        return not any(char.isspace() for char in query)
+        return bool(self._normalize_text_for_natural_search(query, True))
 
     def _audit_search_needle(
         self,
@@ -209,6 +209,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         case_sensitive: bool,
     ) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
+        if not needle:
+            return records
         for path, session in path_sessions:
             is_name_index = self._is_name_index_session(session)
             name_index_label = self._name_index_label(session)

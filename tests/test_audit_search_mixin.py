@@ -129,7 +129,7 @@ class AuditSearchMixinTests(unittest.TestCase):
         harness.audit_search_case_sensitive_check = _CheckedAction(True)
         self.assertTrue(harness._audit_search_case_sensitive_enabled())
 
-    def test_audit_search_needle_preserves_whitespace_literal_query(self) -> None:
+    def test_audit_search_needle_normalizes_whitespace_query(self) -> None:
         harness = _Harness()
         query = " úr "
 
@@ -138,10 +138,10 @@ class AuditSearchMixinTests(unittest.TestCase):
             case_sensitive=True,
         )
 
-        self.assertFalse(natural_mode)
-        self.assertEqual(needle, query)
+        self.assertTrue(natural_mode)
+        self.assertEqual(needle, "úr")
 
-    def test_audit_search_needle_casefolds_literal_whitespace_query(self) -> None:
+    def test_audit_search_needle_casefolds_normalized_whitespace_query(self) -> None:
         harness = _Harness()
         query = " ÚR "
 
@@ -150,8 +150,8 @@ class AuditSearchMixinTests(unittest.TestCase):
             case_sensitive=False,
         )
 
-        self.assertFalse(natural_mode)
-        self.assertEqual(needle, query.casefold())
+        self.assertTrue(natural_mode)
+        self.assertEqual(needle, "úr")
 
     def test_audit_search_needle_uses_literal_mode_for_control_queries(self) -> None:
         harness = _Harness()
@@ -202,6 +202,34 @@ class AuditSearchMixinTests(unittest.TestCase):
         self.assertIn("Map displayName", labels)
         self.assertIn("Block 1", labels)
         self.assertNotIn("Block 2", labels)
+
+    def test_search_records_match_queries_across_weird_spacing(self) -> None:
+        harness = _Harness()
+        path = Path("Map001.json")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[
+                _segment("Map001.json:L0:0", "Alpha\nBeta", ""),
+                _segment("Map001.json:L0:1", "Alpha   Beta", ""),
+            ],
+        )
+
+        needle, natural_mode = harness._audit_search_needle(
+            "alpha beta",
+            case_sensitive=False,
+        )
+        records = harness._compute_audit_search_records_worker(
+            [(path, session)],
+            scope="original",
+            needle=needle,
+            natural_mode=natural_mode,
+            case_sensitive=False,
+        )
+
+        self.assertTrue(natural_mode)
+        self.assertEqual([str(record["uid"]) for record in records], ["Map001.json:L0:0", "Map001.json:L0:1"])
 
     def test_replace_in_lines_treats_backslashes_in_replacement_as_literal(self) -> None:
         harness = _Harness()
