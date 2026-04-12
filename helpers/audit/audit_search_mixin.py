@@ -23,8 +23,42 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
     def _is_control_code_search_query(self, query: str) -> bool:
         return bool(self._CONTROL_QUERY_RE.search(query or ""))
 
+    def _audit_search_literal_query_text(self, query: str) -> Optional[str]:
+        if len(query) < 2 or query[0] != '"' or query[-1] != '"':
+            return None
+        literal = query[1:-1]
+        decoded: list[str] = []
+        escaping = False
+        for char in literal:
+            if escaping:
+                if char == "n":
+                    decoded.append("\n")
+                elif char == "r":
+                    decoded.append("\r")
+                elif char == "t":
+                    decoded.append("\t")
+                elif char in {'"', "\\"}:
+                    decoded.append(char)
+                else:
+                    decoded.append(f"\\{char}")
+                escaping = False
+                continue
+            if char == "\\":
+                escaping = True
+                continue
+            decoded.append(char)
+        if escaping:
+            decoded.append("\\")
+        return "".join(decoded)
+
+    def _audit_search_effective_literal_query(self, query: str) -> str:
+        literal = self._audit_search_literal_query_text(query)
+        return literal if literal is not None else query
+
     def _audit_search_uses_natural_mode(self, query: str) -> bool:
         if not query:
+            return False
+        if self._audit_search_literal_query_text(query) is not None:
             return False
         if self._is_control_code_search_query(query):
             return False
@@ -35,6 +69,9 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         query: str,
         case_sensitive: bool,
     ) -> tuple[str, bool]:
+        literal = self._audit_search_literal_query_text(query)
+        if literal is not None:
+            return (literal if case_sensitive else literal.casefold()), False
         natural_mode = self._audit_search_uses_natural_mode(query)
         if natural_mode:
             return self._normalize_text_for_natural_search(query, case_sensitive), True
@@ -125,7 +162,10 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             spans = self._natural_match_spans(source_text, needle, case_sensitive)
         else:
             flags = 0 if case_sensitive else re.IGNORECASE
-            pattern = re.compile(re.escape(query), flags)
+            literal_query = self._audit_search_effective_literal_query(query)
+            if not literal_query:
+                return html.escape(source_text).replace("\n", "<br>")
+            pattern = re.compile(re.escape(literal_query), flags)
             spans = [match.span() for match in pattern.finditer(source_text)]
         if not spans:
             return html.escape(source_text).replace("\n", "<br>")
@@ -653,7 +693,8 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
 
     def _replace_regex_for_case(self, find_text: str, case_sensitive: bool) -> re.Pattern[str]:
         flags = 0 if case_sensitive else re.IGNORECASE
-        return re.compile(re.escape(find_text), flags)
+        literal_find_text = self._audit_search_effective_literal_query(find_text)
+        return re.compile(re.escape(literal_find_text), flags)
 
     def _inline_replace_diff_html(
         self,
@@ -662,7 +703,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         replace_text: str,
         case_sensitive: bool,
     ) -> tuple[str, int]:
-        if not find_text:
+        if not find_text or not self._audit_search_effective_literal_query(find_text):
             return html.escape(source_text).replace("\n", "<br>"), 0
         pattern = self._replace_regex_for_case(find_text, case_sensitive)
         parts: list[str] = []
@@ -766,7 +807,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         replace_text: str,
         case_sensitive: bool,
     ) -> tuple[list[str], int]:
-        if not find_text:
+        if not find_text or not self._audit_search_effective_literal_query(find_text):
             return list(lines), 0
         pattern = self._replace_regex_for_case(find_text, case_sensitive)
         updated = list(lines) if lines else [""]

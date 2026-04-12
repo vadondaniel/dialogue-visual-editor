@@ -231,6 +231,51 @@ class AuditSearchMixinTests(unittest.TestCase):
         self.assertTrue(natural_mode)
         self.assertEqual([str(record["uid"]) for record in records], ["Map001.json:L0:0", "Map001.json:L0:1"])
 
+    def test_quoted_literal_search_preserves_spaces_and_supports_newline_escape(self) -> None:
+        harness = _Harness()
+        path = Path("Map001.json")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[
+                _segment("Map001.json:L0:0", "Alpha Beta", ""),
+                _segment("Map001.json:L0:1", "Alpha   Beta", ""),
+                _segment("Map001.json:L0:2", "Alpha\nBeta", ""),
+            ],
+        )
+
+        needle, natural_mode = harness._audit_search_needle(
+            '"Alpha Beta"',
+            case_sensitive=False,
+        )
+        records = harness._compute_audit_search_records_worker(
+            [(path, session)],
+            scope="original",
+            needle=needle,
+            natural_mode=natural_mode,
+            case_sensitive=False,
+        )
+
+        self.assertFalse(natural_mode)
+        self.assertEqual([str(record["uid"]) for record in records], ["Map001.json:L0:0"])
+
+        newline_needle, newline_natural_mode = harness._audit_search_needle(
+            r'"Alpha\nBeta"',
+            case_sensitive=False,
+        )
+        newline_records = harness._compute_audit_search_records_worker(
+            [(path, session)],
+            scope="original",
+            needle=newline_needle,
+            natural_mode=newline_natural_mode,
+            case_sensitive=False,
+        )
+
+        self.assertFalse(newline_natural_mode)
+        self.assertEqual(newline_needle, "alpha\nbeta")
+        self.assertEqual([str(record["uid"]) for record in newline_records], ["Map001.json:L0:2"])
+
     def test_replace_in_lines_treats_backslashes_in_replacement_as_literal(self) -> None:
         harness = _Harness()
 
@@ -243,6 +288,27 @@ class AuditSearchMixinTests(unittest.TestCase):
 
         self.assertEqual(count, 2)
         self.assertEqual(replaced, [r"Szintosszeg: \V", r"Szintosszeg: \V \V"])
+
+    def test_replace_in_lines_uses_quoted_literal_query_text(self) -> None:
+        harness = _Harness()
+
+        replaced, count = harness._replace_in_lines(
+            ["alpha beta", "alpha   beta"],
+            '"alpha beta"',
+            "x",
+            case_sensitive=False,
+        )
+        empty_replaced, empty_count = harness._replace_in_lines(
+            ["alpha beta"],
+            '""',
+            "x",
+            case_sensitive=False,
+        )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(replaced, ["x", "alpha   beta"])
+        self.assertEqual(empty_count, 0)
+        self.assertEqual(empty_replaced, ["alpha beta"])
 
     def test_replace_in_session_entry_normalizes_tyrano_markers(self) -> None:
         harness = _Harness()

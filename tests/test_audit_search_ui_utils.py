@@ -328,6 +328,7 @@ class AuditSearchUiUtilsTests(unittest.TestCase):
         self.assertFalse(harness._is_control_code_search_query("plain"))
         self.assertTrue(harness._audit_search_uses_natural_mode("魔王"))
         self.assertTrue(harness._audit_search_uses_natural_mode("魔 王"))
+        self.assertFalse(harness._audit_search_uses_natural_mode('"魔 王"'))
         self.assertFalse(harness._audit_search_uses_natural_mode(r"\N[2]魔王"))
         self.assertEqual(
             harness._normalize_text_for_natural_search(r" A \C[2]  B ", case_sensitive=False),
