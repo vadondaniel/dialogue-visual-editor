@@ -7777,17 +7777,60 @@ class DialogueVisualEditor(
         translator_mode = self._is_translator_mode()
         ordered_files = [path for path in self.file_paths if path in self.sessions]
         problem_targets: list[tuple[int, int, int, Path, str, str]] = []
+        display_segments_resolver = getattr(self, "_display_segments_for_session", None)
         for file_index, path in enumerate(ordered_files):
             session = self.sessions.get(path)
             if session is None:
                 continue
-            for segment_index, segment in enumerate(session.segments):
-                if self._segment_has_layout_problem(session, segment, translator_mode):
-                    target_scope = (
-                        "misc"
-                        if self._is_misc_segment_kind_for_scope(segment)
-                        else "dialogue"
+            visible_dialogue_uids: Optional[set[str]] = None
+            visible_misc_uids: Optional[set[str]] = None
+            if callable(display_segments_resolver):
+                try:
+                    dialogue_segments_raw = display_segments_resolver(
+                        session,
+                        translator_mode=translator_mode,
+                        actor_mode=False,
                     )
+                except Exception:
+                    dialogue_segments_raw = None
+                if isinstance(dialogue_segments_raw, list):
+                    visible_dialogue_uids = {
+                        segment.uid
+                        for segment in dialogue_segments_raw
+                        if isinstance(segment, DialogueSegment)
+                    }
+                try:
+                    misc_segments_raw = display_segments_resolver(
+                        session,
+                        translator_mode=translator_mode,
+                        actor_mode=True,
+                    )
+                except Exception:
+                    misc_segments_raw = None
+                if isinstance(misc_segments_raw, list):
+                    visible_misc_uids = {
+                        segment.uid
+                        for segment in misc_segments_raw
+                        if isinstance(segment, DialogueSegment)
+                    }
+            for segment_index, segment in enumerate(session.segments):
+                target_scope = (
+                    "misc"
+                    if self._is_misc_segment_kind_for_scope(segment)
+                    else "dialogue"
+                )
+                if target_scope == "misc":
+                    if (
+                        visible_misc_uids is not None
+                        and segment.uid not in visible_misc_uids
+                    ):
+                        continue
+                elif (
+                    visible_dialogue_uids is not None
+                    and segment.uid not in visible_dialogue_uids
+                ):
+                    continue
+                if self._segment_has_layout_problem(session, segment, translator_mode):
                     scope_priority = 1 if target_scope == "misc" else 0
                     problem_targets.append(
                         (

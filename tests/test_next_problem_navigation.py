@@ -29,6 +29,7 @@ class _NextProblemHarness:
         self.selected_segment_uid: str | None = None
         self.problem_uids: set[str] = set()
         self.file_view_scope_by_path: dict[Path, str] = {}
+        self.hidden_uids: set[str] = set()
         self._last_problem_target: tuple[int, int, int, Path, str, str] | None = None
         self._status_bar = _StatusBarHarness()
         self.open_calls: list[tuple[Path, str | None, str | None]] = []
@@ -72,6 +73,28 @@ class _NextProblemHarness:
             return requested_scope.strip().lower()
         scoped = self.file_view_scope_by_path.get(path, "dialogue")
         return scoped if scoped in {"dialogue", "misc"} else "dialogue"
+
+    def _display_segments_for_session(
+        self,
+        session: FileSession,
+        *,
+        translator_mode: bool,
+        actor_mode: bool,
+    ) -> list[DialogueSegment]:
+        _ = translator_mode
+        if actor_mode:
+            pool = [
+                segment
+                for segment in session.segments
+                if self._is_misc_segment_kind_for_scope(segment)
+            ]
+        else:
+            pool = [
+                segment
+                for segment in session.segments
+                if not self._is_misc_segment_kind_for_scope(segment)
+            ]
+        return [segment for segment in pool if segment.uid not in self.hidden_uids]
 
     def _open_file(
         self,
@@ -220,6 +243,26 @@ class NextProblemNavigationTests(unittest.TestCase):
         _call_editor_method("_jump_to_next_problem", harness)
 
         self.assertEqual(harness.open_calls, [(path_c, "seg-c-misc", "misc")])
+
+    def test_jump_to_next_problem_skips_hidden_problem_blocks(self) -> None:
+        harness = _NextProblemHarness()
+        path = Path("Map001.json")
+        hidden_problem = _make_segment("seg-hidden", kind="dialogue")
+        visible_problem = _make_segment("seg-visible", kind="dialogue")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[hidden_problem, visible_problem],
+        )
+        harness.sessions[path] = session
+        harness.file_paths = [path]
+        harness.problem_uids = {"seg-hidden", "seg-visible"}
+        harness.hidden_uids = {"seg-hidden"}
+
+        _call_editor_method("_jump_to_next_problem", harness)
+
+        self.assertEqual(harness.open_calls, [(path, "seg-visible", "dialogue")])
 
 
 if __name__ == "__main__":
