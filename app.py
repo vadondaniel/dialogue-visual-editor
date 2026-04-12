@@ -565,6 +565,7 @@ class DialogueVisualEditor(
             self._poll_audit_term_worker)
         self.structural_undo_stack: list[StructuralAction] = []
         self.structural_redo_stack: list[StructuralAction] = []
+        self._reset_undo_pipeline_state()
         self._pending_render_state: Optional[dict[str, Any]] = None
         self._render_batch_size = 2
         self._render_blocks_timer = QTimer(self)
@@ -5398,7 +5399,15 @@ class DialogueVisualEditor(
     def _on_global_undo_shortcut(self) -> None:
         editor = self._focused_text_editor()
         if editor is not None and editor.document().isUndoAvailable():
-            editor.undo()
+            self._undo_pipeline_text_stack_operation = True
+            try:
+                editor.undo()
+            finally:
+                self._undo_pipeline_text_stack_operation = False
+            self._mark_text_undo_for_undo_pipeline()
+            return
+        if editor is not None and self._text_edit_blocks_structural_undo_fallback():
+            self.statusBar().showMessage("Nothing to undo.")
             return
         if not self._undo_last_structural_action():
             self.statusBar().showMessage("Nothing to undo.")
@@ -5406,7 +5415,15 @@ class DialogueVisualEditor(
     def _on_global_redo_shortcut(self) -> None:
         editor = self._focused_text_editor()
         if editor is not None and editor.document().isRedoAvailable():
-            editor.redo()
+            self._undo_pipeline_text_stack_operation = True
+            try:
+                editor.redo()
+            finally:
+                self._undo_pipeline_text_stack_operation = False
+            self._mark_text_redo_for_undo_pipeline()
+            return
+        if editor is not None and self._last_undo_pipeline_domain == "text":
+            self.statusBar().showMessage("Nothing to redo.")
             return
         if not self._redo_last_structural_action():
             self.statusBar().showMessage("Nothing to redo.")
@@ -7149,6 +7166,7 @@ class DialogueVisualEditor(
         self.audit_sanitize_ignored_entries_by_rule.clear()
         self.structural_undo_stack.clear()
         self.structural_redo_stack.clear()
+        self._reset_undo_pipeline_state()
 
         self.file_list.clear()
         self.file_items.clear()

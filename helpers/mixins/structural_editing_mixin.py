@@ -108,6 +108,70 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
     _TRAILING_RESET_COLOR_RE = re.compile(r"\\[Cc]\[0\]\s*$")
 
+    def _advance_undo_pipeline_revision(self) -> int:
+        raw_revision = getattr(self, "_undo_pipeline_revision", 0)
+        try:
+            revision = int(raw_revision)
+        except Exception:
+            revision = 0
+        revision += 1
+        setattr(self, "_undo_pipeline_revision", revision)
+        return revision
+
+    def _reset_undo_pipeline_state(self) -> None:
+        setattr(self, "_undo_pipeline_revision", 0)
+        setattr(self, "_last_text_edit_revision", 0)
+        setattr(self, "_last_structural_edit_revision", 0)
+        setattr(self, "_last_undo_pipeline_domain", "")
+        setattr(self, "_undo_pipeline_text_stack_operation", False)
+
+    def _mark_text_edit_for_undo_pipeline(self) -> None:
+        setattr(
+            self,
+            "_last_text_edit_revision",
+            self._advance_undo_pipeline_revision(),
+        )
+        if not bool(getattr(self, "_undo_pipeline_text_stack_operation", False)):
+            setattr(self, "_last_undo_pipeline_domain", "")
+
+    def _mark_text_undo_for_undo_pipeline(self) -> None:
+        setattr(self, "_last_undo_pipeline_domain", "text")
+
+    def _mark_text_redo_for_undo_pipeline(self) -> None:
+        setattr(self, "_last_undo_pipeline_domain", "")
+
+    def _mark_structural_edit_for_undo_pipeline(self) -> None:
+        setattr(
+            self,
+            "_last_structural_edit_revision",
+            self._advance_undo_pipeline_revision(),
+        )
+        setattr(self, "_last_undo_pipeline_domain", "")
+
+    def _mark_structural_undo_for_undo_pipeline(self) -> None:
+        setattr(self, "_last_undo_pipeline_domain", "structural")
+
+    def _mark_structural_redo_for_undo_pipeline(self) -> None:
+        self._mark_structural_edit_for_undo_pipeline()
+
+    def _text_edit_blocks_structural_undo_fallback(self) -> bool:
+        try:
+            last_text = int(getattr(self, "_last_text_edit_revision", 0))
+        except Exception:
+            last_text = 0
+        try:
+            last_structural = int(
+                getattr(self, "_last_structural_edit_revision", 0)
+            )
+        except Exception:
+            last_structural = 0
+        return last_text >= last_structural
+
+    def _push_structural_undo_action(self, action: StructuralAction) -> None:
+        self.structural_undo_stack.append(action)
+        self.structural_redo_stack.clear()
+        self._mark_structural_edit_for_undo_pipeline()
+
     def _structure_fast_rerender_supported(self) -> bool:
         # Structural fast-refresh logic predates pagination and assumes that
         # rendered UID order mirrors the full display list. With pagination
@@ -1835,6 +1899,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         return row
 
     def _on_block_text_changed(self, uid: str, lines: list[str]) -> None:
+        self._mark_text_edit_for_undo_pipeline()
         if self.current_path is None:
             return
         session = self.sessions.get(self.current_path)
@@ -2283,11 +2348,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             segment_index=source_idx + 1,
             segment=new_segment,
         )
-        self.structural_undo_stack.append(
-            StructuralAction(kind="insert", path=session.path,
-                             data=insert_action)
+        self._push_structural_undo_action(
+            StructuralAction(
+                kind="insert", path=session.path, data=insert_action)
         )
-        self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
         if not self._refresh_after_insert_without_full_rerender(
@@ -2447,11 +2511,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             source_translation_before=source_tl_before,
             source_translation_after=list(source_segment.translation_lines),
         )
-        self.structural_undo_stack.append(
+        self._push_structural_undo_action(
             StructuralAction(kind="split_overflow",
                              path=session.path, data=split_action)
         )
-        self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
         if not self._refresh_after_structure_change_without_full_rerender(
@@ -2586,11 +2649,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             left_speaker_translation_after=merged_speaker_translation,
             source_affected=source_affected,
         )
-        self.structural_undo_stack.append(
-            StructuralAction(kind="merge", path=session.path,
-                             data=merge_action)
+        self._push_structural_undo_action(
+            StructuralAction(kind="merge", path=session.path, data=merge_action)
         )
-        self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
         if not self._refresh_after_remove_without_full_rerender(
@@ -2697,11 +2758,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 line1_inference_forced_before=line1_force_before,
                 line1_inference_forced_after=line1_force_after,
             )
-            self.structural_undo_stack.append(
+            self._push_structural_undo_action(
                 StructuralAction(
                     kind="reset", path=session.path, data=reset_action)
             )
-            self.structural_redo_stack.clear()
         self._refresh_dirty_state(session)
         fast_path_ok = (
             changed
@@ -2797,10 +2857,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             if isinstance(candidate_uid, str) and candidate_uid:
                 focus_uid_after_delete = candidate_uid
 
-        self.structural_undo_stack.append(
+        self._push_structural_undo_action(
             StructuralAction(kind="delete", path=session.path, data=action)
         )
-        self.structural_redo_stack.clear()
 
         self._refresh_dirty_state(session)
         if not self._refresh_after_remove_without_full_rerender(
@@ -3239,6 +3298,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                     cast(MergeBlocksAction, action.data))
             if ok:
                 self.structural_redo_stack.append(action)
+                self._mark_structural_undo_for_undo_pipeline()
                 return True
         return False
 
@@ -3263,5 +3323,6 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                     cast(MergeBlocksAction, action.data))
             if ok:
                 self.structural_undo_stack.append(action)
+                self._mark_structural_redo_for_undo_pipeline()
                 return True
         return False
