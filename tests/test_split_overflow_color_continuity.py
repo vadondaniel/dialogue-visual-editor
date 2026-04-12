@@ -22,12 +22,26 @@ class _Check:
         return self._checked
 
 
+class _StatusBar:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def showMessage(self, message: str) -> None:
+        self.messages.append(message)
+
+
 class _ProjectionHarness(StructuralEditingMixin):
     def __init__(self) -> None:
         self.sessions: dict[Path, FileSession] = {}
         self.current_path: Path | None = None
         self.infer_speaker_check = _Check(False)
         self._translator_mode = False
+        self.line_width = 60
+        self.selected_segment_uid: str | None = None
+        self._status_bar = _StatusBar()
+        self._prompt_options: (
+            tuple[bool, bool, bool, bool, float, bool, bool] | None
+        ) = None
 
     def _is_translator_mode(self) -> bool:
         return self._translator_mode
@@ -41,7 +55,36 @@ class _ProjectionHarness(StructuralEditingMixin):
         return False
 
     def _segment_line_width(self, segment: DialogueSegment) -> int:
-        return 60
+        return self.line_width
+
+    def _prompt_smart_collapse_all_options(
+        self,
+    ) -> tuple[bool, bool, bool, bool, float, bool, bool] | None:
+        return self._prompt_options
+
+    def statusBar(self) -> _StatusBar:
+        return self._status_bar
+
+    def _refresh_dirty_state(self, _session: FileSession) -> None:
+        return None
+
+    def _refresh_after_structure_change_without_full_rerender(
+        self,
+        _session: FileSession,
+        *,
+        focus_uid: str | None,
+        preserve_scroll: bool,
+    ) -> bool:
+        return True
+
+    def _render_session(
+        self,
+        _session: FileSession,
+        *,
+        focus_uid: str | None,
+        preserve_scroll: bool,
+    ) -> None:
+        return None
 
     @staticmethod
     def _normalize_translation_lines(value: Any) -> list[str]:
@@ -180,6 +223,110 @@ class SplitOverflowColorContinuityTests(unittest.TestCase):
         self.assertEqual(current_only_files, 0)
         self.assertEqual(all_files_blocks, 1)
         self.assertEqual(all_files_files, 1)
+
+    def test_projected_smart_collapse_count_can_filter_to_overflowing_blocks(self) -> None:
+        harness = _ProjectionHarness()
+        current_path = Path("Map001.json")
+        harness.current_path = current_path
+        harness.sessions[current_path] = FileSession(
+            path=current_path,
+            data=[],
+            bundles=[],
+            segments=[
+                DialogueSegment(
+                    uid="fits",
+                    context="ctx",
+                    code101={},
+                    lines=["No punctuation", "here"],
+                    original_lines=["No punctuation", "here"],
+                    source_lines=["No punctuation", "here"],
+                    segment_kind="dialogue",
+                ),
+                DialogueSegment(
+                    uid="overflow",
+                    context="ctx",
+                    code101={},
+                    lines=["This line is way too long", "next"],
+                    original_lines=["This line is way too long", "next"],
+                    source_lines=["This line is way too long", "next"],
+                    segment_kind="dialogue",
+                ),
+            ],
+        )
+
+        all_blocks, all_files = harness._count_projected_smart_collapse_changes(
+            allow_comma_endings=False,
+            allow_colon_triplet_endings=False,
+            ellipsis_lowercase_rule=False,
+            collapse_if_no_punctuation=True,
+            min_soft_ratio=0.5,
+            apply_all_files=False,
+            wide_width_limit=20,
+            max_lines_limit=4,
+            only_overflowing_blocks=False,
+        )
+        overflow_blocks, overflow_files = harness._count_projected_smart_collapse_changes(
+            allow_comma_endings=False,
+            allow_colon_triplet_endings=False,
+            ellipsis_lowercase_rule=False,
+            collapse_if_no_punctuation=True,
+            min_soft_ratio=0.5,
+            apply_all_files=False,
+            wide_width_limit=20,
+            max_lines_limit=4,
+            only_overflowing_blocks=True,
+        )
+
+        self.assertEqual((all_blocks, all_files), (2, 1))
+        self.assertEqual((overflow_blocks, overflow_files), (1, 1))
+
+    def test_smart_collapse_all_can_only_apply_to_overflowing_blocks(self) -> None:
+        harness = _ProjectionHarness()
+        harness.line_width = 20
+        current_path = Path("Map001.json")
+        harness.current_path = current_path
+        harness._prompt_options = (
+            False,
+            False,
+            False,
+            True,
+            0.5,
+            False,
+            True,
+        )
+        harness.sessions[current_path] = FileSession(
+            path=current_path,
+            data=[],
+            bundles=[],
+            segments=[
+                DialogueSegment(
+                    uid="fits",
+                    context="ctx",
+                    code101={},
+                    lines=["No punctuation", "here"],
+                    original_lines=["No punctuation", "here"],
+                    source_lines=["No punctuation", "here"],
+                    segment_kind="dialogue",
+                ),
+                DialogueSegment(
+                    uid="overflow",
+                    context="ctx",
+                    code101={},
+                    lines=["This line is way too long", "next"],
+                    original_lines=["This line is way too long", "next"],
+                    source_lines=["This line is way too long", "next"],
+                    segment_kind="dialogue",
+                ),
+            ],
+        )
+
+        harness._smart_collapse_all_dialogue_blocks()
+
+        segments = harness.sessions[current_path].segments
+        self.assertEqual(segments[0].lines, ["No punctuation", "here"])
+        self.assertEqual(segments[0].source_lines, ["No punctuation", "here"])
+        self.assertEqual(segments[1].lines, ["This line is way", "too long next"])
+        self.assertEqual(segments[1].source_lines, ["This line is way", "too long next"])
 
 
 if __name__ == "__main__":

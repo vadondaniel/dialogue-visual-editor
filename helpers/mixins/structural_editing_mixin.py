@@ -38,6 +38,7 @@ from ..core.text_utils import (
     smart_collapse_lines,
     split_lines_by_row_budget,
     total_display_rows,
+    visible_length,
 )
 
 class _EditorHostTypingFallback:
@@ -259,6 +260,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         infer_speaker_enabled: Optional[bool] = None,
         thin_width_limit: Optional[int] = None,
         wide_width_limit: Optional[int] = None,
+        max_lines_limit: Optional[int] = None,
+        only_overflowing_blocks: bool = False,
     ) -> tuple[int, int]:
         target_sessions = self._smart_collapse_target_sessions(apply_all_files)
         if not target_sessions:
@@ -282,6 +285,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             if wide_spin is not None and hasattr(wide_spin, "value")
             else 48
         )
+        max_lines_spin = getattr(self, "max_lines_spin", None)
+        max_lines_default = (
+            int(max_lines_spin.value())
+            if max_lines_spin is not None and hasattr(max_lines_spin, "value")
+            else 4
+        )
         thin_limit = (
             thin_default
             if thin_width_limit is None
@@ -291,6 +300,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             wide_default
             if wide_width_limit is None
             else int(wide_width_limit)
+        )
+        max_lines = (
+            max_lines_default
+            if max_lines_limit is None
+            else int(max_lines_limit)
         )
         projected_blocks = 0
         projected_files = 0
@@ -328,6 +342,13 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                         infer_speaker_enabled=use_infer_speaker,
                         line_width=line_width,
                     )
+                if only_overflowing_blocks and not self._smart_collapse_lines_overflow(
+                    segment,
+                    current_lines,
+                    line_width=line_width,
+                    max_lines=max_lines,
+                ):
+                    continue
                 if collapsed_lines == current_lines:
                     continue
                 projected_blocks += 1
@@ -336,12 +357,34 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 projected_files += 1
         return projected_blocks, projected_files
 
+    def _smart_collapse_lines_overflow(
+        self,
+        segment: DialogueSegment,
+        lines: list[str],
+        *,
+        line_width: int,
+        max_lines: int,
+    ) -> bool:
+        normalizer = getattr(self, "_normalize_problem_lines_for_segment", None)
+        normalized: list[str]
+        if callable(normalizer):
+            try:
+                normalized_raw = normalizer(segment, lines)
+            except Exception:
+                normalized_raw = self._normalize_translation_lines(lines)
+            normalized = self._normalize_translation_lines(normalized_raw)
+        else:
+            normalized = self._normalize_translation_lines(lines)
+        if any(visible_length(line) > max(1, int(line_width)) for line in normalized):
+            return True
+        return total_display_rows(normalized) > float(max(1, int(max_lines)))
+
     def _prompt_smart_collapse_all_options(
         self,
-    ) -> Optional[tuple[bool, bool, bool, bool, float, bool]]:
+    ) -> Optional[tuple[bool, bool, bool, bool, float, bool, bool]]:
         dialog = QDialog(cast(QWidget, self))
         dialog.setWindowTitle("Smart Collapse All")
-        dialog.resize(460, 300)
+        dialog.resize(500, 330)
 
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -391,6 +434,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         scope_all_files_check = QCheckBox("Apply to all dialogue files")
         scope_all_files_check.setChecked(False)
+        only_overflowing_check = QCheckBox("Only collapse currently overflowing blocks")
+        only_overflowing_check.setChecked(False)
 
         def _build_section_title(text: str) -> QLabel:
             title = QLabel(text, dialog)
@@ -432,6 +477,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         layout.addWidget(_build_section_title("Scope"))
         layout.addWidget(scope_all_files_check)
+        layout.addWidget(only_overflowing_check)
 
         layout.addWidget(_build_section_divider())
 
@@ -464,7 +510,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         latest_projection_request_id = 0
         latest_projected_count_text = "0 blocks in 0 files"
         cached_rule_counts: dict[str, int] = {}
-        rule_counter_cache: dict[tuple[bool, int], dict[str, int]] = {}
+        rule_counter_cache: dict[tuple[bool, int, bool], dict[str, int]] = {}
         pending_recompute_rule_counts_mode = "none"
 
         def _counter_suffix(value: int) -> str:
@@ -475,14 +521,20 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             *,
             apply_all_files: bool,
             soft_ratio_percent: int,
-        ) -> tuple[bool, int]:
+            only_overflowing_blocks: bool,
+        ) -> tuple[bool, int, bool]:
             normalized_percent = max(0, min(100, int(soft_ratio_percent)))
-            return bool(apply_all_files), normalized_percent
+            return (
+                bool(apply_all_files),
+                normalized_percent,
+                bool(only_overflowing_blocks),
+            )
 
-        def _current_projection_cache_key() -> tuple[bool, int]:
+        def _current_projection_cache_key() -> tuple[bool, int, bool]:
             return _projection_cache_key(
                 apply_all_files=bool(scope_all_files_check.isChecked()),
                 soft_ratio_percent=int(threshold_spin.value()),
+                only_overflowing_blocks=bool(only_overflowing_check.isChecked()),
             )
 
         def _set_rule_counter_texts(rule_counts: dict[str, int]) -> None:
@@ -549,9 +601,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 ),
                 "collapse_if_no_punctuation": bool(no_punctuation_check.isChecked()),
                 "apply_all_files": bool(scope_all_files_check.isChecked()),
+                "only_overflowing_blocks": bool(only_overflowing_check.isChecked()),
                 "infer_speaker_enabled": bool(self.infer_speaker_check.isChecked()),
                 "thin_width_limit": int(self.thin_width_spin.value()),
                 "wide_width_limit": int(self.wide_width_spin.value()),
+                "max_lines_limit": int(self.max_lines_spin.value()),
             }
 
         def _compute_projection_request(
@@ -561,7 +615,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             infer_speaker_enabled = bool(request["infer_speaker_enabled"])
             thin_width_limit = int(request["thin_width_limit"])
             wide_width_limit = int(request["wide_width_limit"])
+            max_lines_limit = int(request["max_lines_limit"])
             apply_all_files = bool(request["apply_all_files"])
+            only_overflowing_blocks = bool(request["only_overflowing_blocks"])
             recompute_rule_counts_mode = _normalize_smart_collapse_projection_mode(
                 request.get("recompute_rule_counts_mode", "none")
             )
@@ -587,6 +643,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                     infer_speaker_enabled=infer_speaker_enabled,
                     thin_width_limit=thin_width_limit,
                     wide_width_limit=wide_width_limit,
+                    max_lines_limit=max_lines_limit,
+                    only_overflowing_blocks=only_overflowing_blocks,
                 )
 
             soft_rule_enabled = bool(request["soft_rule_enabled"])
@@ -608,6 +666,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 "recompute_rule_counts_mode": recompute_rule_counts_mode,
                 "scope_all_files": apply_all_files,
                 "soft_ratio_percent": soft_ratio_percent,
+                "only_overflowing_blocks": only_overflowing_blocks,
             }
             if recompute_rule_counts_mode == "none":
                 return payload
@@ -673,6 +732,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 cache_key = _projection_cache_key(
                     apply_all_files=bool(payload.get("scope_all_files", False)),
                     soft_ratio_percent=int(payload.get("soft_ratio_percent", 0)),
+                    only_overflowing_blocks=bool(
+                        payload.get("only_overflowing_blocks", False)
+                    ),
                 )
                 if recompute_rule_counts_mode == "all":
                     parsed_rule_counts = _coerce_smart_collapse_rule_counts(
@@ -787,7 +849,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             _set_rule_counter_texts(cached_rule_counts)
             return True
 
-        def _on_scope_toggled(_checked: bool) -> None:
+        def _on_scope_or_overflow_toggled(_checked: bool) -> None:
             if _restore_cached_rule_counts_for_current_scope_threshold():
                 _schedule_projected_count_refresh(recompute_rule_counts_mode="none")
                 return
@@ -814,7 +876,8 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         no_punctuation_check.toggled.connect(
             lambda _checked: _schedule_projected_count_refresh()
         )
-        scope_all_files_check.toggled.connect(_on_scope_toggled)
+        scope_all_files_check.toggled.connect(_on_scope_or_overflow_toggled)
+        only_overflowing_check.toggled.connect(_on_scope_or_overflow_toggled)
         threshold_spin.valueChanged.connect(_on_threshold_changed)
 
         def _cancel_projection_refresh() -> None:
@@ -857,6 +920,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             collapse_if_no_punctuation,
             max(0.0, min(1.0, min_soft_ratio)),
             bool(scope_all_files_check.isChecked()),
+            bool(only_overflowing_check.isChecked()),
         )
 
     def _is_smart_collapse_eligible_segment(self, segment: DialogueSegment) -> bool:
@@ -990,6 +1054,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             collapse_if_no_punctuation,
             min_soft_ratio,
             apply_all_files,
+            only_overflowing_blocks,
         ) = options
         translator_mode = self._is_translator_mode()
         changed_count = 0
@@ -997,6 +1062,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         target_sessions = self._smart_collapse_target_sessions(apply_all_files)
         if not target_sessions:
             return
+        max_lines_spin = getattr(self, "max_lines_spin", None)
+        max_lines = (
+            int(max_lines_spin.value())
+            if max_lines_spin is not None and hasattr(max_lines_spin, "value")
+            else 4
+        )
         for session in target_sessions:
             if self._is_name_index_session(session):
                 continue
@@ -1004,32 +1075,49 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             for segment in session.segments:
                 if not self._is_smart_collapse_eligible_segment(segment):
                     continue
+                line_width = self._segment_line_width(segment)
                 if translator_mode:
                     current_lines = self._normalize_translation_lines(
                         segment.translation_lines
                     )
                     collapsed_lines = self._collapsed_translation_lines_for_segment(
-                    segment,
-                    allow_comma_endings=allow_comma_endings,
-                    allow_colon_triplet_endings=allow_colon_triplet_endings,
-                    ellipsis_lowercase_rule=ellipsis_lowercase_rule,
-                    collapse_if_no_punctuation=collapse_if_no_punctuation,
-                    min_soft_ratio=min_soft_ratio,
-                )
+                        segment,
+                        allow_comma_endings=allow_comma_endings,
+                        allow_colon_triplet_endings=allow_colon_triplet_endings,
+                        ellipsis_lowercase_rule=ellipsis_lowercase_rule,
+                        collapse_if_no_punctuation=collapse_if_no_punctuation,
+                        min_soft_ratio=min_soft_ratio,
+                        line_width=line_width,
+                    )
                     if collapsed_lines == current_lines:
+                        continue
+                    if only_overflowing_blocks and not self._smart_collapse_lines_overflow(
+                        segment,
+                        current_lines,
+                        line_width=line_width,
+                        max_lines=max_lines,
+                    ):
                         continue
                     segment.translation_lines = list(collapsed_lines)
                 else:
                     current_lines = list(segment.lines) if segment.lines else [""]
                     collapsed_lines = self._collapsed_source_lines_for_segment(
-                    segment,
-                    allow_comma_endings=allow_comma_endings,
-                    allow_colon_triplet_endings=allow_colon_triplet_endings,
-                    ellipsis_lowercase_rule=ellipsis_lowercase_rule,
-                    collapse_if_no_punctuation=collapse_if_no_punctuation,
-                    min_soft_ratio=min_soft_ratio,
-                )
+                        segment,
+                        allow_comma_endings=allow_comma_endings,
+                        allow_colon_triplet_endings=allow_colon_triplet_endings,
+                        ellipsis_lowercase_rule=ellipsis_lowercase_rule,
+                        collapse_if_no_punctuation=collapse_if_no_punctuation,
+                        min_soft_ratio=min_soft_ratio,
+                        line_width=line_width,
+                    )
                     if collapsed_lines == current_lines:
+                        continue
+                    if only_overflowing_blocks and not self._smart_collapse_lines_overflow(
+                        segment,
+                        current_lines,
+                        line_width=line_width,
+                        max_lines=max_lines,
+                    ):
                         continue
                     segment.lines = list(collapsed_lines)
                     segment.source_lines = list(collapsed_lines)
