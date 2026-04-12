@@ -16,7 +16,7 @@ CONTROL_TOKEN_RE = re.compile(
     re.VERBOSE,
 )
 CONTROL_CODE_WORD_CASE_RE = re.compile(r"\\([A-Za-z]+)(?=[\[<])")
-ELLIPSIS_DOT_RUN_RE = re.compile(r"\.{4,}")
+ELLIPSIS_DOT_RUN_RE = re.compile(r"(?<!\\)\.{4,}")
 SIMILARITY_PUNCT_RE = re.compile(
     r"[\s\.,!?\"'`~:;()\[\]{}<>\/\\\-_|\+\*&\^%$#@=。、，．？！：；「」『』（）［］｛｝【】〈〉《》…・～〜]+"
 )

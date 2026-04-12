@@ -124,6 +124,12 @@ class TextUtilsTests(unittest.TestCase):
         text = r"\C[2]abc♡\C[0]"
         self.assertEqual(text_utils.visible_length(text), 4)
 
+    def test_visible_helpers_ignore_wait_dot_control_code(self) -> None:
+        self.assertEqual(text_utils.strip_control_tokens(r"Wait\."), "Wait")
+        self.assertEqual(text_utils.visible_length(r"\."), 0)
+        self.assertFalse(text_utils._has_visible_nonspace_characters(r"\."))
+        self.assertEqual(text_utils._last_visible_nonspace_character(r"Done\."), "e")
+
     def test_normalize_control_code_word_case(self) -> None:
         normalized, replacements = text_utils.normalize_control_code_word_case(
             r"\c[2]x\N[1]\v[3]"
@@ -217,6 +223,11 @@ class TextUtilsTests(unittest.TestCase):
         updated, replacements = text_utils.trim_extra_ellipsis_runs(r"\! ......... \C[2]")
         self.assertEqual(updated, r"\! ......... \C[2]")
         self.assertEqual(replacements, 0)
+
+    def test_trim_extra_ellipsis_runs_ignores_wait_dot_token_dot(self) -> None:
+        updated, replacements = text_utils.trim_extra_ellipsis_runs(r"Wait\.....")
+        self.assertEqual(updated, r"Wait\....")
+        self.assertEqual(replacements, 1)
 
     def test_misc_private_coverage_paths(self) -> None:
         original_font_size = text_utils._DEFAULT_FONT_SIZE
