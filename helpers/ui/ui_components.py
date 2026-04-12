@@ -2258,6 +2258,9 @@ class DialogueBlockWidget(QFrame):
         self.control_mismatch_translation_lines_resolver: Optional[
             Callable[[DialogueSegment], list[str]]
         ] = None
+        self.trailing_color_translation_lines_resolver: Optional[
+            Callable[[DialogueSegment], list[str]]
+        ] = None
         self.control_mismatch_ignored_resolver: Optional[
             Callable[[DialogueSegment], bool]
         ] = None
@@ -3755,6 +3758,18 @@ class DialogueBlockWidget(QFrame):
                 return normalized
         return self._translation_lines_for_control_mismatch_local()
 
+    def _translation_lines_for_trailing_color_problem(self) -> list[str]:
+        translation_resolver = self.trailing_color_translation_lines_resolver
+        if self._uses_translation_storage() and callable(translation_resolver):
+            try:
+                resolved_translation = translation_resolver(self.segment)
+            except Exception:
+                resolved_translation = None
+            normalized = self._normalize_control_mismatch_lines(resolved_translation)
+            if normalized:
+                return normalized
+        return self._translation_lines_for_control_mismatch()
+
     def _source_lines_for_control_mismatch_highlight(self) -> list[str]:
         local = self._source_lines_for_control_mismatch_local()
         if any(line.strip() for line in local):
@@ -3815,7 +3830,7 @@ class DialogueBlockWidget(QFrame):
             return None
         source_text = "\n".join(self._source_lines_for_control_mismatch())
         translation_text = "\n".join(
-            self._translation_lines_for_control_mismatch()
+            self._translation_lines_for_trailing_color_problem()
         )
         if not translation_text.strip():
             return None

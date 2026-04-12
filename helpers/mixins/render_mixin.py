@@ -1154,6 +1154,19 @@ class RenderMixin(_RenderHostTypingFallback):
             Callable[[DialogueSegment], list[str]] | None,
             logical_translation_resolver if callable(logical_translation_resolver) else None,
         )
+        trailing_color_translation_resolver = getattr(
+            self,
+            "_logical_translation_lines_for_segment",
+            None,
+        )
+        widget.trailing_color_translation_lines_resolver = cast(
+            Callable[[DialogueSegment], list[str]] | None,
+            (
+                trailing_color_translation_resolver
+                if callable(trailing_color_translation_resolver)
+                else None
+            ),
+        )
         control_mismatch_ignored_resolver = getattr(
             self,
             "_segment_control_mismatch_ignored",

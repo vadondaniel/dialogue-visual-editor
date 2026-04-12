@@ -249,6 +249,47 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             tl_lines = self._normalize_problem_lines_for_segment(segment, segment.translation_lines)
         return tl_lines
 
+    def _resolve_trailing_color_translation_lines_for_segment(
+        self,
+        segment: DialogueSegment,
+        translator_mode: bool,
+        *,
+        session: Optional[FileSession] = None,
+        prefer_logical_chain: bool = False,
+    ) -> list[str]:
+        if translator_mode and prefer_logical_chain:
+            logical_translation_resolver = getattr(
+                self,
+                "_logical_translation_lines_for_segment",
+                None,
+            )
+            if callable(logical_translation_resolver):
+                resolved_logical: Any = None
+                try:
+                    resolved_logical = logical_translation_resolver(
+                        segment,
+                        session=session,
+                    )
+                except TypeError:
+                    try:
+                        resolved_logical = logical_translation_resolver(segment)
+                    except Exception:
+                        resolved_logical = None
+                except Exception:
+                    resolved_logical = None
+                if isinstance(resolved_logical, list):
+                    return self._normalize_problem_lines_for_segment(
+                        segment,
+                        resolved_logical,
+                    )
+
+        return self._resolve_problem_translation_lines_for_segment(
+            segment,
+            translator_mode,
+            session=session,
+            prefer_logical_chain=prefer_logical_chain,
+        )
+
     def _segment_has_missing_translation_problem(
         self,
         segment: DialogueSegment,
@@ -315,7 +356,7 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
             session=session,
             prefer_logical_chain=True,
         )
-        tl_lines = self._resolve_problem_translation_lines_for_segment(
+        tl_lines = self._resolve_trailing_color_translation_lines_for_segment(
             segment,
             translator_mode,
             session=session,

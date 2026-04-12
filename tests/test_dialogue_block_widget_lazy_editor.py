@@ -788,6 +788,50 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         )
         widget.deleteLater()
 
+    def test_trailing_color_problem_uses_raw_split_chain_resolver(self) -> None:
+        source_lines = [
+            r"\C[27]もう男に戻りたいって思わないけど…",
+            r"”女になる”って言い出すのは恥ずかしいし…。\C[0]",
+        ]
+        segment = _segment(source_lines)
+        segment.translation_lines = [
+            r"\C[27]I don't really want to go back to being a",
+            r"guy anymore, but... \C[0]",
+        ]
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=True,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=None,
+        )
+        widget.set_editor_active(True)
+        widget.set_control_mismatch_highlighting_enabled(False)
+        widget.set_trailing_color_problem_enabled(True)
+        widget.control_mismatch_source_lines_resolver = lambda _segment: list(source_lines)
+        widget.control_mismatch_translation_lines_resolver = (
+            lambda _segment: [
+                r"\C[27]I don't really want to go back to being a",
+                r"guy anymore, but... \C[0]",
+                "It's embarrassing to come out and say I",
+                "want to “become a girl”...",
+            ]
+        )
+        widget.trailing_color_translation_lines_resolver = (
+            lambda _segment: [
+                r"\C[27]I don't really want to go back to being a",
+                r"guy anymore, but... \C[0]",
+                r"\C[27]It's embarrassing to come out and say I",
+                r"want to “become a girl”...\C[0]",
+            ]
+        )
+
+        self.assertFalse(widget._has_control_mismatch_problem())
+        self.assertFalse(widget._has_trailing_color_code_problem())
+        widget.deleteLater()
+
     def test_trailing_color_problem_can_be_ignored_via_control_ignore_resolver(self) -> None:
         segment = _segment([r"\C[14]Press\C[0]"])
         segment.translation_lines = [r"\C[14]Press"]
