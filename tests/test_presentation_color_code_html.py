@@ -87,6 +87,27 @@ class PresentationColorCodeHtmlTests(unittest.TestCase):
 
         self.assertEqual(masked, "<V5> apples")
 
+    def test_hidden_control_spans_strip_angle_speed_tokens(self) -> None:
+        harness = _Harness()
+
+        masked, _spans = harness._hidden_control_line_with_color_spans(
+            r"Start\> fast \<slow end"
+        )
+
+        self.assertEqual(masked, "Start fast slow end")
+
+    def test_visible_render_keeps_angle_speed_tokens(self) -> None:
+        harness = _Harness()
+
+        rendered = harness._render_text_with_visible_color_codes_html(
+            r"Start\> fast \<slow end"
+        )
+
+        self.assertIn(r"\&gt;", rendered)
+        self.assertIn(r"\&lt;", rendered)
+        self.assertIn("Start", rendered)
+        self.assertIn("end", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

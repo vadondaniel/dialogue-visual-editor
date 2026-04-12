@@ -32,6 +32,7 @@ HIDDEN_STYLE_TOKEN_RE = re.compile(
     \\[Ff][Ss]\[(\d+)\]         |
     \\[A-Za-z]+\d*<[^>]*>       |
     \\[A-Za-z]+\d*\[[^\]]*\]    |
+    \\[<>]                      |
     \\[\.\!\|\^]                |
     \\[ntr]
     """,
