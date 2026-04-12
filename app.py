@@ -1251,7 +1251,7 @@ class DialogueVisualEditor(
         self.pagination_page_size_spin.setValue(DEFAULT_PAGE_SIZE)
 
         self.auto_split_check = QCheckBox(self)
-        self.auto_split_check.setChecked(True)
+        self.auto_split_check.setChecked(False)
 
         self.infer_speaker_check = QCheckBox(self)
         self.infer_speaker_check.setChecked(False)
