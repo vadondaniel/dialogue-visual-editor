@@ -561,6 +561,17 @@ class MassTranslateDialog(QDialog):
             return list(session.segments)
         return [segment for segment in resolved if isinstance(segment, DialogueSegment)]
 
+    @staticmethod
+    def _session_segment_index(
+        session: FileSession,
+        segment: DialogueSegment,
+        fallback_index: int,
+    ) -> int:
+        for idx, candidate in enumerate(session.segments):
+            if candidate is segment:
+                return idx
+        return fallback_index
+
     def _mode_has_pending_entries(self, mode: str) -> bool:
         include_dialogue, include_misc, include_speakers = self._content_mode_flags_for_mode(
             mode
@@ -994,9 +1005,19 @@ class MassTranslateDialog(QDialog):
 
         return groups_resolved, updated_blocks, len(touched_paths)
 
-    def _segment_content_type(self, path: Path, session: FileSession, segment: DialogueSegment) -> str:
+    def _segment_content_type(
+        self,
+        path: Path,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> str:
         _ = path
-        if segment.segment_kind == "map_display_name":
+        segment_kind = (
+            segment.segment_kind.strip().lower()
+            if isinstance(segment.segment_kind, str)
+            else ""
+        )
+        if segment_kind == "map_display_name":
             return "misc"
         if bool(getattr(session, "is_name_index_session", False)):
             kind = str(getattr(session, "name_index_kind", "")).strip().lower()
@@ -1016,7 +1037,7 @@ class MassTranslateDialog(QDialog):
                     return "speaker_segment"
                 return "misc"
             return "misc"
-        if segment.segment_kind in {
+        if segment_kind in {
             "name_index",
             "system_text",
             "plugin_text",
@@ -1026,7 +1047,9 @@ class MassTranslateDialog(QDialog):
             "tyrano_tag_text",
         }:
             return "misc"
-        return "dialogue"
+        if segment_kind in {"dialogue", "choice", "script_message", "tyrano_dialogue"}:
+            return "dialogue"
+        return "misc"
 
     @staticmethod
     def _should_collect_global_speaker_key(session: FileSession, content_type: str) -> bool:
@@ -1277,12 +1300,20 @@ class MassTranslateDialog(QDialog):
 
         source_field = self._source_text_field_name()
         blocks: list[dict[str, str]] = []
+        source_lines_resolver = getattr(
+            self.editor, "_segment_source_lines_for_translation", None
+        )
         for idx in indexes:
             neighbor = session.segments[idx]
+            if self._segment_content_type(path, session, neighbor) != "dialogue":
+                continue
             speaker_key = self.editor._speaker_key_for_segment(neighbor)
             speaker_display = self._speaker_display_for_prompt(speaker_key)
-            source_text = "\n".join(
-                self.editor._segment_source_lines_for_display(neighbor)).strip()
+            source_lines = self._segment_source_lines_for_mass_translate(
+                neighbor,
+                source_lines_resolver,
+            )
+            source_text = "\n".join(source_lines).strip()
             if not source_text:
                 continue
             blocks.append({"speaker": speaker_display, source_field: source_text})
@@ -1468,6 +1499,7 @@ class MassTranslateDialog(QDialog):
         for path, session in session_items:
             segments_for_scope = self._segments_for_session_mass_translate(path, session)
             for idx, segment in enumerate(segments_for_scope):
+                session_segment_index = self._session_segment_index(session, segment, idx)
                 source_lines = self._segment_source_lines_for_mass_translate(
                     segment,
                     source_lines_resolver,
@@ -1560,15 +1592,15 @@ class MassTranslateDialog(QDialog):
                 if content_type == "dialogue":
                     self.dialogue_targets[entry_id] = (path, segment)
                     self.dialogue_duplicate_targets[entry_id] = []
-                    self.entry_block_refs[entry_id] = (path, idx)
+                    self.entry_block_refs[entry_id] = (path, session_segment_index)
                 elif content_type == "speaker_segment":
                     self.speaker_segment_targets[entry_id] = (path, segment)
                     self.speaker_segment_duplicate_targets[entry_id] = []
-                    self.entry_block_refs[entry_id] = (path, idx)
+                    self.entry_block_refs[entry_id] = (path, session_segment_index)
                 else:
                     self.misc_targets[entry_id] = (path, segment)
                     self.misc_duplicate_targets[entry_id] = []
-                    self.entry_block_refs[entry_id] = (path, idx)
+                    self.entry_block_refs[entry_id] = (path, session_segment_index)
 
         if include_speakers:
             used_entry_ids: set[str] = set()

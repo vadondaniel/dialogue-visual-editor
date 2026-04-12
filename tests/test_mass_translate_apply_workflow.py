@@ -49,6 +49,13 @@ class _ApplyWorkflowEditorMeta:
         return list(segment.lines)
 
     @staticmethod
+    def _segment_source_lines_for_translation(segment: DialogueSegment) -> list[str]:
+        lines = _ApplyWorkflowEditorMeta._segment_source_lines_for_display(segment)
+        if bool(getattr(segment, "force_line1_speaker_inference", False)):
+            return list(lines[1:]) if len(lines) > 1 else [""]
+        return list(lines)
+
+    @staticmethod
     def _relative_path(path: Path) -> str:
         return path.as_posix()
 
@@ -96,6 +103,7 @@ class _ApplyWorkflowHarness:
     _segments_for_session_mass_translate = (
         MassTranslateDialog._segments_for_session_mass_translate
     )
+    _session_segment_index = staticmethod(MassTranslateDialog._session_segment_index)
     _segment_source_lines_for_mass_translate = (
         MassTranslateDialog._segment_source_lines_for_mass_translate
     )
@@ -384,6 +392,56 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
 
         self.assertNotIn("context_before", payload)
         self.assertEqual(payload["context_after"][0]["ja_text"], "line-4")
+
+    def test_context_payload_strips_inferred_line1_speaker_names(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        before = _segment("Map001.json:0", ["Hero", "Before body"])
+        target = _segment("Map001.json:1", ["Target body"])
+        after = _segment("Map001.json:2", ["Villain", "After body"])
+        before.force_line1_speaker_inference = True
+        after.force_line1_speaker_inference = True
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[before, target, after],
+        )
+        harness = _ApplyWorkflowHarness(editor)
+        harness.entry_block_refs = {
+            "D:1": (path, 1),
+        }
+
+        payload = harness._context_payload_for_chunk([{"id": "D:1"}], 1)
+
+        self.assertEqual(payload["context_before"][0]["ja_text"], "Before body")
+        self.assertEqual(payload["context_after"][0]["ja_text"], "After body")
+
+    def test_context_payload_skips_non_dialogue_neighbor_blocks(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        before = _segment("Map001.json:0", ["Before dialogue"])
+        note = _segment("Map001.json:1", ["Do not use as dialogue"])
+        note.segment_kind = "note_text"
+        target = _segment("Map001.json:2", ["Target body"])
+        plugin = _segment("Map001.json:3", ["Plugin arg"])
+        plugin.segment_kind = "plugin_command_text"
+        after = _segment("Map001.json:4", ["After dialogue"])
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[before, note, target, plugin, after],
+        )
+        harness = _ApplyWorkflowHarness(editor)
+        harness.entry_block_refs = {
+            "D:1": (path, 2),
+        }
+
+        payload = harness._context_payload_for_chunk([{"id": "D:1"}], 1)
+
+        self.assertEqual(payload["context_before"][0]["ja_text"], "Before dialogue")
+        self.assertEqual(payload["context_after"][0]["ja_text"], "After dialogue")
 
     def test_chunk_payload_for_group_omits_context_when_dialogue_not_included(self) -> None:
         editor = _ApplyWorkflowEditorMeta()
