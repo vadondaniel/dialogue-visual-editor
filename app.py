@@ -213,6 +213,10 @@ class FileListItemDelegate(QStyledItemDelegate):
 DEFAULT_THIN_WIDTH = 47
 DEFAULT_WIDE_WIDTH = 60
 DEFAULT_MAX_LINES = 4
+DEFAULT_MV_THIN_WIDTH = 44
+DEFAULT_MV_WIDE_WIDTH = 56
+DEFAULT_TYRANO_THIN_WIDTH = 64
+DEFAULT_TYRANO_WIDE_WIDTH = 84
 DEFAULT_PAGE_SIZE = 50
 DB_FILENAME = ".dialogue_editor_index.sqlite3"
 VERSION_DB_FILENAME = ".dialogue_version_state.sqlite3"
@@ -347,7 +351,7 @@ class DialogueVisualEditor(
         self.smart_collapse_soft_ratio_percent = _DEFAULT_SMART_COLLAPSE_SOFT_RATIO_PERCENT
         self.ui_state_path = Path(
             __file__).resolve().with_name(UI_STATE_FILENAME)
-        self.project_ui_settings_by_folder: dict[str, dict[str, Any]] = {}
+        self.legacy_project_ui_settings_by_folder: dict[str, dict[str, Any]] = {}
         self._applying_project_ui_state = False
         self.translation_state: dict[str, Any] = {
             "version": 2,
@@ -5239,7 +5243,7 @@ class DialogueVisualEditor(
     def _apply_variable_length_setting_changes(self, status_message: str) -> None:
         self._sync_variable_length_measurement_settings()
         if self.data_dir is not None:
-            self._store_current_project_ui_settings()
+            self._save_current_project_ui_settings_to_db()
             self._save_ui_state()
         self._refresh_all_file_item_text()
         if self.current_path is not None:
@@ -5798,6 +5802,143 @@ class DialogueVisualEditor(
             return "TyranoScript"
         return "Unknown"
 
+    def _project_layout_defaults_for_engine(self, engine: str) -> tuple[int, int, int]:
+        if engine == "mv":
+            return DEFAULT_MV_THIN_WIDTH, DEFAULT_MV_WIDE_WIDTH, DEFAULT_MAX_LINES
+        if engine == "tyrano":
+            return DEFAULT_TYRANO_THIN_WIDTH, DEFAULT_TYRANO_WIDE_WIDTH, DEFAULT_MAX_LINES
+        return DEFAULT_THIN_WIDTH, DEFAULT_WIDE_WIDTH, DEFAULT_MAX_LINES
+
+    def _default_project_ui_settings_for_engine(self, engine: str) -> dict[str, Any]:
+        thin_width, wide_width, max_lines = self._project_layout_defaults_for_engine(
+            engine
+        )
+        return {
+            "editor_mode": "plain",
+            "apply_version": "working",
+            "thin_width": int(thin_width),
+            "wide_width": int(wide_width),
+            "max_lines": int(max_lines),
+            "auto_split": False,
+            "infer_speaker": False,
+            "bg1_means_thoughts": False,
+            "default_variable_length": int(_DEFAULT_VARIABLE_LENGTH_ESTIMATE),
+            "variable_length_overrides": {},
+        }
+
+    def _project_settings_subset_from_mapping(self, raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            return {}
+        subset: dict[str, Any] = {}
+        editor_mode = raw.get("editor_mode")
+        if isinstance(editor_mode, str):
+            subset["editor_mode"] = editor_mode
+        apply_version = raw.get("apply_version")
+        if isinstance(apply_version, str):
+            subset["apply_version"] = apply_version
+        thin_width = raw.get("thin_width")
+        if isinstance(thin_width, int):
+            subset["thin_width"] = thin_width
+        wide_width = raw.get("wide_width")
+        if isinstance(wide_width, int):
+            subset["wide_width"] = wide_width
+        max_lines = raw.get("max_lines")
+        if isinstance(max_lines, int):
+            subset["max_lines"] = max_lines
+        auto_split = raw.get("auto_split")
+        if isinstance(auto_split, bool):
+            subset["auto_split"] = auto_split
+        infer_speaker = raw.get("infer_speaker")
+        if isinstance(infer_speaker, bool):
+            subset["infer_speaker"] = infer_speaker
+        bg1_means_thoughts = raw.get("bg1_means_thoughts")
+        if isinstance(bg1_means_thoughts, bool):
+            subset["bg1_means_thoughts"] = bg1_means_thoughts
+        default_variable_length = raw.get("default_variable_length")
+        if isinstance(default_variable_length, int):
+            subset["default_variable_length"] = default_variable_length
+        raw_variable_overrides = raw.get("variable_length_overrides")
+        if isinstance(raw_variable_overrides, dict):
+            subset["variable_length_overrides"] = dict(raw_variable_overrides)
+        return subset
+
+    def _global_settings_subset_from_mapping(self, raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            return {}
+        subset: dict[str, Any] = {}
+        pagination_page_size = raw.get("pagination_page_size")
+        if isinstance(pagination_page_size, int):
+            subset["pagination_page_size"] = pagination_page_size
+        smart_collapse_soft_rule_enabled = raw.get("smart_collapse_soft_rule_enabled")
+        if isinstance(smart_collapse_soft_rule_enabled, bool):
+            subset["smart_collapse_soft_rule_enabled"] = smart_collapse_soft_rule_enabled
+        smart_collapse_allow_comma_endings = raw.get(
+            "smart_collapse_allow_comma_endings"
+        )
+        if isinstance(smart_collapse_allow_comma_endings, bool):
+            subset["smart_collapse_allow_comma_endings"] = (
+                smart_collapse_allow_comma_endings
+            )
+        smart_collapse_allow_colon_triplet_endings = raw.get(
+            "smart_collapse_allow_colon_triplet_endings"
+        )
+        if isinstance(smart_collapse_allow_colon_triplet_endings, bool):
+            subset["smart_collapse_allow_colon_triplet_endings"] = (
+                smart_collapse_allow_colon_triplet_endings
+            )
+        smart_collapse_ellipsis_lowercase_rule = raw.get(
+            "smart_collapse_ellipsis_lowercase_rule"
+        )
+        if isinstance(smart_collapse_ellipsis_lowercase_rule, bool):
+            subset["smart_collapse_ellipsis_lowercase_rule"] = (
+                smart_collapse_ellipsis_lowercase_rule
+            )
+        collapse_if_no_punctuation = raw.get("smart_collapse_collapse_if_no_punctuation")
+        if not isinstance(collapse_if_no_punctuation, bool):
+            collapse_if_no_punctuation = raw.get(
+                "smart_collapse_keep_break_on_any_punctuation"
+            )
+        if not isinstance(collapse_if_no_punctuation, bool):
+            collapse_if_no_punctuation = raw.get("smart_collapse_only_no_punctuation")
+        if isinstance(collapse_if_no_punctuation, bool):
+            subset["smart_collapse_collapse_if_no_punctuation"] = (
+                collapse_if_no_punctuation
+            )
+        smart_collapse_soft_ratio_percent = raw.get("smart_collapse_soft_ratio_percent")
+        if isinstance(smart_collapse_soft_ratio_percent, int):
+            subset["smart_collapse_soft_ratio_percent"] = smart_collapse_soft_ratio_percent
+        hide_control_codes = raw.get("hide_control_codes")
+        if isinstance(hide_control_codes, bool):
+            subset["hide_control_codes"] = hide_control_codes
+        create_backup = raw.get("create_backup")
+        if isinstance(create_backup, bool):
+            subset["create_backup"] = create_backup
+        problem_char_limit = raw.get("problem_char_limit")
+        if isinstance(problem_char_limit, bool):
+            subset["problem_char_limit"] = problem_char_limit
+        problem_line_limit = raw.get("problem_line_limit")
+        if isinstance(problem_line_limit, bool):
+            subset["problem_line_limit"] = problem_line_limit
+        problem_control_mismatch = raw.get("problem_control_mismatch")
+        if isinstance(problem_control_mismatch, bool):
+            subset["problem_control_mismatch"] = problem_control_mismatch
+        problem_trailing_color_code = raw.get("problem_trailing_color_code")
+        if isinstance(problem_trailing_color_code, bool):
+            subset["problem_trailing_color_code"] = problem_trailing_color_code
+        problem_missing_translation = raw.get("problem_missing_translation")
+        if isinstance(problem_missing_translation, bool):
+            subset["problem_missing_translation"] = problem_missing_translation
+        problem_contains_japanese = raw.get("problem_contains_japanese")
+        if isinstance(problem_contains_japanese, bool):
+            subset["problem_contains_japanese"] = problem_contains_japanese
+        hide_non_meaningful_entries = raw.get("hide_non_meaningful_entries")
+        if isinstance(hide_non_meaningful_entries, bool):
+            subset["hide_non_meaningful_entries"] = hide_non_meaningful_entries
+        show_empty_files = raw.get("show_empty_files")
+        if isinstance(show_empty_files, bool):
+            subset["show_empty_files"] = show_empty_files
+        return subset
+
     def _collect_project_ui_settings(self) -> dict[str, Any]:
         mode_raw = self.editor_mode_combo.currentData()
         mode_value = mode_raw if isinstance(mode_raw, str) else "plain"
@@ -5809,9 +5950,19 @@ class DialogueVisualEditor(
             "thin_width": int(self.thin_width_spin.value()),
             "wide_width": int(self.wide_width_spin.value()),
             "max_lines": int(self.max_lines_spin.value()),
-            "pagination_page_size": int(self._pagination_page_size()),
             "auto_split": bool(self.auto_split_check.isChecked()),
             "infer_speaker": bool(self.infer_speaker_check.isChecked()),
+            "bg1_means_thoughts": bool(self.bg1_thoughts_check.isChecked()),
+            "default_variable_length": int(self.default_variable_length_estimate),
+            "variable_length_overrides": {
+                str(key): int(value)
+                for key, value in sorted(self.variable_length_overrides.items())
+            },
+        }
+
+    def _collect_global_ui_settings(self) -> dict[str, Any]:
+        return {
+            "pagination_page_size": int(self._pagination_page_size()),
             "smart_collapse_soft_rule_enabled": bool(
                 self.smart_collapse_soft_ratio_rule_enabled
             ),
@@ -5849,51 +6000,49 @@ class DialogueVisualEditor(
             "hide_non_meaningful_entries": bool(
                 self.hide_non_meaningful_entries_check.isChecked()
             ),
-            "bg1_means_thoughts": bool(self.bg1_thoughts_check.isChecked()),
             "show_empty_files": bool(self.show_empty_files_check.isChecked()),
-            "default_variable_length": int(self.default_variable_length_estimate),
-            "variable_length_overrides": {
-                str(key): int(value)
-                for key, value in sorted(self.variable_length_overrides.items())
-            },
         }
 
-    def _store_project_ui_settings(self, folder: Path) -> None:
-        key = self._project_state_key(folder)
-        self.project_ui_settings_by_folder[key] = self._collect_project_ui_settings()
-
-    def _store_current_project_ui_settings(self) -> None:
-        if self.data_dir is None:
+    def _save_current_project_ui_settings_to_db(self) -> None:
+        if self.data_dir is None or self.version_db is None:
             return
-        self._store_project_ui_settings(self.data_dir)
+        try:
+            self.version_db.set_project_ui_settings(self._collect_project_ui_settings())
+        except Exception:
+            logger.exception("Failed to save project UI settings.")
+
+    def _load_project_ui_settings_from_db(self) -> Optional[dict[str, Any]]:
+        if self.version_db is None:
+            return None
+        try:
+            loaded = self.version_db.get_project_ui_settings()
+        except Exception:
+            logger.exception("Failed to load project UI settings.")
+            return None
+        if not isinstance(loaded, dict):
+            return None
+        return self._project_settings_subset_from_mapping(loaded)
 
     def _set_combo_data_if_present(self, combo: QComboBox, data_value: str) -> None:
         index = combo.findData(data_value)
         if index >= 0:
             combo.setCurrentIndex(index)
 
-    def _apply_project_ui_settings(self, settings: dict[str, Any]) -> None:
+    def _apply_project_ui_settings(
+        self,
+        settings: dict[str, Any],
+        *,
+        rerender: bool = True,
+    ) -> None:
         self._applying_project_ui_state = True
         self.editor_mode_combo.blockSignals(True)
         self.apply_version_combo.blockSignals(True)
         self.thin_width_spin.blockSignals(True)
         self.wide_width_spin.blockSignals(True)
         self.max_lines_spin.blockSignals(True)
-        if self.pagination_page_size_spin is not None:
-            self.pagination_page_size_spin.blockSignals(True)
         self.auto_split_check.blockSignals(True)
         self.infer_speaker_check.blockSignals(True)
-        self.hide_control_codes_check.blockSignals(True)
-        self.backup_check.blockSignals(True)
-        self.problem_char_limit_check.blockSignals(True)
-        self.problem_line_limit_check.blockSignals(True)
-        self.problem_control_mismatch_check.blockSignals(True)
-        self.problem_trailing_color_code_check.blockSignals(True)
-        self.problem_missing_translation_check.blockSignals(True)
-        self.problem_contains_japanese_check.blockSignals(True)
-        self.hide_non_meaningful_entries_check.blockSignals(True)
         self.bg1_thoughts_check.blockSignals(True)
-        self.show_empty_files_check.blockSignals(True)
         try:
             editor_mode = settings.get("editor_mode")
             if isinstance(editor_mode, str):
@@ -5912,17 +6061,90 @@ class DialogueVisualEditor(
             max_lines = settings.get("max_lines")
             if isinstance(max_lines, int):
                 self.max_lines_spin.setValue(max_lines)
-            pagination_page_size = settings.get("pagination_page_size")
-            if isinstance(pagination_page_size, int) and self.pagination_page_size_spin is not None:
-                self.pagination_page_size_spin.setValue(
-                    max(10, min(500, int(pagination_page_size)))
-                )
             auto_split = settings.get("auto_split")
             if isinstance(auto_split, bool):
                 self.auto_split_check.setChecked(auto_split)
             infer_speaker = settings.get("infer_speaker")
             if isinstance(infer_speaker, bool):
                 self.infer_speaker_check.setChecked(infer_speaker)
+            bg1_means_thoughts = settings.get("bg1_means_thoughts")
+            if isinstance(bg1_means_thoughts, bool):
+                self.bg1_thoughts_check.setChecked(bg1_means_thoughts)
+
+            default_variable_length = settings.get("default_variable_length")
+            if isinstance(default_variable_length, int):
+                self.default_variable_length_estimate = (
+                    self._clamp_variable_length_estimate(default_variable_length)
+                )
+            raw_variable_overrides = settings.get("variable_length_overrides")
+            parsed_overrides: dict[int, int] = {}
+            if isinstance(raw_variable_overrides, dict):
+                for raw_key, raw_value in raw_variable_overrides.items():
+                    if not isinstance(raw_value, int):
+                        continue
+                    parsed_key: Optional[int] = None
+                    if isinstance(raw_key, int):
+                        parsed_key = raw_key
+                    elif isinstance(raw_key, str):
+                        stripped_key = raw_key.strip()
+                        if stripped_key and re.fullmatch(r"\d+", stripped_key):
+                            parsed_key = int(stripped_key)
+                    if parsed_key is None:
+                        continue
+                    parsed_overrides[parsed_key] = self._clamp_variable_length_estimate(
+                        raw_value
+                    )
+            self.variable_length_overrides = parsed_overrides
+        finally:
+            self.editor_mode_combo.blockSignals(False)
+            self.apply_version_combo.blockSignals(False)
+            self.thin_width_spin.blockSignals(False)
+            self.wide_width_spin.blockSignals(False)
+            self.max_lines_spin.blockSignals(False)
+            self.auto_split_check.blockSignals(False)
+            self.infer_speaker_check.blockSignals(False)
+            self.bg1_thoughts_check.blockSignals(False)
+            self._applying_project_ui_state = False
+
+        self._sync_variable_length_measurement_settings()
+        self._update_mode_controls()
+        self._sync_settings_menu_from_controls()
+        self._sync_settings_toggle_actions_from_controls()
+        self._sync_settings_limits_menu_labels()
+        refresh_file_items = getattr(self, "_refresh_all_file_item_text", None)
+        if callable(refresh_file_items):
+            refresh_file_items()
+        sync_mode_ui = getattr(self, "_sync_translator_mode_ui", None)
+        if callable(sync_mode_ui):
+            sync_mode_ui()
+        if rerender and self.current_path is not None:
+            self._rerender_current_file()
+
+    def _apply_global_ui_settings(
+        self,
+        settings: dict[str, Any],
+        *,
+        rerender: bool = True,
+    ) -> None:
+        self._applying_project_ui_state = True
+        if self.pagination_page_size_spin is not None:
+            self.pagination_page_size_spin.blockSignals(True)
+        self.hide_control_codes_check.blockSignals(True)
+        self.backup_check.blockSignals(True)
+        self.problem_char_limit_check.blockSignals(True)
+        self.problem_line_limit_check.blockSignals(True)
+        self.problem_control_mismatch_check.blockSignals(True)
+        self.problem_trailing_color_code_check.blockSignals(True)
+        self.problem_missing_translation_check.blockSignals(True)
+        self.problem_contains_japanese_check.blockSignals(True)
+        self.hide_non_meaningful_entries_check.blockSignals(True)
+        self.show_empty_files_check.blockSignals(True)
+        try:
+            pagination_page_size = settings.get("pagination_page_size")
+            if isinstance(pagination_page_size, int) and self.pagination_page_size_spin is not None:
+                self.pagination_page_size_spin.setValue(
+                    max(10, min(500, int(pagination_page_size)))
+                )
             smart_collapse_soft_rule_enabled = settings.get(
                 "smart_collapse_soft_rule_enabled"
             )
@@ -5990,75 +6212,32 @@ class DialogueVisualEditor(
                 self.problem_control_mismatch_check.setChecked(
                     problem_control_mismatch
                 )
-            problem_trailing_color_code = settings.get(
-                "problem_trailing_color_code"
-            )
+            problem_trailing_color_code = settings.get("problem_trailing_color_code")
             if isinstance(problem_trailing_color_code, bool):
                 self.problem_trailing_color_code_check.setChecked(
                     problem_trailing_color_code
                 )
-            problem_missing_translation = settings.get(
-                "problem_missing_translation"
-            )
+            problem_missing_translation = settings.get("problem_missing_translation")
             if isinstance(problem_missing_translation, bool):
                 self.problem_missing_translation_check.setChecked(
                     problem_missing_translation
                 )
-            problem_contains_japanese = settings.get(
-                "problem_contains_japanese"
-            )
+            problem_contains_japanese = settings.get("problem_contains_japanese")
             if isinstance(problem_contains_japanese, bool):
                 self.problem_contains_japanese_check.setChecked(
                     problem_contains_japanese
                 )
-            hide_non_meaningful_entries = settings.get(
-                "hide_non_meaningful_entries"
-            )
+            hide_non_meaningful_entries = settings.get("hide_non_meaningful_entries")
             if isinstance(hide_non_meaningful_entries, bool):
                 self.hide_non_meaningful_entries_check.setChecked(
                     hide_non_meaningful_entries
                 )
-            bg1_means_thoughts = settings.get("bg1_means_thoughts")
-            if isinstance(bg1_means_thoughts, bool):
-                self.bg1_thoughts_check.setChecked(bg1_means_thoughts)
             show_empty_files = settings.get("show_empty_files")
             if isinstance(show_empty_files, bool):
                 self.show_empty_files_check.setChecked(show_empty_files)
-
-            default_variable_length = settings.get("default_variable_length")
-            if isinstance(default_variable_length, int):
-                self.default_variable_length_estimate = (
-                    self._clamp_variable_length_estimate(default_variable_length)
-                )
-            raw_variable_overrides = settings.get("variable_length_overrides")
-            parsed_overrides: dict[int, int] = {}
-            if isinstance(raw_variable_overrides, dict):
-                for raw_key, raw_value in raw_variable_overrides.items():
-                    if not isinstance(raw_value, int):
-                        continue
-                    parsed_key: Optional[int] = None
-                    if isinstance(raw_key, int):
-                        parsed_key = raw_key
-                    elif isinstance(raw_key, str):
-                        stripped_key = raw_key.strip()
-                        if stripped_key and re.fullmatch(r"\d+", stripped_key):
-                            parsed_key = int(stripped_key)
-                    if parsed_key is None:
-                        continue
-                    parsed_overrides[parsed_key] = self._clamp_variable_length_estimate(
-                        raw_value
-                    )
-            self.variable_length_overrides = parsed_overrides
         finally:
-            self.editor_mode_combo.blockSignals(False)
-            self.apply_version_combo.blockSignals(False)
-            self.thin_width_spin.blockSignals(False)
-            self.wide_width_spin.blockSignals(False)
-            self.max_lines_spin.blockSignals(False)
             if self.pagination_page_size_spin is not None:
                 self.pagination_page_size_spin.blockSignals(False)
-            self.auto_split_check.blockSignals(False)
-            self.infer_speaker_check.blockSignals(False)
             self.hide_control_codes_check.blockSignals(False)
             self.backup_check.blockSignals(False)
             self.problem_char_limit_check.blockSignals(False)
@@ -6068,38 +6247,34 @@ class DialogueVisualEditor(
             self.problem_missing_translation_check.blockSignals(False)
             self.problem_contains_japanese_check.blockSignals(False)
             self.hide_non_meaningful_entries_check.blockSignals(False)
-            self.bg1_thoughts_check.blockSignals(False)
             self.show_empty_files_check.blockSignals(False)
             self._applying_project_ui_state = False
 
-        self._sync_variable_length_measurement_settings()
-        self._update_mode_controls()
         self._sync_settings_menu_from_controls()
         self._sync_settings_toggle_actions_from_controls()
         self._update_problem_checks_ui()
-        self._sync_settings_limits_menu_labels()
         self._sync_settings_pagination_menu_labels()
         self._sync_smart_collapse_menu_state()
         refresh_file_items = getattr(self, "_refresh_all_file_item_text", None)
         if callable(refresh_file_items):
             refresh_file_items()
-        sync_mode_ui = getattr(self, "_sync_translator_mode_ui", None)
-        if callable(sync_mode_ui):
-            sync_mode_ui()
         if self.current_path is not None:
-            self._rerender_current_file()
+            rebuild_file_list = getattr(self, "_rebuild_file_list", None)
+            if callable(rebuild_file_list):
+                rebuild_file_list(preferred_path=self.current_path)
+            if rerender:
+                self._rerender_current_file()
 
     def _on_project_setting_changed(self, *_args: Any) -> None:
         if self._applying_project_ui_state:
             return
-        if self.data_dir is None:
-            return
-        self._store_current_project_ui_settings()
+        self._save_current_project_ui_settings_to_db()
         self._save_ui_state()
 
     def _load_ui_state(self) -> None:
         remember_last_folder = False
         last_folder = ""
+        loaded_global_settings: dict[str, Any] = {}
         loaded_project_settings: dict[str, dict[str, Any]] = {}
 
         try:
@@ -6112,6 +6287,15 @@ class DialogueVisualEditor(
                     raw_last_folder = loaded.get("last_folder", "")
                     if isinstance(raw_last_folder, str):
                         last_folder = raw_last_folder.strip()
+                    raw_global_settings = loaded.get("global_settings")
+                    if isinstance(raw_global_settings, dict):
+                        loaded_global_settings = self._global_settings_subset_from_mapping(
+                            raw_global_settings
+                        )
+                    else:
+                        loaded_global_settings = self._global_settings_subset_from_mapping(
+                            loaded
+                        )
                     raw_project_settings = loaded.get("project_settings")
                     if isinstance(raw_project_settings, dict):
                         for key, value in raw_project_settings.items():
@@ -6121,7 +6305,9 @@ class DialogueVisualEditor(
             logger.exception("Failed to load UI state from '%s'.", self.ui_state_path)
             return
 
-        self.project_ui_settings_by_folder = loaded_project_settings
+        self.legacy_project_ui_settings_by_folder = loaded_project_settings
+        if loaded_global_settings:
+            self._apply_global_ui_settings(loaded_global_settings, rerender=False)
         self.remember_folder_check.blockSignals(True)
         self.remember_folder_check.setChecked(remember_last_folder)
         self.remember_folder_check.blockSignals(False)
@@ -6134,7 +6320,6 @@ class DialogueVisualEditor(
                 self._load_data_folder(candidate)
 
     def _save_ui_state(self) -> None:
-        self._store_current_project_ui_settings()
         remember_last_folder = bool(self.remember_folder_check.isChecked())
         last_folder = ""
         if remember_last_folder:
@@ -6146,7 +6331,7 @@ class DialogueVisualEditor(
         payload = {
             "remember_last_folder": remember_last_folder,
             "last_folder": last_folder,
-            "project_settings": self.project_ui_settings_by_folder,
+            "global_settings": self._collect_global_ui_settings(),
         }
         try:
             with self.ui_state_path.open("w", encoding="utf-8") as dst:
@@ -7101,7 +7286,7 @@ class DialogueVisualEditor(
             return
 
         if self.data_dir is not None:
-            self._store_current_project_ui_settings()
+            self._save_current_project_ui_settings_to_db()
 
         self.data_dir = resolved_folder.resolve()
         self.last_folder_path = str(self.data_dir)
@@ -7122,23 +7307,9 @@ class DialogueVisualEditor(
         self.detected_rpg_engine = self._detect_rpg_maker_engine(self.data_dir)
         self.default_variable_length_estimate = _DEFAULT_VARIABLE_LENGTH_ESTIMATE
         self.variable_length_overrides = {}
-        self.smart_collapse_soft_ratio_rule_enabled = True
-        self.smart_collapse_allow_comma_endings = False
-        self.smart_collapse_allow_colon_triplet_endings = False
-        self.smart_collapse_ellipsis_lowercase_rule = False
-        self.smart_collapse_collapse_if_no_punctuation = True
-        self.smart_collapse_soft_ratio_percent = _DEFAULT_SMART_COLLAPSE_SOFT_RATIO_PERCENT
         self._sync_variable_length_measurement_settings()
         self._configure_project_message_text_metrics(self.data_dir)
         self._update_window_title()
-        project_key = self._project_state_key(self.data_dir)
-        project_settings = self.project_ui_settings_by_folder.get(project_key)
-        project_has_infer_setting = (
-            isinstance(project_settings, dict)
-            and isinstance(project_settings.get("infer_speaker"), bool)
-        )
-        if isinstance(project_settings, dict):
-            self._apply_project_ui_settings(project_settings)
         self._save_ui_state()
         self._windowskin_text_colors.clear()
         self._windowskin_text_colors_loaded = False
@@ -7155,6 +7326,34 @@ class DialogueVisualEditor(
         self.translation_state_path = self.data_dir / TRANSLATION_STATE_FILENAME
         self._load_translation_state()
         self._rebuild_translation_profile_menu()
+
+        project_has_infer_setting = False
+        self._apply_project_ui_settings(
+            self._default_project_ui_settings_for_engine(self.detected_rpg_engine),
+            rerender=False,
+        )
+        loaded_project_settings = self._load_project_ui_settings_from_db()
+        if not isinstance(loaded_project_settings, dict):
+            project_key = self._project_state_key(self.data_dir)
+            legacy_raw = self.legacy_project_ui_settings_by_folder.get(project_key)
+            legacy_project_settings = self._project_settings_subset_from_mapping(
+                legacy_raw
+            )
+            if legacy_project_settings:
+                loaded_project_settings = legacy_project_settings
+                if self.version_db is not None:
+                    try:
+                        self.version_db.set_project_ui_settings(legacy_project_settings)
+                    except Exception:
+                        logger.exception(
+                            "Failed to migrate legacy project UI settings for '%s'.",
+                            self.data_dir,
+                        )
+        if isinstance(loaded_project_settings, dict) and loaded_project_settings:
+            self._apply_project_ui_settings(loaded_project_settings, rerender=False)
+            project_has_infer_setting = isinstance(
+                loaded_project_settings.get("infer_speaker"), bool
+            )
 
         self.sessions.clear()
         self._pagination_page_by_scope_key.clear()

@@ -9,6 +9,7 @@ from pathlib import Path
 from helpers.core.version_state_db import (
     DEFAULT_TRANSLATION_PROFILE_ID,
     DialogueVersionDB,
+    PROJECT_UI_SETTINGS_KEY,
 )
 
 
@@ -99,6 +100,66 @@ class VersionStateDBTests(unittest.TestCase):
                 self.assertNotEqual(db.get_applied_version_timestamp(), "")
             finally:
                 db.close()
+
+    def test_project_ui_settings_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "versions.sqlite3"
+            db = DialogueVersionDB(db_path)
+            try:
+                payload = {
+                    "editor_mode": "translator",
+                    "apply_version": "working",
+                    "thin_width": 44,
+                    "wide_width": 56,
+                    "max_lines": 4,
+                }
+                db.set_project_ui_settings(payload)
+                self.assertEqual(db.get_project_ui_settings(), payload)
+            finally:
+                db.close()
+
+    def test_project_ui_settings_returns_none_for_invalid_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "versions.sqlite3"
+            db = DialogueVersionDB(db_path)
+            try:
+                db.conn.execute(
+                    "INSERT INTO project_state(key, value) VALUES(?, ?)",
+                    (PROJECT_UI_SETTINGS_KEY, "{not-json"),
+                )
+                db.conn.commit()
+                self.assertIsNone(db.get_project_ui_settings())
+            finally:
+                db.close()
+
+    def test_project_ui_settings_survive_project_folder_move(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_root = Path(tmpdir) / "ProjectA"
+            moved_root = Path(tmpdir) / "ProjectB"
+            original_root.mkdir()
+            db_path = original_root / "versions.sqlite3"
+            db = DialogueVersionDB(db_path)
+            try:
+                db.set_project_ui_settings(
+                    {
+                        "editor_mode": "translator",
+                        "apply_version": "translated",
+                        "thin_width": 47,
+                        "wide_width": 60,
+                        "max_lines": 4,
+                    }
+                )
+            finally:
+                db.close()
+            original_root.rename(moved_root)
+            moved_db = DialogueVersionDB(moved_root / "versions.sqlite3")
+            try:
+                loaded = moved_db.get_project_ui_settings()
+                self.assertIsInstance(loaded, dict)
+                self.assertEqual(loaded.get("apply_version"), "translated")
+                self.assertEqual(loaded.get("thin_width"), 47)
+            finally:
+                moved_db.close()
 
     def test_migrates_legacy_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -11,6 +11,7 @@ from .text_utils import now_utc_iso
 VersionKind = Literal["original", "working", "translated"]
 ImportTargetKind = Literal["working", "translated"]
 DEFAULT_TRANSLATION_PROFILE_ID = "default"
+PROJECT_UI_SETTINGS_KEY = "project_ui_settings_v1"
 logger = logging.getLogger(__name__)
 
 
@@ -459,6 +460,38 @@ class DialogueVersionDB:
             return ""
         value = row[0]
         return value if isinstance(value, str) else ""
+
+    def set_project_ui_settings(self, settings: dict[str, Any]) -> None:
+        payload = json.dumps(settings if isinstance(settings, dict) else {}, ensure_ascii=False)
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO project_state(key, value)
+                VALUES(?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (PROJECT_UI_SETTINGS_KEY, payload),
+            )
+
+    def get_project_ui_settings(self) -> Optional[dict[str, Any]]:
+        cursor = self.conn.execute(
+            "SELECT value FROM project_state WHERE key = ?",
+            (PROJECT_UI_SETTINGS_KEY,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        value = row[0]
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            decoded = json.loads(value)
+        except Exception:
+            logger.warning("Invalid project UI settings JSON in version DB '%s'.", self.path)
+            return None
+        if not isinstance(decoded, dict):
+            return None
+        return decoded
 
     def close(self) -> None:
         try:
