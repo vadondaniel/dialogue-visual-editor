@@ -5400,9 +5400,6 @@ class DialogueVisualEditor(
         if editor is not None and editor.document().isUndoAvailable():
             editor.undo()
             return
-        if self._is_translator_mode():
-            self.statusBar().showMessage("Nothing to undo.")
-            return
         if not self._undo_last_structural_action():
             self.statusBar().showMessage("Nothing to undo.")
 
@@ -5410,9 +5407,6 @@ class DialogueVisualEditor(
         editor = self._focused_text_editor()
         if editor is not None and editor.document().isRedoAvailable():
             editor.redo()
-            return
-        if self._is_translator_mode():
-            self.statusBar().showMessage("Nothing to redo.")
             return
         if not self._redo_last_structural_action():
             self.statusBar().showMessage("Nothing to redo.")
