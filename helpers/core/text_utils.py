@@ -553,6 +553,42 @@ def split_lines_by_row_budget(lines: list[str], max_rows: float) -> tuple[list[s
     return normalized[:keep_count], normalized[keep_count:]
 
 
+_SENTENCE_BOUNDARY_TRAILING_CLOSERS = set(
+    "\"'”’»›）)]}】」』〕〉》｝"
+)
+
+
+def line_ends_sentence_boundary(line: str) -> bool:
+    visible_line = CONTROL_TOKEN_RE.sub("", line or "").rstrip()
+    while visible_line and visible_line[-1] in _SENTENCE_BOUNDARY_TRAILING_CLOSERS:
+        visible_line = visible_line[:-1].rstrip()
+    if not visible_line:
+        return False
+    return visible_line[-1] in SOFT_SENTENCE_ENDINGS
+
+
+def split_lines_by_sentence_boundary_row_budget(
+    lines: list[str],
+    max_rows: float,
+    *,
+    preserve_first_line: bool = False,
+) -> tuple[list[str], list[str]]:
+    kept, moved = split_lines_by_row_budget(lines, max_rows)
+    if not moved:
+        return kept, moved
+
+    normalized = list(lines) if lines else [""]
+    max_split_index = min(len(kept), len(normalized) - 1)
+    min_split_index = 2 if preserve_first_line else 1
+    if max_split_index < min_split_index:
+        return kept, moved
+
+    for split_index in range(max_split_index, min_split_index - 1, -1):
+        if line_ends_sentence_boundary(normalized[split_index - 1]):
+            return normalized[:split_index], normalized[split_index:]
+    return kept, moved
+
+
 def chunk_lines_by_row_budget(lines: list[str], max_rows: float) -> list[list[str]]:
     normalized = list(lines) if lines else [""]
     chunks: list[list[str]] = []

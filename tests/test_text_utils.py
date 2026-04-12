@@ -107,6 +107,36 @@ class TextUtilsTests(unittest.TestCase):
         self.assertEqual(moved, ["B"])
         self.assertEqual(text_utils.chunk_lines_by_row_budget([], 2.0), [[""]])
 
+    def test_sentence_boundary_row_budget_split_prefers_sentence_end(self) -> None:
+        lines = [
+            r"\C[2]Speaker\C[0]",
+            r"In the end, it's just a \C[14]trick\C[0] from a \C[27]girl\C[0].",
+            r"How \C[27]cute\C[0] can it really be?",
+            "Honestly, I'm looking forward to seeing",
+            "what she'll do.",
+        ]
+
+        kept, moved = text_utils.split_lines_by_sentence_boundary_row_budget(
+            lines,
+            4.0,
+            preserve_first_line=True,
+        )
+
+        self.assertEqual(kept, lines[:3])
+        self.assertEqual(moved, lines[3:])
+
+    def test_sentence_boundary_row_budget_split_falls_back_without_boundary(self) -> None:
+        lines = ["Speaker", "No ending", "still continuing", "overflow"]
+
+        kept, moved = text_utils.split_lines_by_sentence_boundary_row_budget(
+            lines,
+            3.0,
+            preserve_first_line=True,
+        )
+
+        self.assertEqual(kept, lines[:3])
+        self.assertEqual(moved, lines[3:])
+
     def test_wrapper_aliases_and_iso_timestamp(self) -> None:
         self.assertEqual(
             text_utils.wrap_text_to_width("A B C", 3),

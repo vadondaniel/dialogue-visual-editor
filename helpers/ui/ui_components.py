@@ -53,7 +53,7 @@ from ..core.text_utils import (
     first_overflow_char_index,
     looks_like_name_line,
     parse_units_for_measure,
-    split_lines_by_row_budget,
+    split_lines_by_sentence_boundary_row_budget,
     smart_collapse_lines,
     split_lines_preserve_empty,
     strip_control_tokens,
@@ -4474,9 +4474,10 @@ class DialogueBlockWidget(QFrame):
             text += f", over width {over_width_label}: {', '.join(str(i) for i in over_width[:6])}"
             if len(over_width) > 6:
                 text += "..."
-        kept_storage_lines, moved_storage_lines = split_lines_by_row_budget(
+        kept_storage_lines, moved_storage_lines = split_lines_by_sentence_boundary_row_budget(
             storage_lines,
             max_rows_budget,
+            preserve_first_line=self._line1_inference_active(),
         )
         if self._line1_inference_active():
             kept_visible_count = max(0, len(kept_storage_lines) - 1)

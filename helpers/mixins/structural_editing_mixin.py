@@ -36,7 +36,7 @@ from ..core.models import (
 )
 from ..core.text_utils import (
     smart_collapse_lines,
-    split_lines_by_row_budget,
+    split_lines_by_sentence_boundary_row_budget,
     total_display_rows,
     visible_length,
 )
@@ -2508,14 +2508,30 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if source_index < 0:
             return
 
-        kept_active_lines, moved_active_lines = split_lines_by_row_budget(
+        inferred_marker = self._inferred_line1_speaker_marker(source_segment)
+        translated_marker = self._translated_inferred_marker_for_segment(
+            source_segment,
+            inferred_marker,
+        )
+        preserve_first_active_line = (
+            bool(active_lines_before)
+            and bool(inferred_marker)
+            and (
+                active_lines_before[0] == inferred_marker
+                or (
+                    bool(translated_marker)
+                    and active_lines_before[0] == translated_marker
+                )
+            )
+        )
+        kept_active_lines, moved_active_lines = split_lines_by_sentence_boundary_row_budget(
             active_lines_before,
             max_rows_budget,
+            preserve_first_line=preserve_first_active_line,
         )
         if not moved_active_lines:
             self.statusBar().showMessage("No overflow lines to move.")
             return
-        inferred_marker = self._inferred_line1_speaker_marker(source_segment)
         kept_active_lines, moved_active_lines = self._apply_split_overflow_color_continuity(
             list(kept_active_lines),
             list(moved_active_lines),
