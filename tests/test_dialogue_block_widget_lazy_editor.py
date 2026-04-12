@@ -7,7 +7,7 @@ from typing import Any, Callable, Optional, cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QMimeData, Qt
 from PySide6.QtGui import QFocusEvent, QKeyEvent
 from PySide6.QtWidgets import QApplication, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
@@ -127,6 +127,40 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         widget.set_editor_active(False)
         self.assertIsNone(widget.editor)
         self.assertFalse(widget._preview.isHidden())
+        widget.deleteLater()
+
+    def test_paste_decodes_literal_backslash_n_into_newlines(self) -> None:
+        segment = _segment(["before"])
+        widget = _widget(segment)
+        widget.set_editor_active(True)
+        editor = widget.editor
+        assert editor is not None
+        editor.setPlainText("")
+
+        mime = QMimeData()
+        mime.setText(r"Line A\nLine B")
+        editor.insertFromMimeData(mime)
+
+        self.assertEqual(editor.toPlainText(), "Line A\nLine B")
+        self.assertEqual(segment.lines, ["Line A", "Line B"])
+        self.assertEqual(segment.source_lines, ["Line A", "Line B"])
+        widget.deleteLater()
+
+    def test_paste_preserves_name_control_token_sequences(self) -> None:
+        segment = _segment(["before"])
+        widget = _widget(segment)
+        widget.set_editor_active(True)
+        editor = widget.editor
+        assert editor is not None
+        editor.setPlainText("")
+
+        mime = QMimeData()
+        mime.setText(r"\n[1]\nLine")
+        editor.insertFromMimeData(mime)
+
+        self.assertEqual(editor.toPlainText(), "\\n[1]\nLine")
+        self.assertEqual(segment.lines, [r"\n[1]", "Line"])
+        self.assertEqual(segment.source_lines, [r"\n[1]", "Line"])
         widget.deleteLater()
 
     def test_mouse_focus_deferred_reveal_preserves_cursor_position(self) -> None:

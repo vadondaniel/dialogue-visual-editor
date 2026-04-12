@@ -6,7 +6,7 @@ import math
 import re
 from typing import Any, Callable, Literal, Optional, Protocol, cast
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QContextMenuEvent,
     QColor,
@@ -98,6 +98,56 @@ _JAPANESE_PROBLEM_FG_LIGHT = "#9a3412"
 _JAPANESE_PROBLEM_UNDERLINE_DARK = "#fb923c"
 _JAPANESE_PROBLEM_UNDERLINE_LIGHT = "#c2410c"
 _TRAILING_COLOR_CODE_RE = re.compile(r"\\[Cc]\[(\d+)\]\s*$")
+_NAME_CONTROL_TOKEN_RE = re.compile(r"\\[Nn]\[\d+\]")
+
+
+def _is_escaped_backslash(text: str, index: int) -> bool:
+    slash_count = 0
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        slash_count += 1
+        cursor -= 1
+    return (slash_count % 2) == 1
+
+
+def _decode_pasted_literal_newlines(text: str) -> str:
+    if "\\n" not in text:
+        return text
+    decoded: list[str] = []
+    idx = 0
+    text_len = len(text)
+    while idx < text_len:
+        char = text[idx]
+        if (
+            char == "\\"
+            and (idx + 1) < text_len
+            and text[idx + 1] == "n"
+            and not _is_escaped_backslash(text, idx)
+        ):
+            # Preserve RPG Maker name control tokens like \n[1].
+            name_token_match = _NAME_CONTROL_TOKEN_RE.match(text, idx)
+            if name_token_match is not None:
+                token = name_token_match.group(0)
+                decoded.append(token)
+                idx += len(token)
+                continue
+            decoded.append("\n")
+            idx += 2
+            continue
+        decoded.append(char)
+        idx += 1
+    return "".join(decoded)
+
+
+class PasteEscapedNewlineTextEdit(QPlainTextEdit):
+    def insertFromMimeData(self, source: QMimeData) -> None:
+        text = source.text()
+        if text and "\\n" in text:
+            decoded_text = _decode_pasted_literal_newlines(text)
+            if decoded_text != text:
+                self.insertPlainText(decoded_text)
+                return
+        super().insertFromMimeData(source)
 
 
 def _extract_control_token_matches(text: str) -> list[tuple[str, int, int]]:
@@ -2471,7 +2521,7 @@ class DialogueBlockWidget(QFrame):
     def _mount_editor(self) -> None:
         if self.editor is not None:
             return
-        ed = QPlainTextEdit(self._editor_container)
+        ed = PasteEscapedNewlineTextEdit(self._editor_container)
         ed.setFont(self._editor_font)
         _set_hard_newline_markers(ed, False)
         self._load_editor_lines_from_segment()
