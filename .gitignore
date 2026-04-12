@@ -7,3 +7,4 @@ __pycache__/
 *.pyc
 *state.json
 todo.md
+AGENTS.md
