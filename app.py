@@ -5031,9 +5031,11 @@ class DialogueVisualEditor(
         changed_entries = 0
         translated_entries = 0
         map_changed = False
-        for session in self.sessions.values():
+        touched_paths: set[Path] = set()
+        for path, session in self.sessions.items():
             if self._is_name_index_session(session):
                 continue
+            session_touched = False
             for segment in session.segments:
                 if not segment.is_structural_dialogue:
                     continue
@@ -5063,6 +5065,7 @@ class DialogueVisualEditor(
                     segment.disable_line1_speaker_inference = False
                     segment.force_line1_speaker_inference = True
                     changed_entries += 1
+                    session_touched = True
 
                 if (
                     suggested_translation
@@ -5070,12 +5073,22 @@ class DialogueVisualEditor(
                 ):
                     segment.translation_speaker = suggested_translation
                     translated_entries += 1
+                    session_touched = True
+            if session_touched:
+                touched_paths.add(path)
 
         if suggested_translation:
             current_map_value = self.speaker_translation_map.get(normalized_target, "").strip()
             if current_map_value != suggested_translation:
                 self.speaker_translation_map[normalized_target] = suggested_translation
                 map_changed = True
+                if not touched_paths and self.current_path is not None:
+                    touched_paths.add(self.current_path)
+
+        for path in touched_paths:
+            session = self.sessions.get(path)
+            if session is not None:
+                self._refresh_dirty_state(session)
 
         if (changed_entries > 0 or translated_entries > 0 or map_changed) and self.current_path is not None:
             current_session = self.sessions.get(self.current_path)

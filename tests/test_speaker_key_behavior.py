@@ -169,6 +169,7 @@ class _SpeakerInferenceCandidateHarness:
         self.current_path: Path | None = None
         self.open_calls: list[tuple[Path, str, str]] = []
         self.render_calls = 0
+        self.refresh_dirty_paths: list[Path] = []
         self._status_messages: list[str] = []
         self.speaker_translation_map: dict[str, str] = {}
         segment_a = DialogueSegment(
@@ -337,6 +338,9 @@ class _SpeakerInferenceCandidateHarness:
         _ = preserve_scroll
         _ = start_at_top
         self.render_calls += 1
+
+    def _refresh_dirty_state(self, session: FileSession) -> None:
+        self.refresh_dirty_paths.append(session.path)
 
     def statusBar(self) -> Any:
         return SimpleNamespace(showMessage=lambda message: self._status_messages.append(message))
@@ -580,6 +584,7 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         self.assertEqual(segments[0].translation_speaker, "Aki")
         self.assertEqual(segments[1].translation_speaker, "Aki")
         self.assertEqual(harness.speaker_translation_map.get("Hero", ""), "Aki")
+        self.assertEqual(harness.refresh_dirty_paths, [harness.path_a])
         self.assertEqual(harness.render_calls, 1)
 
     def test_jump_to_speaker_candidate_entry_opens_target_file(self) -> None:
