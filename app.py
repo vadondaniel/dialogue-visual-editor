@@ -26,6 +26,7 @@ from PySide6.QtGui import (
     QIcon,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -158,11 +159,13 @@ except ImportError:
 
 try:
     from .helpers.core.project_path_utils import (
+        project_root_folder_for_data_folder,
         project_fallback_title_from_data_folder,
         resolve_project_data_folder,
     )
 except ImportError:
     from helpers.core.project_path_utils import (
+        project_root_folder_for_data_folder,
         project_fallback_title_from_data_folder,
         resolve_project_data_folder,
     )
@@ -189,6 +192,8 @@ except ImportError:
 BlockWidgetType = DialogueBlockWidget | ItemNameDescriptionWidget
 FILE_LIST_SECTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 FILE_LIST_SCOPE_ROLE = int(Qt.ItemDataRole.UserRole) + 2
+RECENT_PROJECT_ITEM_ROLE = int(Qt.ItemDataRole.UserRole) + 3
+RECENT_PROJECTS_SUBMENU_LIMIT = 12
 logger = logging.getLogger(__name__)
 
 
@@ -338,6 +343,7 @@ class DialogueVisualEditor(
         self.control_mismatch_ignored_entries: dict[tuple[str, str], dict[str, str]] = {}
         self.translation_state_path: Optional[Path] = None
         self.last_folder_path = ""
+        self.recent_projects: list[dict[str, str]] = []
         self.detected_rpg_engine = "unknown"
         self.detected_message_font_size = _MV_DEFAULT_MESSAGE_FONT_SIZE
         self.detected_message_font_source = "default"
@@ -376,6 +382,8 @@ class DialogueVisualEditor(
         self._settings_translation_project_source_action: Optional[QAction] = None
         self._settings_translation_rename_profile_action: Optional[QAction] = None
         self._settings_translation_delete_profile_action: Optional[QAction] = None
+        self._file_previous_projects_menu: Optional[QMenu] = None
+        self._file_previous_projects_show_all_action: Optional[QAction] = None
         self.audit_tabs: Optional[QTabWidget] = None
         self.audit_window: Optional[QDialog] = None
         self.audit_search_query_edit: Optional[QLineEdit] = None
@@ -1391,6 +1399,9 @@ class DialogueVisualEditor(
         reload_folder_action = QAction("Reload Folder", self)
         reload_folder_action.triggered.connect(self._reload_folder_from_text)
         file_menu.addAction(reload_folder_action)
+
+        self._file_previous_projects_menu = file_menu.addMenu("Previous Projects")
+        self._rebuild_previous_projects_menu()
 
         file_menu.addSeparator()
         self.save_btn = QAction("Save", self)
@@ -5508,12 +5519,346 @@ class DialogueVisualEditor(
             project_title = self.data_dir.name
         dirty_suffix = " *" if any(session.dirty for session in self.sessions.values()) else ""
         self.setWindowTitle(f"{APP_TITLE} | {project_title}{dirty_suffix}")
+        self._record_recent_project_from_data_folder(
+            self.data_dir,
+            last_seen_title=project_title,
+        )
 
     def _project_state_key(self, folder: Path) -> str:
         try:
             return str(folder.resolve())
         except Exception:
             return str(folder)
+
+    def _recent_project_entry_from_data_folder(
+        self,
+        data_folder: Path,
+        *,
+        validate_exists: bool = True,
+        last_seen_title: str = "",
+    ) -> Optional[dict[str, str]]:
+        try:
+            resolved_data_folder = data_folder.resolve()
+        except Exception:
+            resolved_data_folder = data_folder
+        if validate_exists and (not resolved_data_folder.exists() or not resolved_data_folder.is_dir()):
+            return None
+
+        root_folder = project_root_folder_for_data_folder(resolved_data_folder)
+        try:
+            resolved_root_folder = root_folder.resolve()
+        except Exception:
+            resolved_root_folder = root_folder
+        if validate_exists and (not resolved_root_folder.exists() or not resolved_root_folder.is_dir()):
+            return None
+
+        resolved_data_for_root = resolve_project_data_folder(resolved_root_folder)
+        try:
+            canonical_data_folder = resolved_data_for_root.resolve()
+        except Exception:
+            canonical_data_folder = resolved_data_for_root
+        if validate_exists and (not canonical_data_folder.exists() or not canonical_data_folder.is_dir()):
+            return None
+
+        entry = {
+            "root_folder": str(resolved_root_folder),
+            "data_folder": str(canonical_data_folder),
+        }
+        title = last_seen_title.strip()
+        if title:
+            entry["last_seen_title"] = title
+        return entry
+
+    def _normalize_recent_projects_payload(
+        self,
+        raw: Any,
+        *,
+        validate_exists: bool = True,
+    ) -> list[dict[str, str]]:
+        if not isinstance(raw, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        seen_roots: set[str] = set()
+        for row in raw:
+            if not isinstance(row, dict):
+                continue
+            root_raw = row.get("root_folder")
+            data_raw = row.get("data_folder")
+            last_seen_title_raw = row.get("last_seen_title")
+            if not isinstance(root_raw, str) or not isinstance(data_raw, str):
+                continue
+            root_text = root_raw.strip()
+            data_text = data_raw.strip()
+            last_seen_title = (
+                last_seen_title_raw.strip()
+                if isinstance(last_seen_title_raw, str)
+                else ""
+            )
+            if not root_text or not data_text:
+                continue
+            entry = self._recent_project_entry_from_data_folder(
+                Path(data_text),
+                validate_exists=validate_exists,
+                last_seen_title=last_seen_title,
+            )
+            if entry is None:
+                root_path = Path(root_text)
+                try:
+                    canonical_root = root_path.resolve()
+                except Exception:
+                    canonical_root = root_path
+                if validate_exists and (not canonical_root.exists() or not canonical_root.is_dir()):
+                    continue
+                resolved_data = resolve_project_data_folder(canonical_root)
+                try:
+                    canonical_data = resolved_data.resolve()
+                except Exception:
+                    canonical_data = resolved_data
+                if validate_exists and (not canonical_data.exists() or not canonical_data.is_dir()):
+                    continue
+                entry = {
+                    "root_folder": str(canonical_root),
+                    "data_folder": str(canonical_data),
+                }
+                if last_seen_title:
+                    entry["last_seen_title"] = last_seen_title
+            root_key = entry.get("root_folder", "").strip()
+            if not root_key or root_key in seen_roots:
+                continue
+            seen_roots.add(root_key)
+            normalized.append(entry)
+        return normalized
+
+    def _prune_recent_projects(
+        self,
+        *,
+        persist: bool = False,
+        rebuild_menu: bool = True,
+    ) -> bool:
+        normalized = self._normalize_recent_projects_payload(
+            self.recent_projects,
+            validate_exists=True,
+        )
+        changed = normalized != self.recent_projects
+        if changed:
+            self.recent_projects = normalized
+            if persist:
+                self._save_ui_state()
+        if rebuild_menu:
+            self._rebuild_previous_projects_menu()
+        return changed
+
+    def _record_recent_project_from_data_folder(
+        self,
+        data_folder: Path,
+        *,
+        last_seen_title: str = "",
+    ) -> None:
+        entry = self._recent_project_entry_from_data_folder(
+            data_folder,
+            validate_exists=True,
+            last_seen_title=last_seen_title,
+        )
+        if entry is None:
+            return
+        root_key = entry.get("root_folder", "").strip()
+        if not root_key:
+            return
+        next_entries: list[dict[str, str]] = [entry]
+        for existing in self.recent_projects:
+            existing_root = str(existing.get("root_folder", "")).strip()
+            if existing_root == root_key:
+                continue
+            next_entries.append(existing)
+        if next_entries == self.recent_projects:
+            return
+        self.recent_projects = next_entries
+        self._rebuild_previous_projects_menu()
+
+    def _remove_recent_project(
+        self,
+        root_folder: str,
+        *,
+        persist: bool = True,
+        rebuild_menu: bool = True,
+    ) -> bool:
+        root_key = root_folder.strip()
+        if not root_key:
+            return False
+        filtered = [
+            row
+            for row in self.recent_projects
+            if str(row.get("root_folder", "")).strip() != root_key
+        ]
+        if filtered == self.recent_projects:
+            return False
+        self.recent_projects = filtered
+        if persist:
+            self._save_ui_state()
+        if rebuild_menu:
+            self._rebuild_previous_projects_menu()
+        return True
+
+    def _recent_projects_for_menu(self) -> list[dict[str, str]]:
+        return list(self.recent_projects[:RECENT_PROJECTS_SUBMENU_LIMIT])
+
+    def _recent_project_title(self, entry: dict[str, str]) -> str:
+        explicit_title = str(entry.get("last_seen_title", "")).strip()
+        if explicit_title:
+            return explicit_title
+        data_folder_text = str(entry.get("data_folder", "")).strip()
+        if data_folder_text:
+            data_folder_path = Path(data_folder_text)
+            if data_folder_path.exists() and data_folder_path.is_dir():
+                title = project_fallback_title_from_data_folder(data_folder_path).strip()
+                if title:
+                    return title
+        root_folder_text = str(entry.get("root_folder", "")).strip()
+        if root_folder_text:
+            root_name = Path(root_folder_text).name.strip()
+            if root_name:
+                return root_name
+            return root_folder_text
+        return "Unknown Project"
+
+    def _recent_project_menu_label(self, entry: dict[str, str]) -> str:
+        return self._recent_project_title(entry)
+
+    def _open_recent_project(self, root_folder: str) -> None:
+        self._prune_recent_projects(persist=True, rebuild_menu=True)
+        root_key = root_folder.strip()
+        if not root_key:
+            return
+        candidate = Path(root_key)
+        if not candidate.exists() or not candidate.is_dir():
+            self._remove_recent_project(root_key, persist=True, rebuild_menu=True)
+            QMessageBox.warning(
+                self,
+                "Missing folder",
+                f"Project folder is no longer available:\n{root_key}",
+            )
+            return
+        self._load_data_folder(candidate)
+
+    def _show_recent_projects_dialog(self) -> None:
+        self._prune_recent_projects(persist=True, rebuild_menu=True)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Previous Projects")
+        dialog.resize(840, 460)
+        root_layout = QVBoxLayout(dialog)
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(8)
+
+        list_widget = QListWidget(dialog)
+        list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        root_layout.addWidget(list_widget, 1)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        open_button = buttons.button(QDialogButtonBox.StandardButton.Open)
+        if open_button is not None:
+            open_button.setDefault(True)
+            open_button.setEnabled(False)
+        root_layout.addWidget(buttons)
+
+        def current_root_folder() -> str:
+            item = list_widget.currentItem()
+            if item is None:
+                return ""
+            raw_value = item.data(RECENT_PROJECT_ITEM_ROLE)
+            if not isinstance(raw_value, str):
+                return ""
+            return raw_value.strip()
+
+        def refresh_open_enabled() -> None:
+            if open_button is None:
+                return
+            open_button.setEnabled(bool(current_root_folder()))
+
+        def populate_items() -> None:
+            list_widget.clear()
+            for entry in self.recent_projects:
+                title = self._recent_project_title(entry)
+                root_path = str(entry.get("root_folder", "")).strip()
+                if not root_path:
+                    continue
+                item = QListWidgetItem(f"{title}\n{root_path}")
+                item.setToolTip(root_path)
+                item.setData(RECENT_PROJECT_ITEM_ROLE, root_path)
+                list_widget.addItem(item)
+            if list_widget.count() > 0:
+                list_widget.setCurrentRow(0)
+            refresh_open_enabled()
+
+        def remove_item_at(item: QListWidgetItem) -> None:
+            raw_root = item.data(RECENT_PROJECT_ITEM_ROLE)
+            if not isinstance(raw_root, str):
+                return
+            root_path = raw_root.strip()
+            if not root_path:
+                return
+            if not self._remove_recent_project(root_path, persist=True, rebuild_menu=True):
+                return
+            row = list_widget.row(item)
+            list_widget.takeItem(row)
+            if list_widget.count() > 0:
+                list_widget.setCurrentRow(min(row, list_widget.count() - 1))
+            refresh_open_enabled()
+
+        def on_context_menu(pos: QPoint) -> None:
+            item = list_widget.itemAt(pos)
+            if item is None:
+                return
+            menu = QMenu(list_widget)
+            remove_action = menu.addAction("Remove from history")
+            chosen = menu.exec(list_widget.viewport().mapToGlobal(pos))
+            if chosen is remove_action:
+                remove_item_at(item)
+
+        list_widget.customContextMenuRequested.connect(on_context_menu)
+        list_widget.itemSelectionChanged.connect(refresh_open_enabled)
+        list_widget.itemDoubleClicked.connect(lambda _item: dialog.accept())
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+
+        populate_items()
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return
+        target_root = current_root_folder()
+        if target_root:
+            self._open_recent_project(target_root)
+
+    def _rebuild_previous_projects_menu(self) -> None:
+        menu = self._file_previous_projects_menu
+        if menu is None:
+            return
+        self._prune_recent_projects(persist=False, rebuild_menu=False)
+        menu.clear()
+
+        for entry in self._recent_projects_for_menu():
+            root_folder = str(entry.get("root_folder", "")).strip()
+            if not root_folder:
+                continue
+            action = QAction(self._recent_project_menu_label(entry), menu)
+            action.setToolTip(root_folder)
+            action.triggered.connect(
+                lambda _checked=False, root=root_folder: self._open_recent_project(root)
+            )
+            menu.addAction(action)
+
+        if not menu.actions():
+            empty_action = QAction("No previous projects", menu)
+            empty_action.setEnabled(False)
+            menu.addAction(empty_action)
+
+        menu.addSeparator()
+        show_all_action = QAction("Show All...", menu)
+        show_all_action.triggered.connect(self._show_recent_projects_dialog)
+        menu.addAction(show_all_action)
+        self._file_previous_projects_show_all_action = show_all_action
 
     def _candidate_js_dirs(self, folder: Path) -> list[Path]:
         candidate_js_dirs: list[Path] = []
@@ -6276,6 +6621,7 @@ class DialogueVisualEditor(
         last_folder = ""
         loaded_global_settings: dict[str, Any] = {}
         loaded_project_settings: dict[str, dict[str, Any]] = {}
+        loaded_recent_projects: list[dict[str, str]] = []
 
         try:
             if self.ui_state_path.exists():
@@ -6301,11 +6647,16 @@ class DialogueVisualEditor(
                         for key, value in raw_project_settings.items():
                             if isinstance(key, str) and isinstance(value, dict):
                                 loaded_project_settings[key] = value
+                    loaded_recent_projects = self._normalize_recent_projects_payload(
+                        loaded.get("recent_projects"),
+                        validate_exists=True,
+                    )
         except Exception:
             logger.exception("Failed to load UI state from '%s'.", self.ui_state_path)
             return
 
         self.legacy_project_ui_settings_by_folder = loaded_project_settings
+        self.recent_projects = loaded_recent_projects
         if loaded_global_settings:
             self._apply_global_ui_settings(loaded_global_settings, rerender=False)
         self.remember_folder_check.blockSignals(True)
@@ -6313,6 +6664,7 @@ class DialogueVisualEditor(
         self.remember_folder_check.blockSignals(False)
         self._sync_settings_toggle_actions_from_controls()
         self.last_folder_path = last_folder
+        self._rebuild_previous_projects_menu()
 
         if remember_last_folder and last_folder:
             candidate = Path(last_folder)
@@ -6332,6 +6684,7 @@ class DialogueVisualEditor(
             "remember_last_folder": remember_last_folder,
             "last_folder": last_folder,
             "global_settings": self._collect_global_ui_settings(),
+            "recent_projects": list(self.recent_projects),
         }
         try:
             with self.ui_state_path.open("w", encoding="utf-8") as dst:
