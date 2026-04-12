@@ -1911,6 +1911,16 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if self._is_translator_mode():
             segment.translation_lines = self._normalize_translation_lines(
                 lines)
+            sync_actor_duplicates = getattr(
+                self,
+                "_sync_duplicate_actor_name_translations_for_segment",
+                None,
+            )
+            if callable(sync_actor_duplicates):
+                try:
+                    sync_actor_duplicates(session, segment)
+                except Exception:
+                    pass
         else:
             segment.lines = list(lines)
             segment.source_lines = list(segment.lines)
@@ -2703,6 +2713,16 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                     self.speaker_translation_map[
                         self._normalize_speaker_key(speaker_key)
                     ] = speaker_after
+            sync_actor_duplicates = getattr(
+                self,
+                "_sync_duplicate_actor_name_translations_for_segment",
+                None,
+            )
+            if callable(sync_actor_duplicates):
+                try:
+                    sync_actor_duplicates(session, segment)
+                except Exception:
+                    pass
             self._refresh_dirty_state(session)
             if not self._refresh_after_text_reset_without_full_rerender(
                 session,

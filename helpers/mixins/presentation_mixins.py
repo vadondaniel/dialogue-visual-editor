@@ -353,12 +353,51 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
                 return cleaned
         return "name"
 
+    def _actor_duplicate_name_key_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> str:
+        if not self._is_actor_index_session(session):
+            return ""
+        if bool(getattr(segment, "is_actor_name_alias", False)):
+            return ""
+        if self._name_index_field_from_uid(segment.uid) != "name":
+            return ""
+        source_text = "\n".join(self._segment_source_lines_for_display(segment))
+        visible = strip_control_tokens(source_text).replace("\u3000", " ").strip()
+        return visible.casefold()
+
+    def _sync_duplicate_actor_name_translations_for_segment(
+        self,
+        session: FileSession,
+        segment: DialogueSegment,
+    ) -> int:
+        source_key = self._actor_duplicate_name_key_for_segment(session, segment)
+        if not source_key:
+            return 0
+        target_lines = self._normalize_translation_lines(segment.translation_lines)
+        updated = 0
+        for candidate in session.segments:
+            if candidate is segment:
+                continue
+            if self._actor_duplicate_name_key_for_segment(session, candidate) != source_key:
+                continue
+            current_lines = self._normalize_translation_lines(candidate.translation_lines)
+            if current_lines == target_lines:
+                continue
+            candidate.translation_lines = list(target_lines)
+            updated += 1
+        return updated
+
     def _matches_name_token(self, text: str) -> bool:
         return bool(NAME_TOKEN_RE.fullmatch(text or ""))
 
     def _actor_name_maps(self) -> tuple[dict[int, str], dict[int, str]]:
         jp_by_id: dict[int, str] = {}
         en_by_id: dict[int, str] = {}
+        rows: list[tuple[int, str, str, str]] = []
+        translated_by_duplicate_key: dict[str, str] = {}
         actor_session: Optional[FileSession] = None
         for session in self.sessions.values():
             if self._is_actor_index_session(session):
@@ -390,6 +429,23 @@ class PresentationHelpersMixin(_EditorHostTypingFallback):
                 ).strip()
             if translated_name:
                 en_by_id[actor_id] = translated_name
+            duplicate_key = self._actor_duplicate_name_key_for_segment(
+                actor_session,
+                segment,
+            )
+            if duplicate_key:
+                rows.append((actor_id, source_name, duplicate_key, translated_name))
+                if translated_name:
+                    translated_by_duplicate_key.setdefault(
+                        duplicate_key,
+                        translated_name,
+                    )
+        for actor_id, _source_name, duplicate_key, translated_name in rows:
+            if translated_name or actor_id in en_by_id:
+                continue
+            fallback_name = translated_by_duplicate_key.get(duplicate_key, "").strip()
+            if fallback_name:
+                en_by_id[actor_id] = fallback_name
         return jp_by_id, en_by_id
 
     def _resolve_name_tokens_in_text(

@@ -1113,6 +1113,27 @@ class MassTranslateDialog(QDialog):
         segment.lines = list(normalized)
         segment.source_lines = list(normalized)
 
+    def _sync_duplicate_actor_name_targets(
+        self,
+        path: Path,
+        segment: DialogueSegment,
+    ) -> int:
+        sync_resolver = getattr(
+            self.editor,
+            "_sync_duplicate_actor_name_translations_for_segment",
+            None,
+        )
+        if not callable(sync_resolver):
+            return 0
+        session = self.editor.sessions.get(path)
+        if session is None:
+            return 0
+        try:
+            synced_raw = sync_resolver(session, segment)
+        except Exception:
+            return 0
+        return synced_raw if isinstance(synced_raw, int) else 0
+
     def _segment_has_translation(self, segment: DialogueSegment) -> bool:
         existing_lines = self.editor._normalize_translation_lines(segment.translation_lines)
         return bool("\n".join(existing_lines).strip())
@@ -2635,6 +2656,8 @@ class MassTranslateDialog(QDialog):
                         self._set_segment_target_lines(segment, stored_lines)
                         touched_paths.add(path)
                         dialogue_applied += 1
+                    if self._sync_duplicate_actor_name_targets(path, segment) > 0:
+                        touched_paths.add(path)
                 continue
 
             if entry_id.startswith("M:") or entry_id.startswith("P:"):
@@ -2657,6 +2680,8 @@ class MassTranslateDialog(QDialog):
                             misc_applied += 1
                         else:
                             speaker_segments_applied += 1
+                    if self._sync_duplicate_actor_name_targets(path, segment) > 0:
+                        touched_paths.add(path)
                 continue
 
             if entry_id.startswith("S:"):

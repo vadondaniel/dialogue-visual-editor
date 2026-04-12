@@ -440,6 +440,41 @@ class AuditConsistencyMixinTests(unittest.TestCase):
         translations = {str(entry["translation"]) for entry in groups_all[0]["entries"]}
         self.assertEqual(translations, {"Yuya"})
 
+    def test_collect_groups_treats_duplicate_actor_name_translation_as_non_empty(self) -> None:
+        harness = _Harness()
+        actor_path = Path("Actors.json")
+        harness.file_paths = [actor_path]
+        session = FileSession(
+            path=actor_path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("Actors.json:A:1", "ユウヤ", "Yuya", segment_kind="name_index"),
+                _segment("Actors.json:A:2", "ユウヤ", "", segment_kind="name_index"),
+            ],
+        )
+        setattr(session, "is_name_index_session", True)
+        setattr(session, "name_index_kind", "actor")
+        setattr(session, "name_index_label", "Actor")
+        harness.sessions[actor_path] = session
+
+        groups_inconsistent = harness._collect_audit_consistency_groups(
+            only_inconsistent=True,
+            dialogue_only=False,
+            sort_mode="source_order",
+        )
+        groups_all = harness._collect_audit_consistency_groups(
+            only_inconsistent=False,
+            dialogue_only=False,
+            sort_mode="source_order",
+        )
+
+        self.assertEqual(groups_inconsistent, [])
+        self.assertEqual(len(groups_all), 1)
+        self.assertEqual(int(groups_all[0]["variant_count"]), 1)
+        translations = {str(entry["translation"]) for entry in groups_all[0]["entries"]}
+        self.assertEqual(translations, {"Yuya"})
+
     def test_collect_groups_treats_peer_actor_alias_translation_as_non_empty(self) -> None:
         harness = _Harness()
         actor_path = Path("Actors.json")

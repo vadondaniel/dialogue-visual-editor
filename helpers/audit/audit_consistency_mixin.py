@@ -205,8 +205,6 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         tl_text = "\n".join(self._consistency_translation_lines_for_segment(segment)).strip()
         if tl_text:
             return tl_text
-        if not bool(getattr(segment, "is_actor_name_alias", False)):
-            return tl_text
 
         is_actor_session_resolver = getattr(self, "_is_actor_index_session", None)
         is_actor_session = False
@@ -219,6 +217,56 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
             kind = str(getattr(session, "name_index_kind", "")).strip().lower()
             is_actor_session = kind == "actor"
         if not is_actor_session:
+            return tl_text
+
+        duplicate_key_resolver = getattr(
+            self,
+            "_actor_duplicate_name_key_for_segment",
+            None,
+        )
+        field_resolver = getattr(self, "_name_index_field_from_uid", None)
+
+        def duplicate_key_for(candidate: DialogueSegment) -> str:
+            if callable(duplicate_key_resolver):
+                try:
+                    duplicate_key_raw = duplicate_key_resolver(session, candidate)
+                except Exception:
+                    duplicate_key_raw = ""
+                if isinstance(duplicate_key_raw, str) and duplicate_key_raw.strip():
+                    return duplicate_key_raw.strip()
+            if bool(getattr(candidate, "is_actor_name_alias", False)):
+                return ""
+            field_name = "name"
+            if callable(field_resolver):
+                try:
+                    field_raw = field_resolver(candidate.uid)
+                except Exception:
+                    field_raw = "name"
+                if isinstance(field_raw, str) and field_raw.strip():
+                    field_name = field_raw.strip().lower()
+            if field_name != "name":
+                return ""
+            return "\n".join(
+                self._consistency_source_lines_for_segment(candidate)
+            ).strip().casefold()
+
+        duplicate_key = duplicate_key_for(segment)
+        if duplicate_key:
+            peer_translations: list[str] = []
+            for candidate in session.segments:
+                if candidate is segment:
+                    continue
+                if duplicate_key_for(candidate) != duplicate_key:
+                    continue
+                candidate_tl = "\n".join(
+                    self._consistency_translation_lines_for_segment(candidate)
+                ).strip()
+                if candidate_tl:
+                    peer_translations.append(candidate_tl)
+            if peer_translations:
+                return Counter(peer_translations).most_common(1)[0][0]
+
+        if not bool(getattr(segment, "is_actor_name_alias", False)):
             return tl_text
 
         actor_id = self._consistency_actor_id_for_segment(segment)

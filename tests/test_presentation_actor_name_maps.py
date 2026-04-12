@@ -62,6 +62,37 @@ class PresentationActorNameMapsTests(unittest.TestCase):
 
         self.assertEqual(jp_by_id.get(1), "Harold")
 
+    def test_actor_name_maps_reuse_duplicate_actor_translation(self) -> None:
+        first = _actor_segment("Actors.json:A:1", "Harold")
+        second = _actor_segment("Actors.json:A:2", "Harold")
+        first.translation_lines = ["Dane"]
+        harness = _Harness([first, second])
+        session = harness.sessions[Path("Actors.json")]
+        setattr(session, "is_actor_index_session", True)
+        setattr(session, "name_index_kind", "actor")
+
+        _jp_by_id, en_by_id = harness._actor_name_maps()
+
+        self.assertEqual(en_by_id.get(1), "Dane")
+        self.assertEqual(en_by_id.get(2), "Dane")
+
+    def test_sync_duplicate_actor_name_translations_updates_hidden_peer(self) -> None:
+        first = _actor_segment("Actors.json:A:1", "Harold")
+        second = _actor_segment("Actors.json:A:2", "Harold")
+        first.translation_lines = ["Dane"]
+        harness = _Harness([first, second])
+        session = harness.sessions[Path("Actors.json")]
+        setattr(session, "is_actor_index_session", True)
+        setattr(session, "name_index_kind", "actor")
+
+        updated = harness._sync_duplicate_actor_name_translations_for_segment(
+            session,
+            first,
+        )
+
+        self.assertEqual(updated, 1)
+        self.assertEqual(second.translation_lines, ["Dane"])
+
 
 if __name__ == "__main__":
     unittest.main()
