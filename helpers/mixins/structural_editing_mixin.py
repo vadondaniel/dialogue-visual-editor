@@ -2541,23 +2541,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if translator_mode:
             kept_tl_lines = list(kept_active_lines)
             moved_tl_lines = list(moved_active_lines)
-            split_index = len(kept_tl_lines)
-            kept_source_lines = (
-                list(source_lines_before[:split_index])
-                if split_index > 0
-                else [""]
-            )
-            moved_source_lines = list(source_lines_before[split_index:])
-            if not moved_source_lines:
-                moved_source_lines = [""]
-            kept_source_lines, moved_source_lines = (
-                self._sync_source_split_color_continuity_from_translation(
-                    kept_source_lines,
-                    moved_source_lines,
-                    kept_tl_lines,
-                    moved_tl_lines,
-                )
-            )
+            # Translator-mode overflow split must not split JP source storage.
+            kept_source_lines = list(source_segment.lines) if source_segment.lines else [""]
+            moved_source_lines = [""]
         else:
             kept_source_lines = list(kept_active_lines)
             moved_source_lines = list(moved_active_lines)
@@ -2605,7 +2591,11 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         )
 
         if translator_mode:
-            source_segment.source_lines = list(kept_source_lines)
+            source_segment.source_lines = list(
+                source_segment.lines
+                if source_segment.lines
+                else (source_lines_before if source_lines_before else [""])
+            )
         else:
             source_segment.lines = list(kept_source_lines)
             source_segment.source_lines = list(source_segment.lines)

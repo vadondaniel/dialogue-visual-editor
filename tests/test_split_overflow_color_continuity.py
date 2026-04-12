@@ -14,6 +14,14 @@ class _Harness(StructuralEditingMixin):
     pass
 
 
+class _Spin:
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def value(self) -> int:
+        return self._value
+
+
 class _Check:
     def __init__(self, checked: bool) -> None:
         self._checked = checked
@@ -106,7 +114,121 @@ class _ProjectionHarness(StructuralEditingMixin):
         return list(visible_lines) if visible_lines else [""]
 
 
+class _SplitOverflowHarness(StructuralEditingMixin):
+    def __init__(self) -> None:
+        self.current_path: Path | None = Path("Map001.json")
+        self.sessions: dict[Path, FileSession] = {}
+        self.current_segment_lookup: dict[str, DialogueSegment] = {}
+        self.infer_speaker_check = _Check(False)
+        self.max_lines_spin = _Spin(3)
+        self.structural_undo_stack: list[Any] = []
+        self.structural_redo_stack: list[Any] = []
+        self.segment_uid_counter = 0
+        self.translation_uid_counter = 0
+        self._status_bar = _StatusBar()
+
+    @staticmethod
+    def _is_translator_mode() -> bool:
+        return True
+
+    @staticmethod
+    def _normalize_translation_lines(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) if item is not None else "" for item in value] or [""]
+        if isinstance(value, str):
+            return value.split("\n")
+        return [""]
+
+    @staticmethod
+    def _segment_source_lines_for_display(segment: DialogueSegment) -> list[str]:
+        return list(segment.source_lines or segment.original_lines or segment.lines or [""])
+
+    @staticmethod
+    def _inferred_speaker_from_segment_line1(_segment: DialogueSegment) -> str:
+        return ""
+
+    @staticmethod
+    def _speaker_key_for_segment(_segment: DialogueSegment) -> str:
+        return "(none)"
+
+    @staticmethod
+    def _speaker_translation_for_key(_speaker_key: str) -> str:
+        return ""
+
+    def _new_translation_uid(self) -> str:
+        self.translation_uid_counter += 1
+        return f"TL:{self.translation_uid_counter}"
+
+    @staticmethod
+    def _refresh_dirty_state(_session: FileSession) -> None:
+        return None
+
+    def _refresh_after_structure_change_without_full_rerender(
+        self,
+        _session: FileSession,
+        *,
+        focus_uid: str | None,
+        preserve_scroll: bool,
+    ) -> bool:
+        _ = (focus_uid, preserve_scroll)
+        return True
+
+    @staticmethod
+    def _render_session(
+        _session: FileSession,
+        *,
+        focus_uid: str | None,
+        preserve_scroll: bool,
+    ) -> None:
+        _ = (focus_uid, preserve_scroll)
+        return None
+
+    def statusBar(self) -> _StatusBar:
+        return self._status_bar
+
+
 class SplitOverflowColorContinuityTests(unittest.TestCase):
+    def test_translator_split_overflow_keeps_anchor_source_lines_unsplit(self) -> None:
+        harness = _SplitOverflowHarness()
+        source_lines = ["JP line 1", "JP line 2", "JP line 3", "JP line 4"]
+        translation_lines = ["TL line 1", "TL line 2", "TL line 3", "TL line 4"]
+        anchor = DialogueSegment(
+            uid="Map001.json:L0:0",
+            context="ctx",
+            code101={},
+            lines=list(source_lines),
+            original_lines=list(source_lines),
+            source_lines=list(source_lines),
+            code401_template={},
+            translation_lines=list(translation_lines),
+            original_translation_lines=list(translation_lines),
+            segment_kind="dialogue",
+        )
+        assert harness.current_path is not None
+        session = FileSession(
+            path=harness.current_path,
+            data={},
+            bundles=[],
+            segments=[anchor],
+        )
+        harness.sessions[session.path] = session
+        harness.current_segment_lookup = {anchor.uid: anchor}
+
+        harness._on_split_overflow_requested(anchor.uid)
+
+        self.assertEqual(len(session.segments), 2)
+        kept = session.segments[0]
+        moved = session.segments[1]
+        self.assertEqual(kept.lines, source_lines)
+        self.assertEqual(kept.source_lines, source_lines)
+        self.assertTrue(moved.translation_only)
+        self.assertEqual(moved.lines, [""])
+        self.assertEqual(moved.source_lines, [""])
+        self.assertEqual(
+            kept.translation_lines + moved.translation_lines,
+            translation_lines,
+        )
+
     def test_smart_collapse_eligibility_includes_tyrano_dialogue(self) -> None:
         harness = _Harness()
         segment = DialogueSegment(
