@@ -7940,6 +7940,35 @@ class DialogueVisualEditor(
             target_uid,
             target_scope,
         ) = problem_targets[target_index]
+        target_session = self.sessions.get(target_path)
+        if target_session is not None:
+            target_segment = next(
+                (candidate for candidate in target_session.segments if candidate.uid == target_uid),
+                None,
+            )
+            if target_segment is not None:
+                plugin_group_resolver = getattr(
+                    self,
+                    "_plugin_group_key_and_title_for_segment",
+                    None,
+                )
+                if callable(plugin_group_resolver):
+                    try:
+                        group_info = plugin_group_resolver(target_path, target_segment)
+                    except Exception:
+                        group_info = None
+                    if (
+                        isinstance(group_info, tuple)
+                        and len(group_info) == 2
+                        and isinstance(group_info[0], str)
+                        and group_info[0]
+                    ):
+                        set_collapsed = getattr(self, "_set_plugin_group_collapsed", None)
+                        if callable(set_collapsed):
+                            try:
+                                set_collapsed(group_info[0], False)
+                            except Exception:
+                                pass
         self._last_problem_target = problem_targets[target_index]
         self._open_file(target_path, focus_uid=target_uid, view_scope=target_scope)
         self.statusBar().showMessage(

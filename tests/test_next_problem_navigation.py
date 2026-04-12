@@ -30,6 +30,7 @@ class _NextProblemHarness:
         self.problem_uids: set[str] = set()
         self.file_view_scope_by_path: dict[Path, str] = {}
         self.hidden_uids: set[str] = set()
+        self.plugin_group_collapsed: dict[str, bool] = {}
         self._last_problem_target: tuple[int, int, int, Path, str, str] | None = None
         self._status_bar = _StatusBarHarness()
         self.open_calls: list[tuple[Path, str | None, str | None]] = []
@@ -58,6 +59,19 @@ class _NextProblemHarness:
             "note_text",
             "actor_name_alias",
         }
+
+    def _plugin_group_key_and_title_for_segment(
+        self,
+        session_path: Path,
+        segment: DialogueSegment,
+    ) -> tuple[str, str] | None:
+        if segment.segment_kind != "plugin_text":
+            return None
+        group_key = f"{session_path.as_posix()}::plugin::0"
+        return group_key, "Plugin 1"
+
+    def _set_plugin_group_collapsed(self, group_key: str, collapsed: bool) -> None:
+        self.plugin_group_collapsed[group_key] = bool(collapsed)
 
     def _normalized_view_scope_for_path(
         self,
@@ -263,6 +277,28 @@ class NextProblemNavigationTests(unittest.TestCase):
         _call_editor_method("_jump_to_next_problem", harness)
 
         self.assertEqual(harness.open_calls, [(path, "seg-visible", "dialogue")])
+
+    def test_jump_to_next_problem_expands_target_plugin_group(self) -> None:
+        harness = _NextProblemHarness()
+        path = Path("Plugins.json")
+        plugin_segment = _make_segment("seg-plugin", kind="plugin_text")
+        session = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[plugin_segment],
+        )
+        harness.sessions[path] = session
+        harness.file_paths = [path]
+        harness.problem_uids = {"seg-plugin"}
+        harness.plugin_group_collapsed[f"{path.as_posix()}::plugin::0"] = True
+
+        _call_editor_method("_jump_to_next_problem", harness)
+
+        self.assertEqual(harness.open_calls, [(path, "seg-plugin", "misc")])
+        self.assertFalse(
+            harness.plugin_group_collapsed[f"{path.as_posix()}::plugin::0"]
+        )
 
 
 if __name__ == "__main__":
