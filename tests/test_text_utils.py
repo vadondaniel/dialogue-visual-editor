@@ -209,6 +209,25 @@ class TextUtilsTests(unittest.TestCase):
         self.assertEqual(normalized, "No changes here.")
         self.assertEqual(replacements, 0)
 
+    def test_normalize_smart_quotes_keeps_single_quote_depth_when_apostrophe_inside(self) -> None:
+        normalized, replacements = text_utils.normalize_smart_quotes("'I don't.'")
+        self.assertEqual(normalized, "\u2018I don\u2019t.\u2019")
+        self.assertEqual(replacements, 3)
+
+    def test_normalize_smart_quotes_closes_single_quote_in_multiline_dialogue(self) -> None:
+        normalized, replacements = text_utils.normalize_smart_quotes(
+            "\"Heh. 'I ran into someone I didn't want to\n"
+            "see first thing in the morning.'\n"
+            "That is written all over your face.\""
+        )
+        self.assertEqual(
+            normalized,
+            "\u201CHeh. \u2018I ran into someone I didn\u2019t want to\n"
+            "see first thing in the morning.\u2019\n"
+            "That is written all over your face.\u201D",
+        )
+        self.assertEqual(replacements, 5)
+
     def test_visible_length_variable_token_allows_extra_args(self) -> None:
         base_length = text_utils.visible_length(r"\V[5]x")
         self.assertEqual(text_utils.visible_length(r"\V[5,4]x"), base_length)

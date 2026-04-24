@@ -495,10 +495,12 @@ def _smart_quote_convert_segment(
             continue
 
         if char == "'":
+            apostrophe_inside_word = False
             if _smart_quote_is_word_char(previous_char) and _smart_quote_is_word_char(
                 next_char
             ):
                 converted = "\u2019"
+                apostrophe_inside_word = True
             else:
                 opening_by_prev = _smart_quote_is_likely_opening_context(
                     previous_char,
@@ -514,10 +516,11 @@ def _smart_quote_convert_segment(
 
             result.append(converted)
             replacements += 1
-            if converted == "\u2018":
-                single_depth += 1
-            else:
-                single_depth = max(0, single_depth - 1)
+            if not apostrophe_inside_word:
+                if converted == "\u2018":
+                    single_depth += 1
+                else:
+                    single_depth = max(0, single_depth - 1)
             previous_char = converted
             previous_non_space = converted
             idx += 1
