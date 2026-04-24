@@ -282,6 +282,82 @@ class SplitOverflowColorContinuityTests(unittest.TestCase):
         self.assertEqual(kept, [r"\C[3]Hero", r"\C[2]Line A\C[0]"])
         self.assertEqual(moved, [r"\C[2]Line B"])
 
+    def test_applies_quote_continuity_for_straight_double_quotes(self) -> None:
+        harness = _Harness()
+
+        kept, moved = StructuralEditingMixin._apply_split_overflow_quote_continuity(
+            harness,
+            ['"Yeah. This is where the real fight begins.'],
+            ['Rion, Juju, stay sharp."'],
+        )
+
+        self.assertEqual(kept, ['"Yeah. This is where the real fight begins."'])
+        self.assertEqual(moved, ['"Rion, Juju, stay sharp."'])
+
+    def test_applies_quote_continuity_for_curly_double_quotes(self) -> None:
+        harness = _Harness()
+
+        kept, moved = StructuralEditingMixin._apply_split_overflow_quote_continuity(
+            harness,
+            ["“Yeah. This is where the real fight begins."],
+            ["Rion, Juju, stay sharp.”"],
+        )
+
+        self.assertEqual(kept, ["“Yeah. This is where the real fight begins.”"])
+        self.assertEqual(moved, ["“Rion, Juju, stay sharp.”"])
+
+    def test_quote_continuity_ignores_leading_inferred_marker(self) -> None:
+        harness = _Harness()
+
+        kept, moved = StructuralEditingMixin._apply_split_overflow_quote_continuity(
+            harness,
+            [r"\C[2]Hero", "“Stay focused"],
+            ["we move now.”"],
+            ignored_leading_markers=(r"\C[2]Hero",),
+        )
+
+        self.assertEqual(kept, [r"\C[2]Hero", "“Stay focused”"])
+        self.assertEqual(moved, ["“we move now.”"])
+
+    def test_translator_split_overflow_fills_quote_pairing_across_blocks(self) -> None:
+        harness = _SplitOverflowHarness()
+        source_lines = ["JP line 1", "JP line 2", "JP line 3", "JP line 4"]
+        translation_lines = [
+            "“Yeah. This is where the real fight begins.",
+            "Rion, Juju,",
+            "stay sharp.",
+            "Still ready.”",
+        ]
+        anchor = DialogueSegment(
+            uid="Map001.json:L0:0",
+            context="ctx",
+            code101={},
+            lines=list(source_lines),
+            original_lines=list(source_lines),
+            source_lines=list(source_lines),
+            code401_template={},
+            translation_lines=list(translation_lines),
+            original_translation_lines=list(translation_lines),
+            segment_kind="dialogue",
+        )
+        assert harness.current_path is not None
+        session = FileSession(
+            path=harness.current_path,
+            data={},
+            bundles=[],
+            segments=[anchor],
+        )
+        harness.sessions[session.path] = session
+        harness.current_segment_lookup = {anchor.uid: anchor}
+
+        harness._on_split_overflow_requested(anchor.uid)
+
+        self.assertEqual(len(session.segments), 2)
+        kept = session.segments[0]
+        moved = session.segments[1]
+        self.assertEqual(kept.translation_lines[-1], "stay sharp.”")
+        self.assertEqual(moved.translation_lines[0], "“Still ready.”")
+
     def test_projected_smart_collapse_count_respects_scope(self) -> None:
         harness = _ProjectionHarness()
         current_path = Path("Map001.json")

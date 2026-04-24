@@ -35,6 +35,7 @@ from ..core.models import (
     StructuralAction,
 )
 from ..core.text_utils import (
+    CONTROL_TOKEN_RE,
     smart_collapse_lines,
     split_lines_by_sentence_boundary_row_budget,
     total_display_rows,
@@ -108,6 +109,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     _LEADING_COLOR_CODE_PREFIX_RE = re.compile(r"^\s*(?:\\[Cc]\[\d+\])+")
     _COLOR_CODE_AT_LINE_START_RE = re.compile(r"^\s*\\[Cc]\[(\d+)\]")
     _TRAILING_RESET_COLOR_RE = re.compile(r"\\[Cc]\[0\]\s*$")
+    _DOUBLE_QUOTE_OPENERS = frozenset(('"', "“"))
+    _DOUBLE_QUOTE_CLOSERS = frozenset(('"', "”"))
+    _SINGLE_QUOTE_OPENERS = frozenset(("'", "‘"))
+    _SINGLE_QUOTE_CLOSERS = frozenset(("'", "’"))
 
     def _advance_undo_pipeline_revision(self) -> int:
         raw_revision = getattr(self, "_undo_pipeline_revision", 0)
@@ -1196,6 +1201,154 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
 
         if self._TRAILING_RESET_COLOR_RE.search(kept_lines[-1] or "") is None:
             kept_lines[-1] = f"{kept_lines[-1]}\\C[0]"
+        return kept_lines, moved_lines
+
+    def _line_first_visible_content_char_index(self, line: str) -> Optional[int]:
+        idx = 0
+        text = line or ""
+        length = len(text)
+        while idx < length:
+            char = text[idx]
+            if char.isspace():
+                idx += 1
+                continue
+            token_match = CONTROL_TOKEN_RE.match(text, idx)
+            if token_match is not None and token_match.start() == idx:
+                idx = token_match.end()
+                continue
+            return idx
+        return None
+
+    def _line_last_visible_content_char_index(self, line: str) -> Optional[int]:
+        text = line or ""
+        end = len(text)
+        while end > 0:
+            while end > 0 and text[end - 1].isspace():
+                end -= 1
+            if end <= 0:
+                return None
+
+            trailing_token: Optional[re.Match[str]] = None
+            for token_match in CONTROL_TOKEN_RE.finditer(text, 0, end):
+                if token_match.end() == end:
+                    trailing_token = token_match
+            if trailing_token is not None:
+                end = trailing_token.start()
+                continue
+            return end - 1
+        return None
+
+    def _first_visible_content_char_position(
+        self,
+        lines: list[str],
+        *,
+        ignored_exact_lines: Optional[set[str]] = None,
+    ) -> Optional[tuple[int, int, str]]:
+        ignored = ignored_exact_lines or set()
+        for line_idx, line in enumerate(lines):
+            if line in ignored:
+                continue
+            char_idx = self._line_first_visible_content_char_index(line)
+            if char_idx is None:
+                continue
+            return line_idx, char_idx, line[char_idx]
+        return None
+
+    def _last_visible_content_char_position(
+        self,
+        lines: list[str],
+        *,
+        ignored_exact_lines: Optional[set[str]] = None,
+    ) -> Optional[tuple[int, int, str]]:
+        ignored = ignored_exact_lines or set()
+        for line_idx in range(len(lines) - 1, -1, -1):
+            line = lines[line_idx]
+            if line in ignored:
+                continue
+            char_idx = self._line_last_visible_content_char_index(line)
+            if char_idx is None:
+                continue
+            return line_idx, char_idx, line[char_idx]
+        return None
+
+    def _insert_opening_quote_into_line(self, line: str, quote_char: str) -> str:
+        insert_at = self._line_first_visible_content_char_index(line)
+        if insert_at is None:
+            return f"{line}{quote_char}"
+        return f"{line[:insert_at]}{quote_char}{line[insert_at:]}"
+
+    def _insert_closing_quote_into_line(self, line: str, quote_char: str) -> str:
+        insert_after = self._line_last_visible_content_char_index(line)
+        if insert_after is None:
+            return f"{line}{quote_char}"
+        insert_at = insert_after + 1
+        return f"{line[:insert_at]}{quote_char}{line[insert_at:]}"
+
+    def _apply_split_overflow_quote_continuity(
+        self,
+        kept_lines: list[str],
+        moved_lines: list[str],
+        *,
+        ignored_leading_markers: tuple[str, ...] = (),
+    ) -> tuple[list[str], list[str]]:
+        if not kept_lines or not moved_lines:
+            return kept_lines, moved_lines
+
+        ignored = {marker for marker in ignored_leading_markers if marker}
+        combined_lines = list(kept_lines) + list(moved_lines)
+        opening_boundary = self._first_visible_content_char_position(
+            combined_lines,
+            ignored_exact_lines=ignored,
+        )
+        closing_boundary = self._last_visible_content_char_position(
+            combined_lines,
+            ignored_exact_lines=ignored,
+        )
+        if opening_boundary is None or closing_boundary is None:
+            return kept_lines, moved_lines
+
+        opening_char = opening_boundary[2]
+        closing_char = closing_boundary[2]
+        opening_set: frozenset[str]
+        closing_set: frozenset[str]
+        if (
+            opening_char in self._DOUBLE_QUOTE_OPENERS
+            and closing_char in self._DOUBLE_QUOTE_CLOSERS
+        ):
+            opening_set = self._DOUBLE_QUOTE_OPENERS
+            closing_set = self._DOUBLE_QUOTE_CLOSERS
+        elif (
+            opening_char in self._SINGLE_QUOTE_OPENERS
+            and closing_char in self._SINGLE_QUOTE_CLOSERS
+        ):
+            opening_set = self._SINGLE_QUOTE_OPENERS
+            closing_set = self._SINGLE_QUOTE_CLOSERS
+        else:
+            return kept_lines, moved_lines
+
+        kept_boundary = self._last_visible_content_char_position(
+            kept_lines,
+            ignored_exact_lines=ignored,
+        )
+        moved_boundary = self._first_visible_content_char_position(
+            moved_lines,
+            ignored_exact_lines=ignored,
+        )
+        if kept_boundary is None or moved_boundary is None:
+            return kept_lines, moved_lines
+
+        kept_line_idx, _, kept_tail_char = kept_boundary
+        moved_line_idx, _, moved_head_char = moved_boundary
+        if kept_tail_char not in closing_set:
+            kept_lines[kept_line_idx] = self._insert_closing_quote_into_line(
+                kept_lines[kept_line_idx],
+                closing_char,
+            )
+        if moved_head_char not in opening_set:
+            moved_lines[moved_line_idx] = self._insert_opening_quote_into_line(
+                moved_lines[moved_line_idx],
+                opening_char,
+            )
         return kept_lines, moved_lines
 
     def _sync_source_split_color_continuity_from_translation(
@@ -2532,6 +2685,16 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         if not moved_active_lines:
             self.statusBar().showMessage("No overflow lines to move.")
             return
+        ignored_leading_markers = tuple(
+            marker
+            for marker in (inferred_marker, translated_marker)
+            if marker
+        )
+        kept_active_lines, moved_active_lines = self._apply_split_overflow_quote_continuity(
+            list(kept_active_lines),
+            list(moved_active_lines),
+            ignored_leading_markers=ignored_leading_markers,
+        )
         kept_active_lines, moved_active_lines = self._apply_split_overflow_color_continuity(
             list(kept_active_lines),
             list(moved_active_lines),
