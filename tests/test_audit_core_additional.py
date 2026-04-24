@@ -104,6 +104,8 @@ class _Harness(AuditCoreMixin):
         self.rebuilt_paths: list[Path] = []
         self.open_calls: list[tuple[Path, str | None, str | None]] = []
         self.refresh_visual_state_calls = 0
+        self.plugin_group_resolver_calls: list[tuple[Path, str]] = []
+        self.set_plugin_group_collapsed_calls: list[tuple[str, bool]] = []
 
         self.audit_search_render_timer = _TimerStub()
         self.audit_sanitize_render_timer = _TimerStub()
@@ -214,6 +216,19 @@ class _Harness(AuditCoreMixin):
 
     def _refresh_block_visual_states(self) -> None:
         self.refresh_visual_state_calls += 1
+
+    def _plugin_group_key_and_title_for_segment(
+        self,
+        session_path: Path,
+        segment: DialogueSegment,
+    ) -> tuple[str, str] | None:
+        self.plugin_group_resolver_calls.append((session_path, segment.uid))
+        if segment.segment_kind != "plugin_text":
+            return None
+        return (f"{session_path.as_posix()}::plugin::0", "Plugin 1")
+
+    def _set_plugin_group_collapsed(self, group_key: str, collapsed: bool) -> None:
+        self.set_plugin_group_collapsed_calls.append((group_key, bool(collapsed)))
 
 
 class _ViewportHost(QWidget):
@@ -382,6 +397,28 @@ class AuditCoreAdditionalTests(unittest.TestCase):
         self.assertEqual(harness.rebuilt_paths, [path])
         self.assertEqual(harness.open_calls, [(path, "u1", "dialogue")])
         self.assertIn("Jumped to Map001.json (u1).", harness.statusBar().messages[-1])
+
+    def test_jump_location_expands_plugin_group_for_target_segment(self) -> None:
+        harness = _Harness()
+        path = Path("plugins.js")
+        harness.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[_segment("plugin-u1", kind="plugin_text")],
+        )
+
+        jumped = harness._jump_to_audit_location(str(path), "plugin-u1")
+
+        self.assertTrue(jumped)
+        self.assertEqual(
+            harness.plugin_group_resolver_calls,
+            [(path, "plugin-u1")],
+        )
+        self.assertEqual(
+            harness.set_plugin_group_collapsed_calls,
+            [(f"{path.as_posix()}::plugin::0", False)],
+        )
 
     def test_normalize_lines_defensive_split_fallback(self) -> None:
         harness = _Harness()

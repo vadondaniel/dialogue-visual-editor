@@ -354,6 +354,15 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
                 f"Cannot jump: {path.name} is not loaded."
             )
             return False
+        session = self.sessions.get(path)
+        target_segment: Optional[Any] = None
+        if session is not None:
+            segments_raw = getattr(session, "segments", None)
+            if isinstance(segments_raw, list):
+                for segment in segments_raw:
+                    if getattr(segment, "uid", None) == uid_raw:
+                        target_segment = segment
+                        break
         target_scope = self._scope_for_audit_target_uid(path, uid_raw)
 
         if path not in self.file_items:
@@ -375,6 +384,30 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
                 self.file_list.blockSignals(True)
                 self.file_list.setCurrentRow(row)
                 self.file_list.blockSignals(False)
+
+        if target_segment is not None:
+            plugin_group_resolver = getattr(
+                self,
+                "_plugin_group_key_and_title_for_segment",
+                None,
+            )
+            if callable(plugin_group_resolver):
+                try:
+                    group_info = plugin_group_resolver(path, target_segment)
+                except Exception:
+                    group_info = None
+                if (
+                    isinstance(group_info, tuple)
+                    and len(group_info) == 2
+                    and isinstance(group_info[0], str)
+                    and group_info[0]
+                ):
+                    set_collapsed = getattr(self, "_set_plugin_group_collapsed", None)
+                    if callable(set_collapsed):
+                        try:
+                            set_collapsed(group_info[0], False)
+                        except Exception:
+                            pass
 
         self.pending_audit_flash_uid = uid_raw
         self._set_audit_pinned_uid(uid_raw)
