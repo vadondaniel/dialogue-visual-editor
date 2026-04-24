@@ -128,6 +128,7 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         (frozenset(("<",)), frozenset((">",))),
         (frozenset(("«",)), frozenset(("»",))),
     )
+    _BLOCK_TEXT_CHANGE_FOLLOWUP_DEBOUNCE_MS = 70
 
     def _advance_undo_pipeline_revision(self) -> int:
         raw_revision = getattr(self, "_undo_pipeline_revision", 0)
@@ -2233,8 +2234,32 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         else:
             segment.lines = list(lines)
             segment.source_lines = list(segment.lines)
+        self._queue_block_text_change_followup(
+            session.path,
+            uid,
+        )
+
+    def _apply_block_text_change_followup(
+        self,
+        path: Path,
+        uids: set[str],
+    ) -> None:
+        session = self.sessions.get(path)
+        if session is None:
+            return
+
         self._refresh_dirty_state(session)
-        if self._is_translator_mode():
+        if (not self._is_translator_mode()) or self.current_path != path:
+            return
+
+        refresh_detail_panel = False
+        for uid in uids:
+            segment = self.current_segment_lookup.get(uid)
+            if segment is None:
+                segment_index = self._find_segment_index_by_uid(session, uid)
+                if segment_index < 0:
+                    continue
+                segment = session.segments[segment_index]
             self._refresh_translation_chain_widget_statuses(
                 session,
                 segment,
@@ -2243,7 +2268,47 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 session,
                 segment,
             ):
-                self._refresh_translator_detail_panel()
+                refresh_detail_panel = True
+        if refresh_detail_panel:
+            self._refresh_translator_detail_panel()
+
+    def _flush_pending_block_text_change_followups(self) -> None:
+        pending_raw = getattr(self, "_pending_block_text_change_followups", None)
+        if not isinstance(pending_raw, dict) or not pending_raw:
+            return
+        pending = cast(dict[Path, set[str]], pending_raw)
+        setattr(self, "_pending_block_text_change_followups", {})
+        for path, uids in pending.items():
+            if not isinstance(path, Path) or (not isinstance(uids, set)) or (not uids):
+                continue
+            self._apply_block_text_change_followup(path, uids)
+
+    def _queue_block_text_change_followup(
+        self,
+        path: Path,
+        uid: str,
+    ) -> None:
+        # Unit-test harnesses using this mixin are often plain Python objects
+        # without a Qt event loop; keep behavior deterministic there.
+        if not hasattr(self, "metaObject"):
+            self._apply_block_text_change_followup(path, {uid})
+            return
+
+        pending_raw = getattr(self, "_pending_block_text_change_followups", None)
+        if isinstance(pending_raw, dict):
+            pending = cast(dict[Path, set[str]], pending_raw)
+        else:
+            pending = {}
+            setattr(self, "_pending_block_text_change_followups", pending)
+        pending.setdefault(path, set()).add(uid)
+
+        timer = getattr(self, "_block_text_change_followup_timer", None)
+        if not isinstance(timer, QTimer):
+            timer = QTimer(cast(Any, self))
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._flush_pending_block_text_change_followups)
+            setattr(self, "_block_text_change_followup_timer", timer)
+        timer.start(self._BLOCK_TEXT_CHANGE_FOLLOWUP_DEBOUNCE_MS)
 
     def _translation_chain_uids_for_segment(
         self,
