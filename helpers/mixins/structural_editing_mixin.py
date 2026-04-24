@@ -113,6 +113,21 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
     _DOUBLE_QUOTE_CLOSERS = frozenset(('"', "”"))
     _SINGLE_QUOTE_OPENERS = frozenset(("'", "‘"))
     _SINGLE_QUOTE_CLOSERS = frozenset(("'", "’"))
+    _SPLIT_WRAPPER_VARIANTS: tuple[tuple[frozenset[str], frozenset[str]], ...] = (
+        (_DOUBLE_QUOTE_OPENERS, _DOUBLE_QUOTE_CLOSERS),
+        (_SINGLE_QUOTE_OPENERS, _SINGLE_QUOTE_CLOSERS),
+        (frozenset(("(", "（")), frozenset((")", "）"))),
+        (frozenset(("[", "［")), frozenset(("]", "］"))),
+        (frozenset(("{", "｛")), frozenset(("}", "｝"))),
+        (frozenset(("「",)), frozenset(("」",))),
+        (frozenset(("『",)), frozenset(("』",))),
+        (frozenset(("【",)), frozenset(("】",))),
+        (frozenset(("〈",)), frozenset(("〉",))),
+        (frozenset(("《",)), frozenset(("》",))),
+        (frozenset(("〔",)), frozenset(("〕",))),
+        (frozenset(("<",)), frozenset((">",))),
+        (frozenset(("«",)), frozenset(("»",))),
+    )
 
     def _advance_undo_pipeline_revision(self) -> int:
         raw_revision = getattr(self, "_undo_pipeline_revision", 0)
@@ -1311,20 +1326,17 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         closing_char = closing_boundary[2]
         opening_set: frozenset[str]
         closing_set: frozenset[str]
-        if (
-            opening_char in self._DOUBLE_QUOTE_OPENERS
-            and closing_char in self._DOUBLE_QUOTE_CLOSERS
-        ):
-            opening_set = self._DOUBLE_QUOTE_OPENERS
-            closing_set = self._DOUBLE_QUOTE_CLOSERS
-        elif (
-            opening_char in self._SINGLE_QUOTE_OPENERS
-            and closing_char in self._SINGLE_QUOTE_CLOSERS
-        ):
-            opening_set = self._SINGLE_QUOTE_OPENERS
-            closing_set = self._SINGLE_QUOTE_CLOSERS
-        else:
+        wrapper_variant = next(
+            (
+                (candidate_openers, candidate_closers)
+                for candidate_openers, candidate_closers in self._SPLIT_WRAPPER_VARIANTS
+                if (opening_char in candidate_openers and closing_char in candidate_closers)
+            ),
+            None,
+        )
+        if wrapper_variant is None:
             return kept_lines, moved_lines
+        opening_set, closing_set = wrapper_variant
 
         kept_boundary = self._last_visible_content_char_position(
             kept_lines,

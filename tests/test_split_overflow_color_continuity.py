@@ -354,6 +354,18 @@ class SplitOverflowColorContinuityTests(unittest.TestCase):
         self.assertEqual(kept, ["“Yeah. This is where the real fight begins.”"])
         self.assertEqual(moved, ["“Rion, Juju, stay sharp.”"])
 
+    def test_applies_wrapper_continuity_for_parentheses(self) -> None:
+        harness = _Harness()
+
+        kept, moved = StructuralEditingMixin._apply_split_overflow_quote_continuity(
+            harness,
+            ["(Surely this is not"],
+            ["just a coincidence)"],
+        )
+
+        self.assertEqual(kept, ["(Surely this is not)"])
+        self.assertEqual(moved, ["(just a coincidence)"])
+
     def test_quote_continuity_ignores_leading_inferred_marker(self) -> None:
         harness = _Harness()
 
