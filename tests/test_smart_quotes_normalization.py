@@ -247,6 +247,36 @@ class SmartQuotesNormalizationTests(unittest.TestCase):
 
         self.assertEqual(total, 7)
 
+    def test_apply_keeps_quote_pairing_across_translation_lines(self) -> None:
+        harness = _Harness()
+        dialogue = _segment(
+            "Map001:1",
+            "source",
+            tl_lines=[
+                "\"Yeah. This is where the real fight begins.",
+                "Rion, Juju, stay sharp.\"",
+            ],
+            kind="dialogue",
+            speaker="Hero",
+            tl_speaker="",
+        )
+        harness.sessions[harness.path] = FileSession(
+            path=harness.path,
+            data=[],
+            bundles=[],
+            segments=[dialogue],
+        )
+
+        _call_editor_method("_apply_smart_quote_normalization", harness)
+
+        self.assertEqual(
+            dialogue.translation_lines,
+            [
+                "\u201CYeah. This is where the real fight begins.",
+                "Rion, Juju, stay sharp.\u201D",
+            ],
+        )
+
     def test_open_smart_quotes_dialog_persists_and_reports_status(self) -> None:
         harness = _Harness()
         harness.sessions[harness.path] = FileSession(

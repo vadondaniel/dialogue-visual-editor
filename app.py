@@ -3232,9 +3232,9 @@ class DialogueVisualEditor(
                 if not self._segment_is_safe_for_smart_quotes_normalization(segment):
                     continue
                 tl_lines = self._normalize_translation_lines(segment.translation_lines)
-                for line in tl_lines:
-                    _converted, count = normalize_smart_quotes(line)
-                    text_replacements += count
+                tl_text = "\n".join(tl_lines)
+                _converted, count = normalize_smart_quotes(tl_text)
+                text_replacements += count
 
                 if segment.is_structural_dialogue:
                     _converted_speaker, speaker_count = normalize_smart_quotes(
@@ -3258,12 +3258,11 @@ class DialogueVisualEditor(
 
                 segment_changed = False
                 tl_lines = self._normalize_translation_lines(segment.translation_lines)
-                normalized_tl_lines: list[str] = []
-                segment_tl_replacements = 0
-                for line in tl_lines:
-                    normalized_line, count = normalize_smart_quotes(line)
-                    normalized_tl_lines.append(normalized_line)
-                    segment_tl_replacements += count
+                tl_text = "\n".join(tl_lines)
+                normalized_tl_text, segment_tl_replacements = normalize_smart_quotes(
+                    tl_text
+                )
+                normalized_tl_lines = self._normalize_translation_lines(normalized_tl_text)
                 if (
                     segment_tl_replacements > 0
                     and normalized_tl_lines != tl_lines
