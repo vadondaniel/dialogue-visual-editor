@@ -2726,6 +2726,17 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             moved_tl_lines,
             inferred_marker,
         )
+        source_inference_disabled = bool(
+            source_segment.disable_line1_speaker_inference
+        )
+        source_inference_forced = bool(
+            source_segment.force_line1_speaker_inference
+        )
+        # Preserve inferred-speaker behavior on the moved block when split-down
+        # carries line-1 speaker storage from the source anchor.
+        moved_inference_force = source_inference_forced or (
+            bool(inferred_marker) and (not source_inference_disabled)
+        )
 
         new_segment = DialogueSegment(
             uid=self._new_segment_uid(session.path),
@@ -2745,10 +2756,10 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             original_translation_lines=list(moved_tl_lines),
             translation_speaker=source_segment.translation_speaker,
             original_translation_speaker=source_segment.translation_speaker,
-            disable_line1_speaker_inference=source_segment.disable_line1_speaker_inference,
-            original_disable_line1_speaker_inference=source_segment.disable_line1_speaker_inference,
-            force_line1_speaker_inference=source_segment.force_line1_speaker_inference,
-            original_force_line1_speaker_inference=source_segment.force_line1_speaker_inference,
+            disable_line1_speaker_inference=source_inference_disabled,
+            original_disable_line1_speaker_inference=source_inference_disabled,
+            force_line1_speaker_inference=moved_inference_force,
+            original_force_line1_speaker_inference=moved_inference_force,
             inserted=True,
             translation_only=translator_mode,
         )

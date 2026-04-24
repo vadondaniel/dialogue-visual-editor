@@ -4854,6 +4854,33 @@ class DialogueVisualEditor(
         inferred = self._inferred_speaker_from_segment_line1(segment)
         if inferred:
             return self._normalize_speaker_key(inferred)
+        if bool(getattr(segment, "translation_only", False)):
+            chain_resolver = getattr(self, "_logical_translation_chain_for_segment", None)
+            chain: list[DialogueSegment] = []
+            if callable(chain_resolver):
+                try:
+                    chain_raw = chain_resolver(segment)
+                except Exception:
+                    chain_raw = []
+                if isinstance(chain_raw, list):
+                    chain = [candidate for candidate in chain_raw if isinstance(candidate, DialogueSegment)]
+            anchor = next(
+                (
+                    candidate
+                    for candidate in chain
+                    if (candidate is not segment)
+                    and candidate.is_structural_dialogue
+                    and (not bool(getattr(candidate, "translation_only", False)))
+                ),
+                None,
+            )
+            if anchor is not None:
+                anchor_explicit = self._normalize_speaker_key(anchor.speaker_name)
+                if anchor_explicit != NO_SPEAKER_KEY:
+                    return anchor_explicit
+                anchor_inferred = self._inferred_speaker_from_segment_line1(anchor)
+                if anchor_inferred:
+                    return self._normalize_speaker_key(anchor_inferred)
         return NO_SPEAKER_KEY
 
     def _bg1_means_thoughts_enabled(self) -> bool:

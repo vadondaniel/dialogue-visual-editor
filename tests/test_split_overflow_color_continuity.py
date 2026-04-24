@@ -126,6 +126,7 @@ class _SplitOverflowHarness(StructuralEditingMixin):
         self.segment_uid_counter = 0
         self.translation_uid_counter = 0
         self._status_bar = _StatusBar()
+        self._inferred_line1_value = ""
 
     @staticmethod
     def _is_translator_mode() -> bool:
@@ -143,9 +144,8 @@ class _SplitOverflowHarness(StructuralEditingMixin):
     def _segment_source_lines_for_display(segment: DialogueSegment) -> list[str]:
         return list(segment.source_lines or segment.original_lines or segment.lines or [""])
 
-    @staticmethod
-    def _inferred_speaker_from_segment_line1(_segment: DialogueSegment) -> str:
-        return ""
+    def _inferred_speaker_from_segment_line1(self, _segment: DialogueSegment) -> str:
+        return self._inferred_line1_value
 
     @staticmethod
     def _speaker_key_for_segment(_segment: DialogueSegment) -> str:
@@ -228,6 +228,54 @@ class SplitOverflowColorContinuityTests(unittest.TestCase):
             kept.translation_lines + moved.translation_lines,
             translation_lines,
         )
+
+    def test_translator_split_overflow_preserves_anchor_inferred_speaker_state(self) -> None:
+        harness = _SplitOverflowHarness()
+        harness._inferred_line1_value = "Knight Commander Berg"
+        source_lines = [
+            "Knight Commander Berg",
+            "JP line 2",
+            "JP line 3",
+            "JP line 4",
+        ]
+        translation_lines = [
+            "Knight Commander Berg",
+            "Line A",
+            "Line B",
+            "Line C",
+        ]
+        anchor = DialogueSegment(
+            uid="Map001.json:L0:0",
+            context="ctx",
+            code101={},
+            lines=list(source_lines),
+            original_lines=list(source_lines),
+            source_lines=list(source_lines),
+            code401_template={},
+            translation_lines=list(translation_lines),
+            original_translation_lines=list(translation_lines),
+            segment_kind="dialogue",
+            disable_line1_speaker_inference=False,
+            force_line1_speaker_inference=False,
+        )
+        assert harness.current_path is not None
+        session = FileSession(
+            path=harness.current_path,
+            data={},
+            bundles=[],
+            segments=[anchor],
+        )
+        harness.sessions[session.path] = session
+        harness.current_segment_lookup = {anchor.uid: anchor}
+
+        harness._on_split_overflow_requested(anchor.uid)
+
+        self.assertEqual(len(session.segments), 2)
+        kept = session.segments[0]
+        moved = session.segments[1]
+        self.assertFalse(kept.force_line1_speaker_inference)
+        self.assertTrue(moved.force_line1_speaker_inference)
+        self.assertFalse(moved.disable_line1_speaker_inference)
 
     def test_smart_collapse_eligibility_includes_tyrano_dialogue(self) -> None:
         harness = _Harness()

@@ -163,6 +163,22 @@ class _Line1InferenceHarness:
         return bool(inferred)
 
 
+class _TranslationOnlySpeakerFallbackHarness(_Line1InferenceHarness):
+    def __init__(self) -> None:
+        super().__init__(enabled=True)
+        self._chain: list[DialogueSegment] = []
+
+    def _logical_translation_chain_for_segment(
+        self,
+        segment: DialogueSegment,
+        *,
+        session: FileSession | None = None,
+    ) -> list[DialogueSegment]:
+        _ = segment
+        _ = session
+        return list(self._chain)
+
+
 class _SpeakerInferenceCandidateHarness:
     def __init__(self) -> None:
         self.infer_speaker_check = SimpleNamespace(isChecked=lambda: True)
@@ -501,6 +517,33 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         )
 
         self.assertEqual(composed, [r"\C[2]Hero\C[0]", "EN line"])
+
+    def test_translation_only_speaker_key_falls_back_to_anchor_inferred_line1(self) -> None:
+        harness = _TranslationOnlySpeakerFallbackHarness()
+        anchor = DialogueSegment(
+            uid="seg:anchor",
+            context="ctx",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=["Hero", "「Let's move」"],
+            original_lines=["Hero", "「Let's move」"],
+            source_lines=["Hero", "「Let's move」"],
+        )
+        moved = DialogueSegment(
+            uid="seg:moved",
+            context="ctx",
+            code101={"code": 101, "indent": 0, "parameters": ["", 0, 0, 2, ""]},
+            lines=[""],
+            original_lines=[""],
+            source_lines=[""],
+            translation_lines=["Overflow line"],
+            original_translation_lines=["Overflow line"],
+            translation_only=True,
+        )
+        harness._chain = [anchor, moved]
+
+        key = cast(str, _call_editor_method("_speaker_key_for_segment", harness, moved))
+
+        self.assertEqual(key, "Hero")
 
     def test_collect_inferred_speaker_candidates_ranks_by_occurrence(self) -> None:
         harness = _SpeakerInferenceCandidateHarness()
