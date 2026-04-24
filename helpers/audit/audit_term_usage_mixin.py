@@ -630,12 +630,18 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         term: str,
         dialogue_only: bool,
         path_sessions: Optional[list[tuple[Path, FileSession]]] = None,
+        request_key: Optional[tuple[Any, ...]] = None,
     ) -> list[dict[str, Any]]:
         hits: list[dict[str, Any]] = []
         rows = path_sessions if isinstance(path_sessions, list) else self._audit_path_sessions_snapshot()
+        term_match = self._normalize_text_for_block_match(term)
         for path, session in rows:
+            if not self._audit_term_request_is_current(request_key):
+                return []
             groups = self._audit_term_scan_groups(session)
             for group in groups:
+                if not self._audit_term_request_is_current(request_key):
+                    return []
                 segment = cast(DialogueSegment, group["anchor_segment"])
                 block_index = int(group["anchor_index"])
                 group_segments = cast(list[DialogueSegment], group["segments"])
@@ -654,15 +660,19 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                     continue
                 if not isinstance(tl_lines, list):
                     tl_lines = [""]
-                tl_block_text = "\n".join(tl_lines)
-                tl_block_match = self._normalize_text_for_block_match(tl_block_text)
                 entry_label = self._audit_term_entry_label(session, segment, block_index)
-                term_match = self._normalize_text_for_block_match(term)
+                matched_source_rows: list[tuple[int, str]] = []
                 for line_index, source_line_raw in enumerate(source_lines):
                     source_line = source_line_raw if isinstance(source_line_raw, str) else ""
                     source_match = self._normalize_text_for_block_match(source_line)
                     if term_match and term_match not in source_match:
                         continue
+                    matched_source_rows.append((line_index, source_line))
+                if not matched_source_rows:
+                    continue
+                tl_block_text = "\n".join(tl_lines)
+                tl_block_match = self._normalize_text_for_block_match(tl_block_text)
+                for line_index, source_line in matched_source_rows:
                     line_tl_raw = tl_lines[line_index] if line_index < len(tl_lines) else ""
                     line_tl = line_tl_raw if isinstance(line_tl_raw, str) else ""
                     normalized_line_tl = line_tl.strip()
@@ -679,6 +689,17 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                         }
                     )
         return hits
+
+    def _audit_term_request_is_current(
+        self,
+        request_key: Optional[tuple[Any, ...]],
+    ) -> bool:
+        if request_key is None:
+            return True
+        current_key = getattr(self, "audit_term_latest_requested_key", None)
+        if not isinstance(current_key, tuple):
+            return True
+        return current_key == request_key
 
     def _build_term_groups(
         self,
@@ -727,12 +748,14 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         term: str,
         candidates_text: str,
         dialogue_only: bool,
+        request_key: Optional[tuple[Any, ...]] = None,
     ) -> list[dict[str, Any]]:
         candidates = self._parse_audit_term_candidates(candidates_text)
         hits = self._collect_audit_term_hits(
             term,
             dialogue_only,
             path_sessions=path_sessions,
+            request_key=request_key,
         )
         return self._build_term_groups(hits, candidates)
 
@@ -759,6 +782,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                 str(request["term"]),
                 str(request["candidates_text"]),
                 bool(request["dialogue_only"]),
+                cast(Optional[tuple[Any, ...]], request.get("request_key")),
             )
         except Exception as exc:
             self.audit_term_worker_future = None
@@ -1114,6 +1138,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             candidates_text,
             dialogue_only,
         )
+        self.audit_term_latest_requested_key = requested_key
         self.audit_term_render_timer.stop()
         self.audit_term_hits_render_timer.stop()
         if not term:
@@ -1167,6 +1192,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             "term": term,
             "candidates_text": candidates_text,
             "dialogue_only": dialogue_only,
+            "request_key": requested_key,
             "path_sessions": self._audit_path_sessions_snapshot(),
         }
         self.audit_term_status_label.setText(

@@ -78,6 +78,16 @@ class _Harness(AuditTermUsageMixin):
         return f"Block {index}"
 
 
+class _ProbeHarness(_Harness):
+    def __init__(self) -> None:
+        super().__init__()
+        self.normalized_values: list[str] = []
+
+    def _normalize_text_for_block_match(self, value: str) -> str:
+        self.normalized_values.append(value)
+        return super()._normalize_text_for_block_match(value)
+
+
 class _FakeEdit:
     def __init__(self, value: str) -> None:
         self._value = value
@@ -392,6 +402,46 @@ class AuditTermUsageMixinTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
         self.assertEqual(replaced, r"A \N[1] B")
+
+    def test_collect_hits_skips_translation_block_normalization_when_source_does_not_match(self) -> None:
+        harness = _ProbeHarness()
+        path = Path("Map006.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("d1", "勇者が来た", "TL SHOULD NOT NORMALIZE", segment_kind="dialogue"),
+            ],
+        )
+
+        hits = harness._collect_audit_term_hits("魔王", dialogue_only=False)
+
+        self.assertEqual(hits, [])
+        self.assertNotIn("TL SHOULD NOT NORMALIZE", harness.normalized_values)
+
+    def test_collect_hits_aborts_when_request_is_stale(self) -> None:
+        harness = _Harness()
+        path = Path("Map007.json")
+        harness.file_paths = [path]
+        harness.sessions[path] = FileSession(
+            path=path,
+            data=[],
+            bundles=[],
+            segments=[
+                _segment("d1", "魔王が現れた", "Demon appeared", segment_kind="dialogue"),
+            ],
+        )
+        harness.audit_term_latest_requested_key = (1, "勇者", "", True)
+
+        hits = harness._collect_audit_term_hits(
+            "魔王",
+            dialogue_only=False,
+            request_key=(1, "魔王", "", False),
+        )
+
+        self.assertEqual(hits, [])
 
     def test_refresh_panel_fast_path_keeps_existing_variants_list(self) -> None:
         harness = _RefreshHarness()

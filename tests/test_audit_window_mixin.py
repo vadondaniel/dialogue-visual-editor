@@ -76,6 +76,15 @@ class _QtHarness(QWidget, AuditWindowMixin):
     def _refresh_audit_consistency_neighbors_preview(self) -> None:
         self.calls.append("neighbors_preview")
 
+    def _refresh_audit_term_panel(self) -> None:
+        self.calls.append("term_refresh")
+
+    def _refresh_audit_name_consistency_panel(self) -> None:
+        self.calls.append("name_consistency_refresh")
+
+    def _refresh_audit_consistency_target_overflow_status(self) -> None:
+        self.calls.append("consistency_target_overflow")
+
 
 class _ComboStub:
     def __init__(self, lookup: dict[str, int]) -> None:
@@ -302,6 +311,70 @@ class AuditWindowMixinQtSignalTests(unittest.TestCase):
 
         self.assertGreaterEqual(harness.calls.count("neighbors_preview"), 1)
         self.assertEqual(single_shot.call_count, 1)
+        if harness.audit_window is not None:
+            harness.audit_window.close()
+            harness.audit_window.deleteLater()
+        harness.deleteLater()
+
+    def test_term_query_text_change_uses_debounced_scheduler(self) -> None:
+        harness = _QtHarness()
+        harness._build_audit_window()
+        query_edit = harness.audit_term_query_edit
+        candidates_edit = harness.audit_term_candidates_edit
+        self.assertIsNotNone(query_edit)
+        self.assertIsNotNone(candidates_edit)
+        assert query_edit is not None
+        assert candidates_edit is not None
+        scheduled: list[tuple[str, int | None]] = []
+
+        def _record_schedule(
+            key: str,
+            _callback: Any,
+            *,
+            interval_ms: int | None = None,
+        ) -> None:
+            scheduled.append((key, interval_ms))
+
+        harness._schedule_audit_input_refresh = _record_schedule  # type: ignore[method-assign]
+        query_edit.setText("hero")
+        candidates_edit.setText("Hero")
+
+        self.assertIn(
+            ("audit_term_panel", harness._AUDIT_TERM_INPUT_DEBOUNCE_MS), scheduled
+        )
+        self.assertNotIn("term_refresh", harness.calls)
+        if harness.audit_window is not None:
+            harness.audit_window.close()
+            harness.audit_window.deleteLater()
+        harness.deleteLater()
+
+    def test_name_filter_and_consistency_target_use_debounced_scheduler(self) -> None:
+        harness = _QtHarness()
+        harness._build_audit_window()
+        filter_edit = harness.audit_name_consistency_filter_edit
+        target_edit = harness.audit_consistency_target_edit
+        self.assertIsNotNone(filter_edit)
+        self.assertIsNotNone(target_edit)
+        assert filter_edit is not None
+        assert target_edit is not None
+        scheduled: list[tuple[str, int | None]] = []
+
+        def _record_schedule(
+            key: str,
+            _callback: Any,
+            *,
+            interval_ms: int | None = None,
+        ) -> None:
+            scheduled.append((key, interval_ms))
+
+        harness._schedule_audit_input_refresh = _record_schedule  # type: ignore[method-assign]
+        filter_edit.setText("saint")
+        target_edit.setPlainText("line")
+
+        self.assertIn(("audit_name_consistency_panel", None), scheduled)
+        self.assertIn(("audit_consistency_target_overflow", 90), scheduled)
+        self.assertNotIn("name_consistency_refresh", harness.calls)
+        self.assertNotIn("consistency_target_overflow", harness.calls)
         if harness.audit_window is not None:
             harness.audit_window.close()
             harness.audit_window.deleteLater()

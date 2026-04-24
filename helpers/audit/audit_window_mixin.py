@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (
@@ -50,6 +50,66 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
     _AUDIT_TAB_TERM_USAGE = 4
     _AUDIT_TAB_TRANSLATION_COLLISION = 5
     _AUDIT_TAB_NAME_CONSISTENCY = 6
+    _AUDIT_INPUT_DEBOUNCE_MS = 140
+    _AUDIT_TERM_INPUT_DEBOUNCE_MS = 320
+
+    def _flush_scheduled_audit_input_refresh(self, key: str) -> None:
+        callbacks_raw = getattr(self, "_audit_input_refresh_callbacks", None)
+        if not isinstance(callbacks_raw, dict):
+            return
+        callbacks = cast(dict[str, Callable[[], None]], callbacks_raw)
+        callback = callbacks.get(key)
+        if not callable(callback):
+            return
+        callback()
+
+    def _schedule_audit_input_refresh(
+        self,
+        key: str,
+        callback: Callable[[], None],
+        *,
+        interval_ms: int | None = None,
+    ) -> None:
+        callbacks_raw = getattr(self, "_audit_input_refresh_callbacks", None)
+        if isinstance(callbacks_raw, dict):
+            callbacks = cast(dict[str, Callable[[], None]], callbacks_raw)
+        else:
+            callbacks = {}
+            setattr(self, "_audit_input_refresh_callbacks", callbacks)
+        callbacks[key] = callback
+
+        timers_raw = getattr(self, "_audit_input_refresh_timers", None)
+        if isinstance(timers_raw, dict):
+            timers = cast(dict[str, QTimer], timers_raw)
+        else:
+            timers = {}
+            setattr(self, "_audit_input_refresh_timers", timers)
+
+        delay_ms = (
+            self._AUDIT_INPUT_DEBOUNCE_MS
+            if interval_ms is None
+            else max(0, int(interval_ms))
+        )
+        timer = timers.get(key)
+        if isinstance(timer, QTimer):
+            try:
+                timer.start(delay_ms)
+                return
+            except RuntimeError:
+                pass
+
+        parent = self.audit_window if isinstance(self.audit_window, QWidget) else cast(
+            QWidget, self
+        )
+        timer = QTimer(parent)
+        timer.setSingleShot(True)
+        timer.timeout.connect(
+            lambda refresh_key=key: self._flush_scheduled_audit_input_refresh(
+                refresh_key
+            )
+        )
+        timers[key] = timer
+        timer.start(delay_ms)
 
     def _audit_case_toggle_icon(self, checked: bool) -> QIcon:
         pixmap = QPixmap(26, 26)
@@ -1075,7 +1135,11 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             lambda _index: self._refresh_audit_consistency_panel()
         )
         consistency_target_edit.textChanged.connect(
-            self._refresh_audit_consistency_target_overflow_status
+            lambda: self._schedule_audit_input_refresh(
+                "audit_consistency_target_overflow",
+                self._refresh_audit_consistency_target_overflow_status,
+                interval_ms=90,
+            )
         )
         def _on_consistency_context_toggled(checked: bool) -> None:
             visible = bool(checked)
@@ -1122,11 +1186,19 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             self._apply_audit_consistency_target_to_group
         )
         term_query_edit.textChanged.connect(
-            lambda _text: self._refresh_audit_term_panel()
+            lambda _text: self._schedule_audit_input_refresh(
+                "audit_term_panel",
+                self._refresh_audit_term_panel,
+                interval_ms=self._AUDIT_TERM_INPUT_DEBOUNCE_MS,
+            )
         )
         term_query_edit.returnPressed.connect(self._refresh_audit_term_panel)
         term_candidates_edit.textChanged.connect(
-            lambda _text: self._refresh_audit_term_panel()
+            lambda _text: self._schedule_audit_input_refresh(
+                "audit_term_panel",
+                self._refresh_audit_term_panel,
+                interval_ms=self._AUDIT_TERM_INPUT_DEBOUNCE_MS,
+            )
         )
         term_candidates_edit.returnPressed.connect(self._refresh_audit_term_panel)
         term_dialogue_only_check.toggled.connect(
@@ -1208,7 +1280,10 @@ class AuditWindowMixin(_AuditWindowHostTypingFallback):
             lambda _checked: self._refresh_audit_name_consistency_panel()
         )
         name_consistency_filter_edit.textChanged.connect(
-            lambda _text: self._refresh_audit_name_consistency_panel()
+            lambda _text: self._schedule_audit_input_refresh(
+                "audit_name_consistency_panel",
+                self._refresh_audit_name_consistency_panel,
+            )
         )
         name_consistency_sort_combo.currentIndexChanged.connect(
             lambda _index: self._refresh_audit_name_consistency_panel()
