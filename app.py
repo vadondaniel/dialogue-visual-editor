@@ -6947,6 +6947,42 @@ class DialogueVisualEditor(
             return []
         return [("dialogue", item)]
 
+    def _scope_display_segments_and_count(
+        self,
+        session: FileSession,
+        *,
+        translator_mode: bool,
+        actor_mode: bool,
+    ) -> tuple[list[DialogueSegment], int]:
+        segments = self._display_segments_for_session(
+            session,
+            translator_mode=translator_mode,
+            actor_mode=actor_mode,
+        )
+        if not isinstance(segments, list):
+            fallback_segments = list(session.segments)
+            return fallback_segments, len(fallback_segments)
+
+        count = len(segments)
+        count_resolver = getattr(self, "_resolved_display_count", None)
+        if callable(count_resolver):
+            try:
+                resolved = count_resolver(segments, actor_mode=actor_mode)
+                if isinstance(resolved, bool):
+                    count = int(resolved)
+                elif isinstance(resolved, int):
+                    count = resolved
+                elif isinstance(resolved, float):
+                    count = int(resolved)
+                elif isinstance(resolved, str):
+                    stripped = resolved.strip()
+                    if stripped:
+                        count = int(stripped)
+            except Exception:
+                count = len(segments)
+
+        return segments, max(0, count)
+
     def _visible_file_paths(self) -> list[Path]:
         visible_paths: list[Path] = []
         show_empty = self.show_empty_files_check.isChecked()
@@ -6957,18 +6993,18 @@ class DialogueVisualEditor(
                 continue
             supports_dialogue = self._session_supports_dialogue_scope(session)
             supports_misc = self._session_supports_misc_scope(session)
-            dialogue_segments = self._display_segments_for_session(
+            _, dialogue_count = self._scope_display_segments_and_count(
                 session,
                 translator_mode=translator_mode,
                 actor_mode=False,
             )
-            misc_segments = self._display_segments_for_session(
+            _, misc_count = self._scope_display_segments_and_count(
                 session,
                 translator_mode=translator_mode,
                 actor_mode=True,
             )
-            has_visible_dialogue = supports_dialogue and bool(dialogue_segments)
-            has_visible_misc = supports_misc and bool(misc_segments)
+            has_visible_dialogue = supports_dialogue and dialogue_count > 0
+            has_visible_misc = supports_misc and misc_count > 0
             if not show_empty and (not has_visible_dialogue) and (not has_visible_misc):
                 continue
             visible_paths.append(path)
@@ -7019,21 +7055,21 @@ class DialogueVisualEditor(
                 continue
             supports_dialogue_scope = self._session_supports_dialogue_scope(session)
             supports_misc_scope = self._session_supports_misc_scope(session)
-            dialogue_segments = self._display_segments_for_session(
+            _, dialogue_count = self._scope_display_segments_and_count(
                 session,
                 translator_mode=translator_mode,
                 actor_mode=False,
             )
-            misc_segments = self._display_segments_for_session(
+            _, misc_count = self._scope_display_segments_and_count(
                 session,
                 translator_mode=translator_mode,
                 actor_mode=True,
             )
             supports_dialogue = supports_dialogue_scope and (
-                bool(dialogue_segments) or show_empty
+                dialogue_count > 0 or show_empty
             )
             supports_misc = supports_misc_scope and (
-                bool(misc_segments) or show_empty
+                misc_count > 0 or show_empty
             )
             if supports_dialogue:
                 dialogue_paths.append(path)
