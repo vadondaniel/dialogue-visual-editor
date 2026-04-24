@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from typing import Any
@@ -104,6 +105,9 @@ class _ApplyWorkflowHarness:
         MassTranslateDialog._segments_for_session_mass_translate
     )
     _session_segment_index = staticmethod(MassTranslateDialog._session_segment_index)
+    _session_segment_index_from_lookup = staticmethod(
+        MassTranslateDialog._session_segment_index_from_lookup
+    )
     _segment_source_lines_for_mass_translate = (
         MassTranslateDialog._segment_source_lines_for_mass_translate
     )
@@ -124,6 +128,16 @@ class _ApplyWorkflowHarness:
     )
     _overall_translation_progress_counts = (
         MassTranslateDialog._overall_translation_progress_counts
+    )
+    _indented_json_block_length = staticmethod(
+        MassTranslateDialog._indented_json_block_length
+    )
+    _chunk_payload_char_count_for_entries = staticmethod(
+        MassTranslateDialog._chunk_payload_char_count_for_entries
+    )
+    _chunkify_entries = MassTranslateDialog._chunkify_entries
+    _speaker_segment_targets_by_key = (
+        MassTranslateDialog._speaker_segment_targets_by_key
     )
     _default_chunk_result_message = staticmethod(
         MassTranslateDialog._default_chunk_result_message
@@ -774,6 +788,107 @@ class MassTranslateApplyWorkflowTests(unittest.TestCase):
         next_scope = harness._next_incomplete_scope_value("file:Map003.json")
 
         self.assertEqual(next_scope, "file:Map001.json")
+
+    def test_chunkify_entries_matches_naive_json_probe_behavior(self) -> None:
+        harness = _ApplyWorkflowHarness(_ApplyWorkflowEditorMeta())
+        entries = [
+            {
+                "id": f"D:{idx}",
+                "type": "dialogue",
+                "ja_text": f"src-{idx}",
+                "en_translation": "x" * (50 + (idx * 7)),
+            }
+            for idx in range(12)
+        ]
+        max_chars = 640
+
+        actual = harness._chunkify_entries(entries, max_chars)
+
+        safe_max = max(500, max_chars)
+        expected: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        for entry in entries:
+            candidate = current + [entry]
+            probe_size = len(
+                json.dumps(
+                    {"entries": candidate},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            if current and probe_size > safe_max:
+                expected.append(current)
+                current = [entry]
+            else:
+                current = candidate
+        if current:
+            expected.append(current)
+
+        self.assertEqual(actual, expected)
+
+    def test_session_segment_index_from_lookup_prefers_lookup_and_fallback(self) -> None:
+        first = _segment("Map001.json:1", ["a"])
+        second = _segment("Map001.json:2", ["b"])
+        lookup = {id(first): 3}
+
+        self.assertEqual(
+            _ApplyWorkflowHarness._session_segment_index_from_lookup(
+                lookup,
+                first,
+                0,
+            ),
+            3,
+        )
+        self.assertEqual(
+            _ApplyWorkflowHarness._session_segment_index_from_lookup(
+                lookup,
+                second,
+                11,
+            ),
+            11,
+        )
+
+    def test_context_blocks_for_anchor_cache_does_not_return_mutable_reference(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        segments = [_segment(f"Map001.json:{idx}", [f"line-{idx}"]) for idx in range(4)]
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=segments,
+        )
+        harness = _ApplyWorkflowHarness(editor)
+
+        first = harness._context_blocks_for_anchor(path, 2, -1, 1)
+        first[0]["ja_text"] = "mutated"
+        second = harness._context_blocks_for_anchor(path, 2, -1, 1)
+
+        self.assertEqual(second[0]["ja_text"], "line-1")
+
+    def test_speaker_segment_targets_by_key_builds_cache_once(self) -> None:
+        editor = _ApplyWorkflowEditorMeta()
+        path = Path("Map001.json")
+        s1 = _segment("Map001.json:1", ["a"])
+        s1.code101["parameters"][4] = "Alice"
+        s2 = _segment("Map001.json:2", ["b"])
+        s2.code101["parameters"][4] = "Alice"
+        s3 = _segment("Map001.json:3", ["c"])
+        s3.code101["parameters"][4] = "Bob"
+        editor.sessions[path] = FileSession(
+            path=path,
+            data={},
+            bundles=[],
+            segments=[s1, s2, s3],
+        )
+        harness = _ApplyWorkflowHarness(editor)
+
+        first_index = harness._speaker_segment_targets_by_key()
+        second_index = harness._speaker_segment_targets_by_key()
+
+        self.assertIs(first_index, second_index)
+        self.assertEqual(len(first_index["Alice"]), 2)
+        self.assertEqual(len(first_index["Bob"]), 1)
 
 
 if __name__ == "__main__":

@@ -239,6 +239,17 @@ class MassTranslateDialog(QDialog):
         self._dedupe_collapsed_entries = 0
         self._active_chunk_index = -1
         self._updating_paste_box = False
+        self._scope_completion_cache: dict[
+            tuple[str, tuple[bool, bool, bool]], tuple[int, int]
+        ] = {}
+        self._scope_completion_cache_flags: Optional[tuple[bool, bool, bool]] = None
+        self._overall_progress_cache: Optional[tuple[int, int]] = None
+        self._context_blocks_cache: dict[
+            tuple[Path, int, int, int], list[dict[str, str]]
+        ] = {}
+        self._speaker_segment_index_cache: Optional[
+            dict[str, list[tuple[Path, DialogueSegment]]]
+        ] = None
 
         self._build_ui()
         self._refresh_scope_items()
@@ -470,6 +481,19 @@ class MassTranslateDialog(QDialog):
         elif idx in self.chunk_drafts:
             del self.chunk_drafts[idx]
 
+    def _invalidate_completion_caches(self) -> None:
+        scope_cache = getattr(self, "_scope_completion_cache", None)
+        if isinstance(scope_cache, dict):
+            scope_cache.clear()
+        self._scope_completion_cache_flags = None
+        self._overall_progress_cache = None
+
+    def _invalidate_runtime_caches(self) -> None:
+        context_cache = getattr(self, "_context_blocks_cache", None)
+        if isinstance(context_cache, dict):
+            context_cache.clear()
+        self._speaker_segment_index_cache = None
+
     @staticmethod
     def _content_mode_flags_for_mode(mode: str) -> tuple[bool, bool, bool]:
         if mode == "all_content":
@@ -572,6 +596,14 @@ class MassTranslateDialog(QDialog):
                 return idx
         return fallback_index
 
+    @staticmethod
+    def _session_segment_index_from_lookup(
+        segment_lookup: dict[int, int],
+        segment: DialogueSegment,
+        fallback_index: int,
+    ) -> int:
+        return int(segment_lookup.get(id(segment), fallback_index))
+
     def _mode_has_pending_entries(self, mode: str) -> bool:
         include_dialogue, include_misc, include_speakers = self._content_mode_flags_for_mode(
             mode
@@ -668,6 +700,8 @@ class MassTranslateDialog(QDialog):
         return None
 
     def _on_scope_or_filters_changed(self) -> None:
+        self._invalidate_completion_caches()
+        self._invalidate_runtime_caches()
         self._refresh_scope_items()
         self._build_chunks()
 
@@ -987,6 +1021,10 @@ class MassTranslateDialog(QDialog):
             if group_updated:
                 groups_resolved += 1
 
+        if touched_paths:
+            self._invalidate_completion_caches()
+            self._invalidate_runtime_caches()
+
         for path in touched_paths:
             session = self.editor.sessions.get(path)
             if session is None:
@@ -1174,21 +1212,40 @@ class MassTranslateDialog(QDialog):
             self.editor._relative_path(item[0])))
         return items
 
-    def _scope_completion_counts(self, scope_value: str) -> tuple[int, int]:
-        include_dialogue, include_misc, include_speakers = self._content_mode_flags()
-        done = 0
-        total = 0
-        speaker_keys: set[str] = set()
+    def _prime_scope_completion_cache(self) -> None:
+        flags = self._content_mode_flags()
+        if self._scope_completion_cache_flags == flags and self._scope_completion_cache:
+            return
+
+        self._scope_completion_cache.clear()
+        self._scope_completion_cache_flags = flags
+        include_dialogue, include_misc, include_speakers = flags
+
+        all_done = 0
+        all_total = 0
+        speaker_keys_all: set[str] = set()
+        speaker_keys_by_scope: dict[str, set[str]] = {}
         source_lines_resolver = getattr(
             self.editor, "_segment_source_lines_for_translation", None
         )
-        for path, session in self._scope_session_items_from_value(scope_value):
+
+        items = list(self.editor.sessions.items())
+        items.sort(key=lambda item: natural_sort_key(self.editor._relative_path(item[0])))
+        for path, session in items:
+            scope_value = f"file:{path}"
+            done = 0
+            total = 0
+            speaker_keys_in_scope: set[str] = set()
             for segment in self._segments_for_session_mass_translate(path, session):
                 content_type = self._segment_content_type(path, session, segment)
-                if include_speakers and self._should_collect_global_speaker_key(session, content_type):
+                if include_speakers and self._should_collect_global_speaker_key(
+                    session,
+                    content_type,
+                ):
                     speaker_key = self._persistent_speaker_key_for_segment(segment)
                     if speaker_key != NO_SPEAKER_KEY:
-                        speaker_keys.add(speaker_key)
+                        speaker_keys_all.add(speaker_key)
+                        speaker_keys_in_scope.add(speaker_key)
                 if content_type == "dialogue" and not include_dialogue:
                     continue
                 if content_type == "misc" and not include_misc:
@@ -1201,18 +1258,40 @@ class MassTranslateDialog(QDialog):
                 )
                 if not self._has_translatable_source_lines(source_lines):
                     continue
-                translated = self._segment_has_translation(segment)
                 total += 1
-                if translated:
+                if self._segment_has_translation(segment):
                     done += 1
+            speaker_keys_by_scope[scope_value] = speaker_keys_in_scope
+            if include_speakers:
+                for speaker_key in speaker_keys_in_scope:
+                    total += 1
+                    if self.editor._speaker_translation_for_key(speaker_key).strip():
+                        done += 1
+            self._scope_completion_cache[(scope_value, flags)] = (done, total)
+            all_done += done
+            all_total += total
+
         if include_speakers:
-            for speaker_key in speaker_keys:
-                speaker_translated = bool(
-                    self.editor._speaker_translation_for_key(speaker_key).strip())
-                total += 1
-                if speaker_translated:
-                    done += 1
-        return done, total
+            all_done -= sum(
+                1
+                for speaker_keys in speaker_keys_by_scope.values()
+                for speaker_key in speaker_keys
+                if self.editor._speaker_translation_for_key(speaker_key).strip()
+            )
+            all_total -= sum(
+                len(speaker_keys) for speaker_keys in speaker_keys_by_scope.values()
+            )
+            for speaker_key in speaker_keys_all:
+                all_total += 1
+                if self.editor._speaker_translation_for_key(speaker_key).strip():
+                    all_done += 1
+
+        self._scope_completion_cache[("all", flags)] = (all_done, all_total)
+
+    def _scope_completion_counts(self, scope_value: str) -> tuple[int, int]:
+        self._prime_scope_completion_cache()
+        flags = self._content_mode_flags()
+        return self._scope_completion_cache.get((scope_value, flags), (0, 0))
 
     def _refresh_scope_items(self) -> None:
         previous = str(self.scope_combo.currentData()
@@ -1287,6 +1366,14 @@ class MassTranslateDialog(QDialog):
     ) -> list[dict[str, str]]:
         if box_limit <= 0:
             return []
+        context_cache = getattr(self, "_context_blocks_cache", None)
+        if not isinstance(context_cache, dict):
+            context_cache = {}
+            self._context_blocks_cache = context_cache
+        cache_key = (path, segment_index, direction, box_limit)
+        cached_blocks = context_cache.get(cache_key)
+        if cached_blocks is not None:
+            return [dict(block) for block in cached_blocks]
         session = self.editor.sessions.get(path)
         if session is None:
             return []
@@ -1322,7 +1409,8 @@ class MassTranslateDialog(QDialog):
 
         if direction < 0:
             blocks.reverse()
-        return blocks
+        context_cache[cache_key] = [dict(block) for block in blocks]
+        return [dict(block) for block in blocks]
 
     @staticmethod
     def _effective_context_box_count(
@@ -1497,9 +1585,16 @@ class MassTranslateDialog(QDialog):
         )
 
         for path, session in session_items:
+            segment_lookup = {
+                id(candidate): idx for idx, candidate in enumerate(session.segments)
+            }
             segments_for_scope = self._segments_for_session_mass_translate(path, session)
             for idx, segment in enumerate(segments_for_scope):
-                session_segment_index = self._session_segment_index(session, segment, idx)
+                session_segment_index = self._session_segment_index_from_lookup(
+                    segment_lookup,
+                    segment,
+                    idx,
+                )
                 source_lines = self._segment_source_lines_for_mass_translate(
                     segment,
                     source_lines_resolver,
@@ -1632,26 +1727,48 @@ class MassTranslateDialog(QDialog):
 
         return entries
 
+    @staticmethod
+    def _indented_json_block_length(value: Any, indent_size: int = 4) -> int:
+        serialized = json.dumps(value, ensure_ascii=False, indent=2)
+        lines = serialized.splitlines()
+        if not lines:
+            return 0
+        indent_prefix = " " * max(0, indent_size)
+        total = 0
+        for idx, line in enumerate(lines):
+            if idx > 0:
+                total += 1
+            total += len(indent_prefix) + len(line)
+        return total
+
+    @staticmethod
+    def _chunk_payload_char_count_for_entries(
+        entry_block_lengths: list[int],
+    ) -> int:
+        if not entry_block_lengths:
+            return len('{\n  "entries": [\n\n  ]\n}')
+        entries_total = sum(entry_block_lengths)
+        delimiters_total = 2 * (len(entry_block_lengths) - 1)
+        return len('{\n  "entries": [\n') + entries_total + delimiters_total + len('\n  ]\n}')
+
     def _chunkify_entries(self, entries: list[dict[str, Any]], max_chars: int) -> list[list[dict[str, Any]]]:
         if not entries:
             return []
         safe_max = max(500, max_chars)
         chunks: list[list[dict[str, Any]]] = []
         current: list[dict[str, Any]] = []
+        current_lengths: list[int] = []
         for entry in entries:
-            candidate = current + [entry]
-            probe_size = len(
-                json.dumps(
-                    {"entries": candidate},
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
+            entry_length = self._indented_json_block_length(entry)
+            candidate_lengths = current_lengths + [entry_length]
+            probe_size = self._chunk_payload_char_count_for_entries(candidate_lengths)
             if current and probe_size > safe_max:
                 chunks.append(current)
                 current = [entry]
+                current_lengths = [entry_length]
             else:
-                current = candidate
+                current.append(entry)
+                current_lengths = candidate_lengths
         if current:
             chunks.append(current)
         return chunks
@@ -1686,6 +1803,9 @@ class MassTranslateDialog(QDialog):
         return QColor.fromHsv(hue, 220, 214)
 
     def _overall_translation_progress_counts(self) -> tuple[int, int]:
+        cached = getattr(self, "_overall_progress_cache", None)
+        if cached is not None:
+            return cached
         done = 0
         total = 0
         speaker_keys: set[str] = set()
@@ -1718,7 +1838,9 @@ class MassTranslateDialog(QDialog):
             total += 1
             if self.editor._speaker_translation_for_key(speaker_key).strip():
                 done += 1
-        return done, total
+        result = (done, total)
+        self._overall_progress_cache = result
+        return result
 
     def _refresh_total_progress_bar(self) -> None:
         done, total = self._overall_translation_progress_counts()
@@ -2024,6 +2146,7 @@ class MassTranslateDialog(QDialog):
 
     def _build_chunks(self) -> None:
         include_dialogue, include_misc, include_speakers = self._content_mode_flags()
+        self._invalidate_runtime_caches()
         if not include_dialogue and not include_misc and not include_speakers:
             QMessageBox.warning(
                 self,
@@ -2388,6 +2511,22 @@ class MassTranslateDialog(QDialog):
             targets.extend(self.speaker_segment_duplicate_targets.get(entry_id, []))
         return targets
 
+    def _speaker_segment_targets_by_key(
+        self,
+    ) -> dict[str, list[tuple[Path, DialogueSegment]]]:
+        cached = getattr(self, "_speaker_segment_index_cache", None)
+        if cached is not None:
+            return cached
+        index: dict[str, list[tuple[Path, DialogueSegment]]] = {}
+        for path, session in self.editor.sessions.items():
+            for segment in session.segments:
+                speaker_key = self._persistent_speaker_key_for_segment(segment)
+                if speaker_key not in index:
+                    index[speaker_key] = []
+                index[speaker_key].append((path, segment))
+        self._speaker_segment_index_cache = index
+        return index
+
     def _expected_source_line_count(self, segment: DialogueSegment) -> int:
         source_lines = self._segment_source_lines_for_mass_translate(segment)
         normalized_source = self._normalize_translation_lines_for_segment(
@@ -2644,6 +2783,9 @@ class MassTranslateDialog(QDialog):
         speaker_keys_applied = 0
         speaker_blocks_applied = 0
         missing_translation_field_ids: list[str] = []
+        speaker_segment_targets_by_key: Optional[
+            dict[str, list[tuple[Path, DialogueSegment]]]
+        ] = None
         for base_entry in chunk_entries:
             if not isinstance(base_entry, dict):
                 continue
@@ -2736,18 +2878,18 @@ class MassTranslateDialog(QDialog):
                     self.editor.speaker_translation_map.pop(speaker_key, None)
                 speaker_keys_applied += 1
 
-                for path, session in self.editor.sessions.items():
-                    session_touched = False
-                    for segment in session.segments:
-                        if self._persistent_speaker_key_for_segment(segment) != speaker_key:
-                            continue
-                        if segment.translation_speaker.strip() == cleaned:
-                            continue
-                        segment.translation_speaker = cleaned
-                        session_touched = True
-                        speaker_blocks_applied += 1
-                    if session_touched:
-                        touched_paths.add(path)
+                if speaker_segment_targets_by_key is None:
+                    speaker_segment_targets_by_key = self._speaker_segment_targets_by_key()
+                for path, segment in speaker_segment_targets_by_key.get(speaker_key, []):
+                    if segment.translation_speaker.strip() == cleaned:
+                        continue
+                    segment.translation_speaker = cleaned
+                    touched_paths.add(path)
+                    speaker_blocks_applied += 1
+
+        if touched_paths or speaker_keys_applied > 0:
+            self._invalidate_completion_caches()
+            self._invalidate_runtime_caches()
 
         for path in touched_paths:
             session = self.editor.sessions.get(path)
