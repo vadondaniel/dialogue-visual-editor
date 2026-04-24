@@ -521,8 +521,15 @@ class DialogueVisualEditor(
         self.audit_control_mismatch_render_timer.timeout.connect(
             self._render_next_audit_control_mismatch_batch
         )
+        self.audit_consistency_cache_key: Optional[tuple[int, bool, bool, str]] = None
+        self.audit_consistency_cache_groups: list[dict[str, Any]] = []
+        self.audit_consistency_displayed_key: Optional[tuple[int, bool, bool, str]] = None
+        self.audit_consistency_display_complete = False
         self.audit_term_cache_key: Optional[tuple[int, str, str, bool]] = None
         self.audit_term_cache_groups: list[dict[str, Any]] = []
+        self.audit_term_suggestions_cache_key: Optional[tuple[int, bool]] = None
+        self.audit_term_suggestions_jp: list[tuple[str, int]] = []
+        self.audit_term_suggestions_en: list[tuple[str, int]] = []
         self.audit_term_render_groups: list[dict[str, Any]] = []
         self.audit_term_render_index = 0
         self.audit_term_render_generation = 0
@@ -546,7 +553,22 @@ class DialogueVisualEditor(
         self.audit_term_hits_render_timer.timeout.connect(
             self._render_next_audit_term_hits_batch
         )
+        self.audit_translation_collision_cache_key: Optional[tuple[int, bool, bool]] = None
+        self.audit_translation_collision_cache_groups: list[dict[str, Any]] = []
+        self.audit_translation_collision_displayed_key: Optional[tuple[int, bool, bool]] = None
+        self.audit_translation_collision_display_complete = False
+        self.audit_name_consistency_base_cache_key: Optional[tuple[int, bool]] = None
+        self.audit_name_consistency_base_payload: Optional[dict[str, Any]] = None
+        self.audit_name_consistency_cache_key: Optional[
+            tuple[int, bool, bool, str, str]
+        ] = None
+        self.audit_name_consistency_cache_groups: list[dict[str, Any]] = []
+        self.audit_name_consistency_displayed_key: Optional[
+            tuple[int, bool, bool, str, str]
+        ] = None
+        self.audit_name_consistency_display_complete = False
         self.audit_worker_executor = ThreadPoolExecutor(max_workers=1)
+        self.projection_worker_executor = ThreadPoolExecutor(max_workers=1)
         self.audit_search_worker_future: Optional[Future] = None
         self.audit_search_worker_running_request: Optional[dict[str, Any]] = None
         self.audit_search_worker_pending_request: Optional[dict[str, Any]] = None
@@ -570,6 +592,14 @@ class DialogueVisualEditor(
         self.audit_control_worker_timer.setSingleShot(True)
         self.audit_control_worker_timer.timeout.connect(
             self._poll_audit_control_worker)
+        self.audit_consistency_worker_future: Optional[Future] = None
+        self.audit_consistency_worker_running_request: Optional[dict[str, Any]] = None
+        self.audit_consistency_worker_pending_request: Optional[dict[str, Any]] = None
+        self.audit_consistency_worker_timer = QTimer(self)
+        self.audit_consistency_worker_timer.setSingleShot(True)
+        self.audit_consistency_worker_timer.timeout.connect(
+            self._poll_audit_consistency_worker
+        )
         self.audit_term_worker_future: Optional[Future] = None
         self.audit_term_worker_running_request: Optional[dict[str, Any]] = None
         self.audit_term_worker_pending_request: Optional[dict[str, Any]] = None
@@ -577,6 +607,32 @@ class DialogueVisualEditor(
         self.audit_term_worker_timer.setSingleShot(True)
         self.audit_term_worker_timer.timeout.connect(
             self._poll_audit_term_worker)
+        self.audit_term_suggestions_worker_future: Optional[Future] = None
+        self.audit_term_suggestions_worker_running_request: Optional[dict[str, Any]] = None
+        self.audit_term_suggestions_worker_pending_request: Optional[dict[str, Any]] = None
+        self.audit_term_suggestions_worker_timer = QTimer(self)
+        self.audit_term_suggestions_worker_timer.setSingleShot(True)
+        self.audit_term_suggestions_worker_timer.timeout.connect(
+            self._poll_audit_term_suggestions_worker
+        )
+        self.audit_translation_collision_worker_future: Optional[Future] = None
+        self.audit_translation_collision_worker_running_request: Optional[dict[str, Any]] = None
+        self.audit_translation_collision_worker_pending_request: Optional[
+            dict[str, Any]
+        ] = None
+        self.audit_translation_collision_worker_timer = QTimer(self)
+        self.audit_translation_collision_worker_timer.setSingleShot(True)
+        self.audit_translation_collision_worker_timer.timeout.connect(
+            self._poll_audit_translation_collision_worker
+        )
+        self.audit_name_consistency_worker_future: Optional[Future] = None
+        self.audit_name_consistency_worker_running_request: Optional[dict[str, Any]] = None
+        self.audit_name_consistency_worker_pending_request: Optional[dict[str, Any]] = None
+        self.audit_name_consistency_worker_timer = QTimer(self)
+        self.audit_name_consistency_worker_timer.setSingleShot(True)
+        self.audit_name_consistency_worker_timer.timeout.connect(
+            self._poll_audit_name_consistency_worker
+        )
         self.structural_undo_stack: list[StructuralAction] = []
         self.structural_redo_stack: list[StructuralAction] = []
         self._reset_undo_pipeline_state()
@@ -8831,12 +8887,22 @@ class DialogueVisualEditor(
         self.audit_search_worker_timer.stop()
         self.audit_sanitize_worker_timer.stop()
         self.audit_control_worker_timer.stop()
+        self.audit_consistency_worker_timer.stop()
         self.audit_term_worker_timer.stop()
+        self.audit_term_suggestions_worker_timer.stop()
+        self.audit_translation_collision_worker_timer.stop()
+        self.audit_name_consistency_worker_timer.stop()
         try:
             self.audit_worker_executor.shutdown(
                 wait=False, cancel_futures=True)
         except TypeError:
             self.audit_worker_executor.shutdown(wait=False)
+        try:
+            self.projection_worker_executor.shutdown(
+                wait=False, cancel_futures=True
+            )
+        except TypeError:
+            self.projection_worker_executor.shutdown(wait=False)
         self._save_ui_state()
         super().closeEvent(event)
 

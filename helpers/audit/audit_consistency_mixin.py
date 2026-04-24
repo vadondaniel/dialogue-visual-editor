@@ -46,6 +46,19 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     _CONSISTENCY_TARGET_MIN_LINES = 5
     _CONSISTENCY_TARGET_MAX_LINES = 16
 
+    def _consistency_request_key(
+        self,
+        request: Optional[dict[str, Any]],
+    ) -> tuple[Any, ...]:
+        if not isinstance(request, dict):
+            return ()
+        return (
+            request.get("generation"),
+            request.get("only_inconsistent"),
+            request.get("dialogue_only"),
+            request.get("sort_mode"),
+        )
+
     def _consistency_entry_file_stem(self, path_raw: str) -> str:
         relative_path = self._relative_path(Path(path_raw))
         file_stem = Path(relative_path).stem.strip() or Path(path_raw).stem.strip()
@@ -1567,15 +1580,37 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         only_inconsistent: bool,
         dialogue_only: bool,
         sort_mode: str,
+        path_sessions: Optional[list[tuple[Path, FileSession]]] = None,
     ) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
         first_seen_order: dict[str, int] = {}
         group_labels: dict[str, set[str]] = {}
         source_order = 0
-        for path in self.file_paths:
-            session = self.sessions.get(path)
-            if session is None:
-                continue
+        rows: list[tuple[Path, FileSession]] = []
+        if isinstance(path_sessions, list):
+            rows = path_sessions
+        else:
+            snapshot_resolver = getattr(self, "_audit_path_sessions_snapshot", None)
+            if callable(snapshot_resolver):
+                try:
+                    snapshot_rows = snapshot_resolver()
+                except Exception:
+                    snapshot_rows = None
+                if isinstance(snapshot_rows, list):
+                    rows = [
+                        cast(tuple[Path, FileSession], row)
+                        for row in snapshot_rows
+                        if isinstance(row, tuple)
+                        and len(row) == 2
+                        and isinstance(row[0], Path)
+                        and isinstance(row[1], FileSession)
+                    ]
+            if not rows:
+                for path in getattr(self, "file_paths", []):
+                    session = getattr(self, "sessions", {}).get(path)
+                    if isinstance(path, Path) and isinstance(session, FileSession):
+                        rows.append((path, session))
+        for path, session in rows:
             for entry_row in self._consistency_logical_entry_rows_for_session(
                 session,
                 dialogue_only,
@@ -1718,6 +1753,189 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
                 )
             )
         return groups
+
+    def _compute_audit_consistency_groups_worker(
+        self,
+        path_sessions: list[tuple[Path, FileSession]],
+        only_inconsistent: bool,
+        dialogue_only: bool,
+        sort_mode: str,
+    ) -> list[dict[str, Any]]:
+        return self._collect_audit_consistency_groups(
+            only_inconsistent,
+            dialogue_only,
+            sort_mode,
+            path_sessions=path_sessions,
+        )
+
+    def _queue_audit_consistency_worker(self, request: dict[str, Any]) -> None:
+        request_key = self._consistency_request_key(request)
+        if request_key == self._consistency_request_key(
+            self.audit_consistency_worker_running_request
+        ):
+            return
+        if request_key == self._consistency_request_key(
+            self.audit_consistency_worker_pending_request
+        ):
+            return
+        self.audit_consistency_worker_pending_request = request
+        if self.audit_consistency_worker_future is None:
+            self._start_next_audit_consistency_worker()
+
+    def _start_next_audit_consistency_worker(self) -> None:
+        request = self.audit_consistency_worker_pending_request
+        if request is None:
+            return
+        self.audit_consistency_worker_pending_request = None
+        self.audit_consistency_worker_running_request = request
+        try:
+            self.audit_consistency_worker_future = self.audit_worker_executor.submit(
+                self._compute_audit_consistency_groups_worker,
+                cast(list[tuple[Path, FileSession]], request["path_sessions"]),
+                bool(request["only_inconsistent"]),
+                bool(request["dialogue_only"]),
+                str(request["sort_mode"]),
+            )
+        except Exception:
+            self.audit_consistency_worker_future = None
+            self.audit_consistency_worker_running_request = None
+            if self.audit_consistency_status_label is not None:
+                self.audit_consistency_status_label.setText(
+                    "Consistency scan failed."
+                )
+            return
+        self.audit_consistency_worker_timer.start(18)
+
+    def _poll_audit_consistency_worker(self) -> None:
+        future = self.audit_consistency_worker_future
+        if future is None:
+            if self.audit_consistency_worker_pending_request is not None:
+                self._start_next_audit_consistency_worker()
+            return
+        if not future.done():
+            self.audit_consistency_worker_timer.start(18)
+            return
+
+        running_request = self.audit_consistency_worker_running_request
+        self.audit_consistency_worker_future = None
+        self.audit_consistency_worker_running_request = None
+        try:
+            groups = cast(list[dict[str, Any]], future.result())
+        except Exception:
+            if self.audit_consistency_worker_pending_request is not None:
+                self._start_next_audit_consistency_worker()
+            if self.audit_consistency_status_label is not None:
+                self.audit_consistency_status_label.setText(
+                    "Consistency scan failed."
+                )
+            return
+
+        if self.audit_consistency_worker_pending_request is not None:
+            self._start_next_audit_consistency_worker()
+            return
+        if not isinstance(running_request, dict):
+            return
+        generation = int(running_request.get("generation", -1))
+        only_inconsistent = bool(running_request.get("only_inconsistent", True))
+        dialogue_only = bool(running_request.get("dialogue_only", True))
+        sort_mode = str(running_request.get("sort_mode", "source_order"))
+        if generation != self.audit_cache_generation:
+            return
+        if (
+            self.audit_consistency_only_inconsistent_check is None
+            or self.audit_consistency_dialogue_only_check is None
+            or self.audit_consistency_sort_combo is None
+        ):
+            return
+        sort_mode_raw = self.audit_consistency_sort_combo.currentData()
+        current_sort_mode = (
+            sort_mode_raw if isinstance(sort_mode_raw, str) else "source_order"
+        )
+        if (
+            self.audit_consistency_only_inconsistent_check.isChecked()
+            != only_inconsistent
+            or self.audit_consistency_dialogue_only_check.isChecked()
+            != dialogue_only
+            or current_sort_mode != sort_mode
+        ):
+            return
+
+        requested_key = (generation, only_inconsistent, dialogue_only, sort_mode)
+        preferred_source_raw = running_request.get("preferred_source")
+        preferred_source = (
+            str(preferred_source_raw)
+            if isinstance(preferred_source_raw, str)
+            else None
+        )
+        preferred_row_raw = running_request.get("preferred_row")
+        preferred_row = (
+            int(preferred_row_raw)
+            if isinstance(preferred_row_raw, int)
+            else None
+        )
+        self.audit_consistency_cache_key = requested_key
+        self.audit_consistency_cache_groups = list(groups)
+        self._render_audit_consistency_groups(
+            groups,
+            requested_key=requested_key,
+            preferred_source=preferred_source,
+            preferred_row=preferred_row,
+        )
+
+    def _render_audit_consistency_groups(
+        self,
+        groups: list[dict[str, Any]],
+        *,
+        requested_key: tuple[int, bool, bool, str],
+        preferred_source: Optional[str] = None,
+        preferred_row: Optional[int] = None,
+    ) -> None:
+        if (
+            self.audit_consistency_groups_list is None
+            or self.audit_consistency_status_label is None
+        ):
+            return
+        self.audit_consistency_groups_list.clear()
+        selected_row = -1
+        total_entries = 0
+        for idx, group in enumerate(groups):
+            source_text = str(group.get("source_text", ""))
+            label_hint = str(group.get("label_hint", "")).strip()
+            count = int(group.get("entry_count", 0))
+            variants = int(group.get("variant_count", 0))
+            total_entries += count
+            if label_hint:
+                label = (
+                    f"x{count} | variants: {variants} | {label_hint} | "
+                    f"{preview_text(source_text, 96)}"
+                )
+            else:
+                label = (
+                    f"x{count} | variants: {variants} | "
+                    f"{preview_text(source_text, 96)}"
+                )
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, group)
+            self.audit_consistency_groups_list.addItem(item)
+            if preferred_source and source_text == preferred_source:
+                if selected_row < 0:
+                    selected_row = idx
+
+        if groups:
+            if selected_row < 0:
+                if preferred_row is not None:
+                    selected_row = max(0, min(int(preferred_row), len(groups) - 1))
+                else:
+                    selected_row = 0
+            self.audit_consistency_groups_list.setCurrentRow(selected_row)
+        self.audit_consistency_status_label.setText(
+            f"Duplicate groups: {len(groups)} | Duplicate entries: {total_entries}"
+        )
+        self.audit_consistency_displayed_key = requested_key
+        self.audit_consistency_display_complete = True
+        self._refresh_audit_consistency_entries()
+        self._refresh_audit_consistency_target_overflow_status()
+        self._refresh_audit_consistency_neighbors_preview()
 
     def _refresh_audit_consistency_entries(self) -> None:
         if (
@@ -1925,50 +2143,69 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         dialogue_only = self.audit_consistency_dialogue_only_check.isChecked()
         sort_mode_raw = self.audit_consistency_sort_combo.currentData()
         sort_mode = sort_mode_raw if isinstance(sort_mode_raw, str) else "source_order"
-        groups = self._collect_audit_consistency_groups(
+        generation = int(getattr(self, "audit_cache_generation", 0))
+        requested_key = (
+            generation,
             only_inconsistent,
             dialogue_only,
             sort_mode,
         )
-        self.audit_consistency_groups_list.clear()
-        selected_row = -1
-        total_entries = 0
-        for idx, group in enumerate(groups):
-            source_text = str(group.get("source_text", ""))
-            label_hint = str(group.get("label_hint", "")).strip()
-            count = int(group.get("entry_count", 0))
-            variants = int(group.get("variant_count", 0))
-            total_entries += count
-            if label_hint:
-                label = (
-                    f"x{count} | variants: {variants} | {label_hint} | "
-                    f"{preview_text(source_text, 96)}"
-                )
-            else:
-                label = (
-                    f"x{count} | variants: {variants} | "
-                    f"{preview_text(source_text, 96)}"
-                )
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, group)
-            self.audit_consistency_groups_list.addItem(item)
-            if preferred_source and source_text == preferred_source:
-                if selected_row < 0:
-                    selected_row = idx
-
-        if groups:
-            if selected_row < 0:
-                if preferred_row is not None:
-                    selected_row = max(0, min(int(preferred_row), len(groups) - 1))
-                else:
-                    selected_row = 0
-            self.audit_consistency_groups_list.setCurrentRow(selected_row)
-        self.audit_consistency_status_label.setText(
-            f"Duplicate groups: {len(groups)} | Duplicate entries: {total_entries}"
+        display_complete = bool(
+            getattr(self, "audit_consistency_display_complete", False)
         )
+        displayed_key = getattr(self, "audit_consistency_displayed_key", None)
+        if (
+            display_complete
+            and displayed_key == requested_key
+            and preferred_source is None
+            and preferred_row is None
+        ):
+            return
+        self.audit_consistency_display_complete = False
+        self.audit_consistency_displayed_key = None
+        cache_key = getattr(self, "audit_consistency_cache_key", None)
+        cache_groups_raw = getattr(self, "audit_consistency_cache_groups", [])
+        if cache_key == requested_key and isinstance(cache_groups_raw, list):
+            groups = [item for item in cache_groups_raw if isinstance(item, dict)]
+            self._render_audit_consistency_groups(
+                groups,
+                requested_key=requested_key,
+                preferred_source=preferred_source,
+                preferred_row=preferred_row,
+            )
+            return
+        worker_ready = bool(
+            hasattr(self, "audit_consistency_worker_timer")
+            and hasattr(self, "audit_worker_executor")
+        )
+        if not worker_ready:
+            groups = self._collect_audit_consistency_groups(
+                only_inconsistent,
+                dialogue_only,
+                sort_mode,
+            )
+            self.audit_consistency_cache_key = requested_key
+            self.audit_consistency_cache_groups = list(groups)
+            self._render_audit_consistency_groups(
+                groups,
+                requested_key=requested_key,
+                preferred_source=preferred_source,
+                preferred_row=preferred_row,
+            )
+            return
+        self.audit_consistency_groups_list.clear()
+        self.audit_consistency_status_label.setText("Scanning duplicate groups...")
         self._refresh_audit_consistency_entries()
-        self._refresh_audit_consistency_target_overflow_status()
-        self._refresh_audit_consistency_neighbors_preview()
+        request = {
+            "generation": generation,
+            "only_inconsistent": only_inconsistent,
+            "dialogue_only": dialogue_only,
+            "sort_mode": sort_mode,
+            "preferred_source": preferred_source,
+            "preferred_row": preferred_row,
+            "path_sessions": self._audit_path_sessions_snapshot(),
+        }
+        self._queue_audit_consistency_worker(request)
 
     def _use_most_common_audit_consistency_translation(self) -> None:
         if self.audit_consistency_groups_list is None or self.audit_consistency_target_edit is None:

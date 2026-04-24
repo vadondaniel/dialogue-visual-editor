@@ -18,6 +18,20 @@ class _AuditNameConsistencyHostTypingFallback:
 
 
 class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
+    def _name_consistency_request_key(
+        self,
+        request: Optional[dict[str, Any]],
+    ) -> tuple[Any, ...]:
+        if not isinstance(request, dict):
+            return ()
+        return (
+            request.get("generation"),
+            request.get("dialogue_only"),
+            request.get("only_discrepancies"),
+            request.get("filter_text"),
+            request.get("sort_mode"),
+        )
+
     def _replace_name_consistency_case_insensitive(
         self,
         text: str,
@@ -270,11 +284,38 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             lines.extend(self._name_consistency_translation_lines_for_segment(segment))
         return lines if lines else [""]
 
-    def _collect_misc_glossary_entries(self) -> list[dict[str, Any]]:
+    def _collect_misc_glossary_entries(
+        self,
+        path_sessions: Optional[list[tuple[Path, FileSession]]] = None,
+    ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str, str]] = set()
         field_resolver = getattr(self, "_name_index_field_from_uid", None)
-        for path, session in self._audit_path_sessions_snapshot():
+        rows: list[tuple[Path, FileSession]] = []
+        if isinstance(path_sessions, list):
+            rows = path_sessions
+        else:
+            snapshot_resolver = getattr(self, "_audit_path_sessions_snapshot", None)
+            if callable(snapshot_resolver):
+                try:
+                    snapshot_rows = snapshot_resolver()
+                except Exception:
+                    snapshot_rows = None
+                if isinstance(snapshot_rows, list):
+                    rows = [
+                        cast(tuple[Path, FileSession], row)
+                        for row in snapshot_rows
+                        if isinstance(row, tuple)
+                        and len(row) == 2
+                        and isinstance(row[0], Path)
+                        and isinstance(row[1], FileSession)
+                    ]
+            if not rows:
+                for path in getattr(self, "file_paths", []):
+                    session = getattr(self, "sessions", {}).get(path)
+                    if isinstance(path, Path) and isinstance(session, FileSession):
+                        rows.append((path, session))
+        for path, session in rows:
             if not self._is_name_index_session(session):
                 continue
             for block_index, segment in enumerate(session.segments, start=1):
@@ -329,9 +370,37 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 )
         return entries
 
-    def _collect_dialogue_rows(self, dialogue_only: bool) -> list[dict[str, Any]]:
+    def _collect_dialogue_rows(
+        self,
+        dialogue_only: bool,
+        path_sessions: Optional[list[tuple[Path, FileSession]]] = None,
+    ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        for path, session in self._audit_path_sessions_snapshot():
+        scan_rows: list[tuple[Path, FileSession]] = []
+        if isinstance(path_sessions, list):
+            scan_rows = path_sessions
+        else:
+            snapshot_resolver = getattr(self, "_audit_path_sessions_snapshot", None)
+            if callable(snapshot_resolver):
+                try:
+                    snapshot_rows = snapshot_resolver()
+                except Exception:
+                    snapshot_rows = None
+                if isinstance(snapshot_rows, list):
+                    scan_rows = [
+                        cast(tuple[Path, FileSession], row)
+                        for row in snapshot_rows
+                        if isinstance(row, tuple)
+                        and len(row) == 2
+                        and isinstance(row[0], Path)
+                        and isinstance(row[1], FileSession)
+                    ]
+            if not scan_rows:
+                for path in getattr(self, "file_paths", []):
+                    session = getattr(self, "sessions", {}).get(path)
+                    if isinstance(path, Path) and isinstance(session, FileSession):
+                        scan_rows.append((path, session))
+        for path, session in scan_rows:
             if self._is_name_index_session(session):
                 continue
             for group in self._name_consistency_scan_groups(session):
@@ -397,17 +466,56 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
         line_index, source_line, _source_line_fold = line_rows[0]
         return line_index, source_line
 
+    def _collect_audit_name_consistency_base(
+        self,
+        dialogue_only: bool,
+        path_sessions: Optional[list[tuple[Path, FileSession]]] = None,
+    ) -> dict[str, Any]:
+        glossary_entries = self._collect_misc_glossary_entries(
+            path_sessions=path_sessions
+        )
+        dialogue_rows = self._collect_dialogue_rows(
+            dialogue_only=dialogue_only,
+            path_sessions=path_sessions,
+        )
+        return {
+            "glossary_entries": glossary_entries,
+            "dialogue_rows": dialogue_rows,
+        }
+
     def _collect_audit_name_consistency_groups(
         self,
         dialogue_only: bool,
         only_discrepancies: bool = True,
         filter_text: str = "",
         sort_mode: str = "hits_desc",
+        base_payload: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
-        glossary_entries = self._collect_misc_glossary_entries()
+        glossary_entries: list[dict[str, Any]] = []
+        dialogue_rows: list[dict[str, Any]] = []
+        if isinstance(base_payload, dict):
+            glossary_raw = base_payload.get("glossary_entries")
+            if isinstance(glossary_raw, list):
+                glossary_entries = [
+                    item for item in glossary_raw if isinstance(item, dict)
+                ]
+            dialogue_raw = base_payload.get("dialogue_rows")
+            if isinstance(dialogue_raw, list):
+                dialogue_rows = [item for item in dialogue_raw if isinstance(item, dict)]
+        if not glossary_entries or not dialogue_rows:
+            fallback_payload = self._collect_audit_name_consistency_base(
+                dialogue_only=dialogue_only
+            )
+            glossary_raw = fallback_payload.get("glossary_entries")
+            if isinstance(glossary_raw, list):
+                glossary_entries = [
+                    item for item in glossary_raw if isinstance(item, dict)
+                ]
+            dialogue_raw = fallback_payload.get("dialogue_rows")
+            if isinstance(dialogue_raw, list):
+                dialogue_rows = [item for item in dialogue_raw if isinstance(item, dict)]
         if not glossary_entries:
             return []
-        dialogue_rows = self._collect_dialogue_rows(dialogue_only=dialogue_only)
         if not dialogue_rows:
             return []
         filter_fold = self._name_consistency_match_key(filter_text)
@@ -524,6 +632,216 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
                 )
             )
         return groups
+
+    def _compute_audit_name_consistency_groups_worker(
+        self,
+        path_sessions: list[tuple[Path, FileSession]],
+        dialogue_only: bool,
+        only_discrepancies: bool,
+        filter_text: str,
+        sort_mode: str,
+        base_payload: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        effective_base = (
+            base_payload
+            if isinstance(base_payload, dict)
+            else self._collect_audit_name_consistency_base(
+                dialogue_only=dialogue_only,
+                path_sessions=path_sessions,
+            )
+        )
+        groups = self._collect_audit_name_consistency_groups(
+            dialogue_only=dialogue_only,
+            only_discrepancies=only_discrepancies,
+            filter_text=filter_text,
+            sort_mode=sort_mode,
+            base_payload=effective_base,
+        )
+        return {
+            "base_payload": effective_base,
+            "groups": groups,
+        }
+
+    def _queue_audit_name_consistency_worker(self, request: dict[str, Any]) -> None:
+        request_key = self._name_consistency_request_key(request)
+        if request_key == self._name_consistency_request_key(
+            self.audit_name_consistency_worker_running_request
+        ):
+            return
+        if request_key == self._name_consistency_request_key(
+            self.audit_name_consistency_worker_pending_request
+        ):
+            return
+        self.audit_name_consistency_worker_pending_request = request
+        if self.audit_name_consistency_worker_future is None:
+            self._start_next_audit_name_consistency_worker()
+
+    def _start_next_audit_name_consistency_worker(self) -> None:
+        request = self.audit_name_consistency_worker_pending_request
+        if request is None:
+            return
+        self.audit_name_consistency_worker_pending_request = None
+        self.audit_name_consistency_worker_running_request = request
+        try:
+            self.audit_name_consistency_worker_future = self.audit_worker_executor.submit(
+                self._compute_audit_name_consistency_groups_worker,
+                cast(list[tuple[Path, FileSession]], request["path_sessions"]),
+                bool(request["dialogue_only"]),
+                bool(request["only_discrepancies"]),
+                str(request["filter_text"]),
+                str(request["sort_mode"]),
+                cast(Optional[dict[str, Any]], request.get("base_payload")),
+            )
+        except Exception:
+            self.audit_name_consistency_worker_future = None
+            self.audit_name_consistency_worker_running_request = None
+            if self.audit_name_consistency_status_label is not None:
+                self.audit_name_consistency_status_label.setText(
+                    "Glossary consistency scan failed."
+                )
+            return
+        self.audit_name_consistency_worker_timer.start(18)
+
+    def _poll_audit_name_consistency_worker(self) -> None:
+        future = self.audit_name_consistency_worker_future
+        if future is None:
+            if self.audit_name_consistency_worker_pending_request is not None:
+                self._start_next_audit_name_consistency_worker()
+            return
+        if not future.done():
+            self.audit_name_consistency_worker_timer.start(18)
+            return
+
+        running_request = self.audit_name_consistency_worker_running_request
+        self.audit_name_consistency_worker_future = None
+        self.audit_name_consistency_worker_running_request = None
+        try:
+            payload = cast(dict[str, Any], future.result())
+        except Exception:
+            if self.audit_name_consistency_worker_pending_request is not None:
+                self._start_next_audit_name_consistency_worker()
+            if self.audit_name_consistency_status_label is not None:
+                self.audit_name_consistency_status_label.setText(
+                    "Glossary consistency scan failed."
+                )
+            return
+        if self.audit_name_consistency_worker_pending_request is not None:
+            self._start_next_audit_name_consistency_worker()
+            return
+        if not isinstance(running_request, dict):
+            return
+        generation = int(running_request.get("generation", -1))
+        dialogue_only = bool(running_request.get("dialogue_only", True))
+        only_discrepancies = bool(running_request.get("only_discrepancies", True))
+        filter_text = str(running_request.get("filter_text", ""))
+        sort_mode = str(running_request.get("sort_mode", "hits_desc"))
+        if generation != self.audit_cache_generation:
+            return
+        if (
+            self.audit_name_consistency_dialogue_only_check is None
+            or self.audit_name_consistency_only_discrepancy_check is None
+        ):
+            return
+        current_filter_text = ""
+        if self.audit_name_consistency_filter_edit is not None:
+            current_filter_text = self.audit_name_consistency_filter_edit.text()
+        current_sort_mode = "hits_desc"
+        if self.audit_name_consistency_sort_combo is not None:
+            sort_data = self.audit_name_consistency_sort_combo.currentData()
+            if isinstance(sort_data, str) and sort_data.strip():
+                current_sort_mode = sort_data
+        if (
+            self.audit_name_consistency_dialogue_only_check.isChecked()
+            != dialogue_only
+            or self.audit_name_consistency_only_discrepancy_check.isChecked()
+            != only_discrepancies
+            or current_filter_text != filter_text
+            or current_sort_mode != sort_mode
+        ):
+            return
+        base_payload_raw = payload.get("base_payload")
+        if isinstance(base_payload_raw, dict):
+            self.audit_name_consistency_base_cache_key = (
+                generation,
+                dialogue_only,
+            )
+            self.audit_name_consistency_base_payload = cast(
+                dict[str, Any], dict(base_payload_raw)
+            )
+        groups_raw = payload.get("groups")
+        groups = (
+            [item for item in groups_raw if isinstance(item, dict)]
+            if isinstance(groups_raw, list)
+            else []
+        )
+        requested_key = (
+            generation,
+            dialogue_only,
+            only_discrepancies,
+            filter_text,
+            sort_mode,
+        )
+        self.audit_name_consistency_cache_key = requested_key
+        self.audit_name_consistency_cache_groups = list(groups)
+        self._render_audit_name_consistency_groups(
+            list(groups),
+            only_discrepancies=only_discrepancies,
+            requested_key=requested_key,
+        )
+
+    def _render_audit_name_consistency_groups(
+        self,
+        groups: list[dict[str, Any]],
+        *,
+        only_discrepancies: bool,
+        requested_key: tuple[int, bool, bool, str, str],
+    ) -> None:
+        if (
+            self.audit_name_consistency_groups_list is None
+            or self.audit_name_consistency_status_label is None
+        ):
+            return
+        self.audit_name_consistency_groups_list.clear()
+        total_hits = 0
+        total_checked = 0
+        groups_with_discrepancy = 0
+        for group in groups:
+            source_term = str(group.get("source_term", ""))
+            expected_tl = str(group.get("expected_tl", ""))
+            hit_count = int(group.get("entry_count", 0))
+            checked_count = int(group.get("checked_count", 0))
+            misc_context = str(group.get("misc_context", ""))
+            total_hits += hit_count
+            total_checked += checked_count
+            if bool(group.get("has_discrepancy", False)):
+                groups_with_discrepancy += 1
+            label = (
+                f"miss {hit_count}/{checked_count} | "
+                f"{preview_text(source_term, 48)} -> {preview_text(expected_tl, 48)} | "
+                f"{preview_text(misc_context, 56)}"
+            )
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, group)
+            self.audit_name_consistency_groups_list.addItem(item)
+        if groups:
+            self.audit_name_consistency_groups_list.setCurrentRow(0)
+            if only_discrepancies:
+                self.audit_name_consistency_status_label.setText(
+                    f"Glossary issues: {len(groups)} | Missing lines: {total_hits} | Checked lines: {total_checked}"
+                )
+            else:
+                self.audit_name_consistency_status_label.setText(
+                    f"Glossary terms: {len(groups)} | Terms with misses: {groups_with_discrepancy} | Missing lines: {total_hits} | Checked lines: {total_checked}"
+                )
+        else:
+            self.audit_name_consistency_status_label.setText(
+                "No glossary issues found between misc entries and dialogue translations."
+            )
+        self.audit_name_consistency_displayed_key = requested_key
+        self.audit_name_consistency_display_complete = True
+        self._refresh_audit_name_consistency_entries()
+        self._refresh_audit_name_consistency_replace_state()
+        self._refresh_audit_name_consistency_misc_go_state()
 
     def _highlight_term_html(self, text: str, term: str) -> str:
         source_text = text or ""
@@ -826,52 +1144,84 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             sort_data = self.audit_name_consistency_sort_combo.currentData()
             if isinstance(sort_data, str) and sort_data.strip():
                 sort_mode = sort_data
-
-        groups = self._collect_audit_name_consistency_groups(
-            dialogue_only=dialogue_only,
-            only_discrepancies=only_discrepancies,
-            filter_text=filter_text,
-            sort_mode=sort_mode,
+        generation = int(getattr(self, "audit_cache_generation", 0))
+        requested_key = (
+            generation,
+            dialogue_only,
+            only_discrepancies,
+            filter_text,
+            sort_mode,
         )
+        display_complete = bool(
+            getattr(self, "audit_name_consistency_display_complete", False)
+        )
+        displayed_key = getattr(self, "audit_name_consistency_displayed_key", None)
+        if (
+            display_complete
+            and displayed_key == requested_key
+        ):
+            self._refresh_audit_name_consistency_entries()
+            self._refresh_audit_name_consistency_replace_state()
+            self._refresh_audit_name_consistency_misc_go_state()
+            return
+        self.audit_name_consistency_display_complete = False
+        self.audit_name_consistency_displayed_key = None
+        cache_key = getattr(self, "audit_name_consistency_cache_key", None)
+        cache_groups_raw = getattr(self, "audit_name_consistency_cache_groups", [])
+        if cache_key == requested_key and isinstance(cache_groups_raw, list):
+            groups = [item for item in cache_groups_raw if isinstance(item, dict)]
+            self._render_audit_name_consistency_groups(
+                groups,
+                only_discrepancies=only_discrepancies,
+                requested_key=requested_key,
+            )
+            return
+        base_key = (generation, dialogue_only)
+        base_payload: Optional[dict[str, Any]] = None
+        if (
+            self.audit_name_consistency_base_cache_key == base_key
+            and isinstance(self.audit_name_consistency_base_payload, dict)
+        ):
+            base_payload = cast(
+                dict[str, Any], dict(self.audit_name_consistency_base_payload)
+            )
+        worker_ready = bool(
+            hasattr(self, "audit_name_consistency_worker_timer")
+            and hasattr(self, "audit_worker_executor")
+        )
+        if not worker_ready:
+            groups = self._collect_audit_name_consistency_groups(
+                dialogue_only=dialogue_only,
+                only_discrepancies=only_discrepancies,
+                filter_text=filter_text,
+                sort_mode=sort_mode,
+                base_payload=base_payload,
+            )
+            self.audit_name_consistency_cache_key = requested_key
+            self.audit_name_consistency_cache_groups = list(groups)
+            self._render_audit_name_consistency_groups(
+                groups,
+                only_discrepancies=only_discrepancies,
+                requested_key=requested_key,
+            )
+            return
         self.audit_name_consistency_groups_list.clear()
-        total_hits = 0
-        total_checked = 0
-        groups_with_discrepancy = 0
-        for group in groups:
-            source_term = str(group.get("source_term", ""))
-            expected_tl = str(group.get("expected_tl", ""))
-            hit_count = int(group.get("entry_count", 0))
-            checked_count = int(group.get("checked_count", 0))
-            misc_context = str(group.get("misc_context", ""))
-            total_hits += hit_count
-            total_checked += checked_count
-            if bool(group.get("has_discrepancy", False)):
-                groups_with_discrepancy += 1
-            label = (
-                f"miss {hit_count}/{checked_count} | "
-                f"{preview_text(source_term, 48)} -> {preview_text(expected_tl, 48)} | "
-                f"{preview_text(misc_context, 56)}"
-            )
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, group)
-            self.audit_name_consistency_groups_list.addItem(item)
-        if groups:
-            self.audit_name_consistency_groups_list.setCurrentRow(0)
-            if only_discrepancies:
-                self.audit_name_consistency_status_label.setText(
-                    f"Glossary issues: {len(groups)} | Missing lines: {total_hits} | Checked lines: {total_checked}"
-                )
-            else:
-                self.audit_name_consistency_status_label.setText(
-                    f"Glossary terms: {len(groups)} | Terms with misses: {groups_with_discrepancy} | Missing lines: {total_hits} | Checked lines: {total_checked}"
-                )
-        else:
-            self.audit_name_consistency_status_label.setText(
-                "No glossary issues found between misc entries and dialogue translations."
-            )
+        self.audit_name_consistency_status_label.setText(
+            "Scanning glossary consistency..."
+        )
         self._refresh_audit_name_consistency_entries()
         self._refresh_audit_name_consistency_replace_state()
         self._refresh_audit_name_consistency_misc_go_state()
+        request = {
+            "generation": generation,
+            "dialogue_only": dialogue_only,
+            "only_discrepancies": only_discrepancies,
+            "filter_text": filter_text,
+            "sort_mode": sort_mode,
+            "base_payload": base_payload,
+            "path_sessions": self._audit_path_sessions_snapshot(),
+        }
+        self._queue_audit_name_consistency_worker(request)
 
     def _go_to_selected_audit_name_consistency_entry(self) -> None:
         if self.audit_name_consistency_entries_list is None:

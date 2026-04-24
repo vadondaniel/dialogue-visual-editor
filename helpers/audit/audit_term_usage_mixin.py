@@ -146,6 +146,17 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             request.get("dialogue_only"),
         )
 
+    def _term_suggestions_request_key(
+        self,
+        request: Optional[dict[str, Any]],
+    ) -> tuple[Any, ...]:
+        if not isinstance(request, dict):
+            return ()
+        return (
+            request.get("generation"),
+            request.get("dialogue_only"),
+        )
+
     def _plain_text_for_suggestions(self, value: str) -> str:
         base = strip_control_tokens(value or "").replace("\u3000", " ")
         return re.sub(r"\s+", " ", base).strip()
@@ -164,16 +175,38 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
     def _collect_audit_term_suggestions(
         self,
         dialogue_only: bool,
+        path_sessions: Optional[list[tuple[Path, FileSession]]] = None,
     ) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
         source_resolver = getattr(self, "_segment_source_lines_for_translation", None)
         tl_resolver = getattr(self, "_segment_translation_lines_for_translation", None)
         jp_counts: Counter[str] = Counter()
         en_word_counts: Counter[str] = Counter()
         en_bigram_counts: Counter[str] = Counter()
-        for path in self.file_paths:
-            session = self.sessions.get(path)
-            if session is None:
-                continue
+        rows: list[tuple[Path, FileSession]] = []
+        if isinstance(path_sessions, list):
+            rows = path_sessions
+        else:
+            snapshot_resolver = getattr(self, "_audit_path_sessions_snapshot", None)
+            if callable(snapshot_resolver):
+                try:
+                    snapshot_rows = snapshot_resolver()
+                except Exception:
+                    snapshot_rows = None
+                if isinstance(snapshot_rows, list):
+                    rows = [
+                        cast(tuple[Path, FileSession], row)
+                        for row in snapshot_rows
+                        if isinstance(row, tuple)
+                        and len(row) == 2
+                        and isinstance(row[0], Path)
+                        and isinstance(row[1], FileSession)
+                    ]
+            if not rows:
+                for path in getattr(self, "file_paths", []):
+                    session = getattr(self, "sessions", {}).get(path)
+                    if isinstance(path, Path) and isinstance(session, FileSession):
+                        rows.append((path, session))
+        for _path, session in rows:
             for segment in session.segments:
                 if dialogue_only and not bool(getattr(segment, "is_structural_dialogue", False)):
                     continue
@@ -242,17 +275,16 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         en_suggestions = en_suggestions[:120]
         return jp_suggestions, en_suggestions
 
-    def _refresh_audit_term_suggestions_panel(self) -> None:
+    def _set_audit_term_suggestions_lists(
+        self,
+        jp_suggestions: list[tuple[str, int]],
+        en_suggestions: list[tuple[str, int]],
+    ) -> None:
         if (
-            self.audit_term_dialogue_only_check is None
-            or self.audit_term_suggest_jp_list is None
+            self.audit_term_suggest_jp_list is None
             or self.audit_term_suggest_en_list is None
         ):
             return
-        dialogue_only = self.audit_term_dialogue_only_check.isChecked()
-        jp_suggestions, en_suggestions = self._collect_audit_term_suggestions(
-            dialogue_only
-        )
         self.audit_term_suggest_jp_list.clear()
         self.audit_term_suggest_en_list.clear()
         for token, count in jp_suggestions:
@@ -275,6 +307,140 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
                 },
             )
             self.audit_term_suggest_en_list.addItem(item)
+
+    def _compute_audit_term_suggestions_worker(
+        self,
+        path_sessions: list[tuple[Path, FileSession]],
+        dialogue_only: bool,
+    ) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+        return self._collect_audit_term_suggestions(
+            dialogue_only,
+            path_sessions=path_sessions,
+        )
+
+    def _queue_audit_term_suggestions_worker(self, request: dict[str, Any]) -> None:
+        request_key = self._term_suggestions_request_key(request)
+        if request_key == self._term_suggestions_request_key(
+            self.audit_term_suggestions_worker_running_request
+        ):
+            return
+        if request_key == self._term_suggestions_request_key(
+            self.audit_term_suggestions_worker_pending_request
+        ):
+            return
+        self.audit_term_suggestions_worker_pending_request = request
+        if self.audit_term_suggestions_worker_future is None:
+            self._start_next_audit_term_suggestions_worker()
+
+    def _start_next_audit_term_suggestions_worker(self) -> None:
+        request = self.audit_term_suggestions_worker_pending_request
+        if request is None:
+            return
+        self.audit_term_suggestions_worker_pending_request = None
+        self.audit_term_suggestions_worker_running_request = request
+        try:
+            self.audit_term_suggestions_worker_future = self.audit_worker_executor.submit(
+                self._compute_audit_term_suggestions_worker,
+                cast(list[tuple[Path, FileSession]], request["path_sessions"]),
+                bool(request["dialogue_only"]),
+            )
+        except Exception:
+            self.audit_term_suggestions_worker_future = None
+            self.audit_term_suggestions_worker_running_request = None
+            return
+        self.audit_term_suggestions_worker_timer.start(18)
+
+    def _poll_audit_term_suggestions_worker(self) -> None:
+        future = self.audit_term_suggestions_worker_future
+        if future is None:
+            if self.audit_term_suggestions_worker_pending_request is not None:
+                self._start_next_audit_term_suggestions_worker()
+            return
+        if not future.done():
+            self.audit_term_suggestions_worker_timer.start(18)
+            return
+
+        running_request = self.audit_term_suggestions_worker_running_request
+        self.audit_term_suggestions_worker_future = None
+        self.audit_term_suggestions_worker_running_request = None
+        try:
+            result = cast(tuple[list[tuple[str, int]], list[tuple[str, int]]], future.result())
+        except Exception:
+            if self.audit_term_suggestions_worker_pending_request is not None:
+                self._start_next_audit_term_suggestions_worker()
+            return
+        if self.audit_term_suggestions_worker_pending_request is not None:
+            self._start_next_audit_term_suggestions_worker()
+            return
+        if not isinstance(running_request, dict):
+            return
+        generation = int(running_request.get("generation", -1))
+        dialogue_only = bool(running_request.get("dialogue_only", True))
+        if generation != self.audit_cache_generation:
+            return
+        if self.audit_term_dialogue_only_check is None:
+            return
+        if self.audit_term_dialogue_only_check.isChecked() != dialogue_only:
+            return
+        requested_key = cast(
+            tuple[int, bool] | None,
+            running_request.get("requested_key"),
+        )
+        if not (
+            isinstance(requested_key, tuple)
+            and len(requested_key) == 2
+            and int(requested_key[0]) == generation
+        ):
+            requested_key = (generation, dialogue_only)
+        jp_suggestions, en_suggestions = result
+        self.audit_term_suggestions_cache_key = requested_key
+        self.audit_term_suggestions_jp = list(jp_suggestions)
+        self.audit_term_suggestions_en = list(en_suggestions)
+        self._set_audit_term_suggestions_lists(
+            self.audit_term_suggestions_jp,
+            self.audit_term_suggestions_en,
+        )
+
+    def _refresh_audit_term_suggestions_panel(self) -> None:
+        if (
+            self.audit_term_dialogue_only_check is None
+            or self.audit_term_suggest_jp_list is None
+            or self.audit_term_suggest_en_list is None
+        ):
+            return
+        dialogue_only = self.audit_term_dialogue_only_check.isChecked()
+        generation = int(getattr(self, "audit_cache_generation", 0))
+        requested_key = (generation, dialogue_only)
+        cache_key = getattr(self, "audit_term_suggestions_cache_key", None)
+        if cache_key == requested_key:
+            self._set_audit_term_suggestions_lists(
+                list(self.audit_term_suggestions_jp),
+                list(self.audit_term_suggestions_en),
+            )
+            return
+        worker_ready = bool(
+            hasattr(self, "audit_term_suggestions_worker_timer")
+            and hasattr(self, "audit_worker_executor")
+        )
+        if not worker_ready:
+            jp_suggestions, en_suggestions = self._collect_audit_term_suggestions(
+                dialogue_only
+            )
+            self.audit_term_suggestions_cache_key = requested_key
+            self.audit_term_suggestions_jp = list(jp_suggestions)
+            self.audit_term_suggestions_en = list(en_suggestions)
+            self._set_audit_term_suggestions_lists(
+                self.audit_term_suggestions_jp,
+                self.audit_term_suggestions_en,
+            )
+            return
+        request = {
+            "generation": generation,
+            "dialogue_only": dialogue_only,
+            "requested_key": requested_key,
+            "path_sessions": self._audit_path_sessions_snapshot(),
+        }
+        self._queue_audit_term_suggestions_worker(request)
 
     def _use_selected_audit_term_jp_suggestion(self) -> None:
         if self.audit_term_suggest_jp_list is None or self.audit_term_query_edit is None:

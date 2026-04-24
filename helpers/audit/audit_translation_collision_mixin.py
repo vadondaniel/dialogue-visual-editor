@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QListWidgetItem
@@ -21,6 +21,18 @@ class AuditTranslationCollisionMixin(
     _AuditTranslationCollisionHostTypingFallback
 ):
     _BLOCK_ENTRY_RE = re.compile(r"^Block\s+(\d+)$", re.IGNORECASE)
+
+    def _translation_collision_request_key(
+        self,
+        request: Optional[dict[str, Any]],
+    ) -> tuple[Any, ...]:
+        if not isinstance(request, dict):
+            return ()
+        return (
+            request.get("generation"),
+            request.get("dialogue_only"),
+            request.get("only_translated"),
+        )
 
     def _audit_translation_collision_group_payload(
         self,
@@ -84,6 +96,7 @@ class AuditTranslationCollisionMixin(
         self,
         dialogue_only: bool,
         only_translated: bool,
+        path_sessions: Optional[list[tuple[Path, FileSession]]] = None,
     ) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
         first_seen_order: dict[str, int] = {}
@@ -93,7 +106,31 @@ class AuditTranslationCollisionMixin(
             "_normalize_audit_translation_lines_for_segment",
             None,
         )
-        for path, session in self._audit_path_sessions_snapshot():
+        rows: list[tuple[Path, FileSession]] = []
+        if isinstance(path_sessions, list):
+            rows = path_sessions
+        else:
+            snapshot_resolver = getattr(self, "_audit_path_sessions_snapshot", None)
+            if callable(snapshot_resolver):
+                try:
+                    snapshot_rows = snapshot_resolver()
+                except Exception:
+                    snapshot_rows = None
+                if isinstance(snapshot_rows, list):
+                    rows = [
+                        cast(tuple[Path, FileSession], row)
+                        for row in snapshot_rows
+                        if isinstance(row, tuple)
+                        and len(row) == 2
+                        and isinstance(row[0], Path)
+                        and isinstance(row[1], FileSession)
+                    ]
+            if not rows:
+                for path in getattr(self, "file_paths", []):
+                    session = getattr(self, "sessions", {}).get(path)
+                    if isinstance(path, Path) and isinstance(session, FileSession):
+                        rows.append((path, session))
+        for path, session in rows:
             for block_index, segment in enumerate(session.segments, start=1):
                 if dialogue_only and not bool(
                     getattr(segment, "is_structural_dialogue", False)
@@ -175,6 +212,163 @@ class AuditTranslationCollisionMixin(
             )
         )
         return groups
+
+    def _compute_audit_translation_collision_groups_worker(
+        self,
+        path_sessions: list[tuple[Path, FileSession]],
+        dialogue_only: bool,
+        only_translated: bool,
+    ) -> list[dict[str, Any]]:
+        return self._collect_audit_translation_collision_groups(
+            dialogue_only=dialogue_only,
+            only_translated=only_translated,
+            path_sessions=path_sessions,
+        )
+
+    def _queue_audit_translation_collision_worker(self, request: dict[str, Any]) -> None:
+        request_key = self._translation_collision_request_key(request)
+        if request_key == self._translation_collision_request_key(
+            self.audit_translation_collision_worker_running_request
+        ):
+            return
+        if request_key == self._translation_collision_request_key(
+            self.audit_translation_collision_worker_pending_request
+        ):
+            return
+        self.audit_translation_collision_worker_pending_request = request
+        if self.audit_translation_collision_worker_future is None:
+            self._start_next_audit_translation_collision_worker()
+
+    def _start_next_audit_translation_collision_worker(self) -> None:
+        request = self.audit_translation_collision_worker_pending_request
+        if request is None:
+            return
+        self.audit_translation_collision_worker_pending_request = None
+        self.audit_translation_collision_worker_running_request = request
+        try:
+            self.audit_translation_collision_worker_future = self.audit_worker_executor.submit(
+                self._compute_audit_translation_collision_groups_worker,
+                request["path_sessions"],
+                bool(request["dialogue_only"]),
+                bool(request["only_translated"]),
+            )
+        except Exception:
+            self.audit_translation_collision_worker_future = None
+            self.audit_translation_collision_worker_running_request = None
+            return
+        self.audit_translation_collision_worker_timer.start(18)
+
+    def _poll_audit_translation_collision_worker(self) -> None:
+        future = self.audit_translation_collision_worker_future
+        if future is None:
+            if self.audit_translation_collision_worker_pending_request is not None:
+                self._start_next_audit_translation_collision_worker()
+            return
+        if not future.done():
+            self.audit_translation_collision_worker_timer.start(18)
+            return
+
+        running_request = self.audit_translation_collision_worker_running_request
+        self.audit_translation_collision_worker_future = None
+        self.audit_translation_collision_worker_running_request = None
+        try:
+            groups = future.result()
+        except Exception:
+            if self.audit_translation_collision_worker_pending_request is not None:
+                self._start_next_audit_translation_collision_worker()
+            return
+
+        if self.audit_translation_collision_worker_pending_request is not None:
+            self._start_next_audit_translation_collision_worker()
+            return
+        if not isinstance(running_request, dict):
+            return
+        generation = int(running_request.get("generation", -1))
+        dialogue_only = bool(running_request.get("dialogue_only", True))
+        only_translated = bool(running_request.get("only_translated", True))
+        if generation != self.audit_cache_generation:
+            return
+        if (
+            self.audit_translation_collision_dialogue_only_check is None
+            or self.audit_translation_collision_only_translated_check is None
+        ):
+            return
+        if (
+            self.audit_translation_collision_dialogue_only_check.isChecked()
+            != dialogue_only
+            or self.audit_translation_collision_only_translated_check.isChecked()
+            != only_translated
+        ):
+            return
+        requested_key = (generation, dialogue_only, only_translated)
+        preferred_translation_raw = running_request.get("preferred_translation")
+        preferred_translation = (
+            str(preferred_translation_raw)
+            if isinstance(preferred_translation_raw, str)
+            else ""
+        )
+        self.audit_translation_collision_cache_key = requested_key
+        self.audit_translation_collision_cache_groups = list(groups)
+        self._render_audit_translation_collision_groups(
+            cast(list[dict[str, Any]], list(groups)),
+            preferred_translation=preferred_translation,
+            requested_key=requested_key,
+            only_translated=only_translated,
+        )
+
+    def _render_audit_translation_collision_groups(
+        self,
+        groups: list[dict[str, Any]],
+        *,
+        preferred_translation: str,
+        requested_key: tuple[int, bool, bool],
+        only_translated: bool,
+    ) -> None:
+        if (
+            self.audit_translation_collision_groups_list is None
+            or self.audit_translation_collision_status_label is None
+        ):
+            return
+        self.audit_translation_collision_groups_list.clear()
+        selected_row = -1
+        total_entries = 0
+        for idx, group in enumerate(groups):
+            translation_text = str(group.get("translation_text", ""))
+            entry_count = int(group.get("entry_count", 0))
+            source_count = int(group.get("source_count", 0))
+            total_entries += entry_count
+            label = (
+                f"x{entry_count} | sources: {source_count} | "
+                f"{preview_text(translation_text if translation_text else '(empty)', 96)}"
+            )
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, group)
+            self.audit_translation_collision_groups_list.addItem(item)
+            if preferred_translation and translation_text == preferred_translation:
+                if selected_row < 0:
+                    selected_row = idx
+        if groups:
+            if selected_row < 0:
+                selected_row = 0
+            self.audit_translation_collision_groups_list.setCurrentRow(selected_row)
+            self.audit_translation_collision_status_label.setText(
+                (
+                    f"Collision groups: {len(groups)} | "
+                    f"Colliding entries: {total_entries}"
+                )
+            )
+        else:
+            if only_translated:
+                self.audit_translation_collision_status_label.setText(
+                    "No translation collisions found (translated entries only)."
+                )
+            else:
+                self.audit_translation_collision_status_label.setText(
+                    "No translation collisions found."
+                )
+        self.audit_translation_collision_displayed_key = requested_key
+        self.audit_translation_collision_display_complete = True
+        self._refresh_audit_translation_collision_entries()
 
     def _refresh_audit_translation_collision_entries(self) -> None:
         if (
@@ -276,48 +470,66 @@ class AuditTranslationCollisionMixin(
         only_translated = (
             self.audit_translation_collision_only_translated_check.isChecked()
         )
-        groups = self._collect_audit_translation_collision_groups(
-            dialogue_only=dialogue_only,
-            only_translated=only_translated,
+        generation = int(getattr(self, "audit_cache_generation", 0))
+        requested_key = (
+            generation,
+            dialogue_only,
+            only_translated,
         )
+        display_complete = bool(
+            getattr(self, "audit_translation_collision_display_complete", False)
+        )
+        displayed_key = getattr(self, "audit_translation_collision_displayed_key", None)
+        if (
+            display_complete
+            and displayed_key == requested_key
+        ):
+            self._refresh_audit_translation_collision_entries()
+            return
+        self.audit_translation_collision_display_complete = False
+        self.audit_translation_collision_displayed_key = None
+        cache_key = getattr(self, "audit_translation_collision_cache_key", None)
+        cache_groups_raw = getattr(self, "audit_translation_collision_cache_groups", [])
+        if cache_key == requested_key and isinstance(cache_groups_raw, list):
+            groups = [item for item in cache_groups_raw if isinstance(item, dict)]
+            self._render_audit_translation_collision_groups(
+                groups,
+                preferred_translation=preferred_translation,
+                requested_key=requested_key,
+                only_translated=only_translated,
+            )
+            return
+        worker_ready = bool(
+            hasattr(self, "audit_translation_collision_worker_timer")
+            and hasattr(self, "audit_worker_executor")
+        )
+        if not worker_ready:
+            groups = self._collect_audit_translation_collision_groups(
+                dialogue_only=dialogue_only,
+                only_translated=only_translated,
+            )
+            self.audit_translation_collision_cache_key = requested_key
+            self.audit_translation_collision_cache_groups = list(groups)
+            self._render_audit_translation_collision_groups(
+                groups,
+                preferred_translation=preferred_translation,
+                requested_key=requested_key,
+                only_translated=only_translated,
+            )
+            return
         self.audit_translation_collision_groups_list.clear()
-        selected_row = -1
-        total_entries = 0
-        for idx, group in enumerate(groups):
-            translation_text = str(group.get("translation_text", ""))
-            entry_count = int(group.get("entry_count", 0))
-            source_count = int(group.get("source_count", 0))
-            total_entries += entry_count
-            label = (
-                f"x{entry_count} | sources: {source_count} | "
-                f"{preview_text(translation_text if translation_text else '(empty)', 96)}"
-            )
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, group)
-            self.audit_translation_collision_groups_list.addItem(item)
-            if preferred_translation and translation_text == preferred_translation:
-                if selected_row < 0:
-                    selected_row = idx
-        if groups:
-            if selected_row < 0:
-                selected_row = 0
-            self.audit_translation_collision_groups_list.setCurrentRow(selected_row)
-            self.audit_translation_collision_status_label.setText(
-                (
-                    f"Collision groups: {len(groups)} | "
-                    f"Colliding entries: {total_entries}"
-                )
-            )
-        else:
-            if only_translated:
-                self.audit_translation_collision_status_label.setText(
-                    "No translation collisions found (translated entries only)."
-                )
-            else:
-                self.audit_translation_collision_status_label.setText(
-                    "No translation collisions found."
-                )
+        self.audit_translation_collision_status_label.setText(
+            "Scanning translation collisions..."
+        )
         self._refresh_audit_translation_collision_entries()
+        request = {
+            "generation": generation,
+            "dialogue_only": dialogue_only,
+            "only_translated": only_translated,
+            "preferred_translation": preferred_translation,
+            "path_sessions": self._audit_path_sessions_snapshot(),
+        }
+        self._queue_audit_translation_collision_worker(request)
 
     def _go_to_selected_audit_translation_collision_entry(self) -> None:
         if self.audit_translation_collision_entries_list is None:

@@ -223,6 +223,8 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
         self.audit_control_mismatch_cache_key = None
         self.audit_control_mismatch_cache_records = []
         self.audit_control_mismatch_cache_scanned_blocks = 0
+        self.audit_consistency_cache_key = None
+        self.audit_consistency_cache_groups = []
         self.audit_search_displayed_key = None
         self.audit_search_display_complete = False
         self.audit_sanitize_displayed_key = None
@@ -231,16 +233,35 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
         self.audit_sanitize_active_view_key = None
         self.audit_control_mismatch_displayed_key = None
         self.audit_control_mismatch_display_complete = False
+        self.audit_consistency_displayed_key = None
+        self.audit_consistency_display_complete = False
         self.audit_term_cache_key = None
         self.audit_term_cache_groups = []
         self.audit_term_displayed_key = None
         self.audit_term_display_complete = False
+        self.audit_term_suggestions_cache_key = None
+        self.audit_term_suggestions_jp = []
+        self.audit_term_suggestions_en = []
+        self.audit_translation_collision_cache_key = None
+        self.audit_translation_collision_cache_groups = []
+        self.audit_translation_collision_displayed_key = None
+        self.audit_translation_collision_display_complete = False
+        self.audit_name_consistency_base_cache_key = None
+        self.audit_name_consistency_base_payload = None
+        self.audit_name_consistency_cache_key = None
+        self.audit_name_consistency_cache_groups = []
+        self.audit_name_consistency_displayed_key = None
+        self.audit_name_consistency_display_complete = False
         if self.audit_sanitize_occurrences_list is not None:
             self.audit_sanitize_occurrences_list.clear()
         self.audit_search_worker_pending_request = None
         self.audit_sanitize_worker_pending_request = None
         self.audit_control_worker_pending_request = None
+        self.audit_consistency_worker_pending_request = None
         self.audit_term_worker_pending_request = None
+        self.audit_term_suggestions_worker_pending_request = None
+        self.audit_translation_collision_worker_pending_request = None
+        self.audit_name_consistency_worker_pending_request = None
         self._stop_audit_search_render()
         self._stop_audit_sanitize_render()
         self._stop_audit_control_mismatch_render()

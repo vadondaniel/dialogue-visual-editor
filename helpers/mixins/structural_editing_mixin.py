@@ -523,7 +523,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         projection_poll_timer = QTimer(dialog)
         projection_poll_timer.setSingleShot(True)
         projection_poll_timer.setInterval(24)
-        projection_executor = getattr(self, "audit_worker_executor", None)
+        projection_executor = getattr(self, "projection_worker_executor", None)
+        if projection_executor is None:
+            projection_executor = getattr(self, "audit_worker_executor", None)
         projection_future: Optional[Future[dict[str, Any]]] = None
         projection_future_request_id = 0
         pending_projection_request: Optional[dict[str, Any]] = None
