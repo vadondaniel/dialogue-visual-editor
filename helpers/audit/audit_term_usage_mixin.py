@@ -33,6 +33,20 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
     _NAME_CODE_INPUT_RE = re.compile(r"^(?:\\)?[Nn]\[(\d+)\]$")
     _NAME_CODE_TOKEN_RE = re.compile(r"^\\[Nn]\[(\d+)\]$")
 
+    def _term_usage_cache_generation(self) -> int:
+        generation_resolver = getattr(self, "_audit_generation", None)
+        if callable(generation_resolver):
+            try:
+                resolved = generation_resolver("term_usage")
+            except Exception:
+                resolved = None
+            if isinstance(resolved, (int, float, str)):
+                try:
+                    return int(resolved)
+                except Exception:
+                    pass
+        return int(getattr(self, "audit_cache_generation", 0))
+
     @classmethod
     def _canonical_name_code_input(cls, value: str) -> Optional[str]:
         token = value.strip()
@@ -376,7 +390,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             return
         generation = int(running_request.get("generation", -1))
         dialogue_only = bool(running_request.get("dialogue_only", True))
-        if generation != self.audit_cache_generation:
+        if generation != self._term_usage_cache_generation():
             return
         if self.audit_term_dialogue_only_check is None:
             return
@@ -409,7 +423,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         ):
             return
         dialogue_only = self.audit_term_dialogue_only_check.isChecked()
-        generation = int(getattr(self, "audit_cache_generation", 0))
+        generation = self._term_usage_cache_generation()
         requested_key = (generation, dialogue_only)
         cache_key = getattr(self, "audit_term_suggestions_cache_key", None)
         if cache_key == requested_key:
@@ -647,7 +661,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
     ) -> list[dict[str, Any]]:
         groups: list[dict[str, Any]] = []
         leading_translation_only: list[DialogueSegment] = []
-        for idx, segment in enumerate(list(session.segments), start=1):
+        for idx, segment in enumerate(session.segments, start=1):
             if bool(getattr(segment, "translation_only", False)):
                 if groups:
                     cast(list[DialogueSegment], groups[-1]["segments"]).append(segment)
@@ -996,7 +1010,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         term = str(running_request.get("term", ""))
         candidates_text = str(running_request.get("candidates_text", ""))
         dialogue_only = bool(running_request.get("dialogue_only", True))
-        if generation != self.audit_cache_generation:
+        if generation != self._term_usage_cache_generation():
             return
         if (
             self.audit_term_query_edit is None
@@ -1298,8 +1312,9 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
         term = self.audit_term_query_edit.text().strip()
         candidates_text = self.audit_term_candidates_edit.text()
         dialogue_only = self.audit_term_dialogue_only_check.isChecked()
+        generation = self._term_usage_cache_generation()
         requested_key = (
-            self.audit_cache_generation,
+            generation,
             term,
             candidates_text,
             dialogue_only,
@@ -1336,7 +1351,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             groups = list(self.audit_term_cache_groups)
             self.audit_term_render_groups = groups
             self.audit_term_render_index = 0
-            self.audit_term_render_generation = self.audit_cache_generation
+            self.audit_term_render_generation = generation
             self.audit_term_render_term = term
             self.audit_term_render_candidates = candidates_text
             self.audit_term_render_dialogue_only = dialogue_only
@@ -1354,7 +1369,7 @@ class AuditTermUsageMixin(_AuditTermUsageHostTypingFallback):
             return
 
         request = {
-            "generation": self.audit_cache_generation,
+            "generation": generation,
             "term": term,
             "candidates_text": candidates_text,
             "dialogue_only": dialogue_only,

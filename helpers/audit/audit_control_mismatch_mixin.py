@@ -20,6 +20,20 @@ class _AuditControlHostTypingFallback:
 
 
 class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
+    def _control_mismatch_cache_generation(self) -> int:
+        generation_resolver = getattr(self, "_audit_generation", None)
+        if callable(generation_resolver):
+            try:
+                resolved = generation_resolver("control_mismatch")
+            except Exception:
+                resolved = None
+            if isinstance(resolved, (int, float, str)):
+                try:
+                    return int(resolved)
+                except Exception:
+                    pass
+        return int(getattr(self, "audit_cache_generation", 0))
+
     def _extract_control_token_matches(self, text: str) -> list[tuple[str, int, int]]:
         if not text:
             return []
@@ -166,7 +180,7 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
     ) -> list[dict[str, Any]]:
         groups: list[dict[str, Any]] = []
         leading_translation_only: list[DialogueSegment] = []
-        for idx, segment in enumerate(list(session.segments), start=1):
+        for idx, segment in enumerate(session.segments, start=1):
             if segment.translation_only:
                 if groups:
                     cast(list[DialogueSegment], groups[-1]["segments"]).append(segment)
@@ -374,7 +388,8 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             self.audit_control_mismatch_only_translated_check is not None
             and self.audit_control_mismatch_only_translated_check.isChecked()
         )
-        requested_key = (self.audit_cache_generation, only_translated)
+        generation = self._control_mismatch_cache_generation()
+        requested_key = (generation, only_translated)
         if (
             self.audit_control_mismatch_display_complete
             and self.audit_control_mismatch_displayed_key == requested_key
@@ -408,7 +423,7 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             self.audit_control_mismatch_status_label.setText("No data loaded.")
             return
 
-        cache_key = (self.audit_cache_generation, only_translated)
+        cache_key = (generation, only_translated)
         if self.audit_control_mismatch_cache_key == cache_key:
             records = list(self.audit_control_mismatch_cache_records)
             scanned_blocks = self.audit_control_mismatch_cache_scanned_blocks
@@ -435,13 +450,13 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
             self.audit_control_mismatch_render_index = 0
             self.audit_control_mismatch_render_scanned_blocks = scanned_blocks
             self.audit_control_mismatch_render_only_translated = only_translated
-            self.audit_control_mismatch_render_generation = self.audit_cache_generation
+            self.audit_control_mismatch_render_generation = generation
             self.audit_control_mismatch_render_timer.start(
                 self.audit_render_batch_interval_ms)
             return
 
         request = {
-            "generation": self.audit_cache_generation,
+            "generation": generation,
             "only_translated": only_translated,
             "path_sessions": self._audit_path_sessions_snapshot(),
         }
@@ -593,7 +608,7 @@ class AuditControlMismatchMixin(_AuditControlHostTypingFallback):
 
         generation = int(running_request.get("generation", -1))
         only_translated = bool(running_request.get("only_translated", True))
-        if generation != self.audit_cache_generation:
+        if generation != self._control_mismatch_cache_generation():
             return
         current_only_translated = bool(
             self.audit_control_mismatch_only_translated_check is not None

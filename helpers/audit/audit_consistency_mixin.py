@@ -46,6 +46,20 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
     _CONSISTENCY_TARGET_MIN_LINES = 5
     _CONSISTENCY_TARGET_MAX_LINES = 16
 
+    def _consistency_cache_generation(self) -> int:
+        generation_resolver = getattr(self, "_audit_generation", None)
+        if callable(generation_resolver):
+            try:
+                resolved = generation_resolver("consistency")
+            except Exception:
+                resolved = None
+            if isinstance(resolved, (int, float, str)):
+                try:
+                    return int(resolved)
+                except Exception:
+                    pass
+        return int(getattr(self, "audit_cache_generation", 0))
+
     def _consistency_request_key(
         self,
         request: Optional[dict[str, Any]],
@@ -1839,7 +1853,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         only_inconsistent = bool(running_request.get("only_inconsistent", True))
         dialogue_only = bool(running_request.get("dialogue_only", True))
         sort_mode = str(running_request.get("sort_mode", "source_order"))
-        if generation != self.audit_cache_generation:
+        if generation != self._consistency_cache_generation():
             return
         if (
             self.audit_consistency_only_inconsistent_check is None
@@ -2143,7 +2157,7 @@ class AuditConsistencyMixin(_AuditConsistencyHostTypingFallback):
         dialogue_only = self.audit_consistency_dialogue_only_check.isChecked()
         sort_mode_raw = self.audit_consistency_sort_combo.currentData()
         sort_mode = sort_mode_raw if isinstance(sort_mode_raw, str) else "source_order"
-        generation = int(getattr(self, "audit_cache_generation", 0))
+        generation = self._consistency_cache_generation()
         requested_key = (
             generation,
             only_inconsistent,

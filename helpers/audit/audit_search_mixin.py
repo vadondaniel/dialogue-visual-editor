@@ -20,6 +20,20 @@ class _AuditSearchHostTypingFallback:
 class AuditSearchMixin(_AuditSearchHostTypingFallback):
     _CONTROL_QUERY_RE = CONTROL_TOKEN_RE
 
+    def _search_cache_generation(self) -> int:
+        generation_resolver = getattr(self, "_audit_generation", None)
+        if callable(generation_resolver):
+            try:
+                resolved = generation_resolver("search")
+            except Exception:
+                resolved = None
+            if isinstance(resolved, (int, float, str)):
+                try:
+                    return int(resolved)
+                except Exception:
+                    pass
+        return int(getattr(self, "audit_cache_generation", 0))
+
     def _is_control_code_search_query(self, query: str) -> bool:
         return bool(self._CONTROL_QUERY_RE.search(query or ""))
 
@@ -255,7 +269,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             is_name_index = self._is_name_index_session(session)
             name_index_label = self._name_index_label(session)
             entry_resolver = getattr(self, "_audit_entry_text_for_segment", None)
-            for idx, segment in enumerate(list(session.segments), start=1):
+            for idx, segment in enumerate(session.segments, start=1):
                 original_text = "\n".join(
                     self._segment_source_lines_for_display(segment))
                 normalize_for_segment = getattr(
@@ -390,7 +404,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         scope = str(running_request.get("scope", "original"))
         needle = str(running_request.get("needle", ""))
         case_sensitive = bool(running_request.get("case_sensitive", True))
-        if generation != self.audit_cache_generation:
+        if generation != self._search_cache_generation():
             return
         if (
             self.audit_search_query_edit is None
@@ -497,8 +511,9 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             return
 
         needle, natural_mode = self._audit_search_needle(query, case_sensitive)
+        generation = self._search_cache_generation()
         requested_key = (
-            self.audit_cache_generation,
+            generation,
             scope,
             needle,
             case_sensitive,
@@ -539,7 +554,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
         self.audit_search_display_complete = False
         self.audit_search_displayed_key = None
         cache_key = (
-            self.audit_cache_generation,
+            generation,
             scope,
             needle,
             case_sensitive,
@@ -568,7 +583,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             )
             self.audit_search_render_records = records
             self.audit_search_render_index = 0
-            self.audit_search_render_generation = self.audit_cache_generation
+            self.audit_search_render_generation = generation
             self.audit_search_render_query = query
             self.audit_search_render_needle = needle
             self.audit_search_render_natural_mode = natural_mode
@@ -581,7 +596,7 @@ class AuditSearchMixin(_AuditSearchHostTypingFallback):
             return
 
         request = {
-            "generation": self.audit_cache_generation,
+            "generation": generation,
             "query": query,
             "scope": scope,
             "needle": needle,

@@ -467,6 +467,15 @@ class DialogueVisualEditor(
         self.normalizations_dialog: Optional[NormalizationsDialog] = None
         self.mass_translate_dialog: Optional[MassTranslateDialog] = None
         self.audit_cache_generation = 0
+        self.audit_cache_generation_by_domain: dict[str, int] = {
+            "search": 0,
+            "sanitize": 0,
+            "control_mismatch": 0,
+            "consistency": 0,
+            "term_usage": 0,
+            "translation_collision": 0,
+            "name_consistency": 0,
+        }
         self.audit_result_batch_size = 16
         self.audit_render_batch_interval_ms = 8
         self.audit_search_cache_key: Optional[tuple[int, str, str, bool, bool]] = None
@@ -8584,7 +8593,7 @@ class DialogueVisualEditor(
         self.statusBar().showMessage("Cleared control mismatch ignore for this block chain.")
 
     def _refresh_after_control_mismatch_ignore_change(self) -> None:
-        self._invalidate_audit_caches()
+        self._invalidate_audit_caches(domains={"control_mismatch"})
         self._refresh_all_file_item_text()
         self._refresh_block_control_mismatch_highlighting()
         self._refresh_translator_detail_panel()

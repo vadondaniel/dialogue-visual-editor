@@ -18,6 +18,20 @@ class _AuditNameConsistencyHostTypingFallback:
 
 
 class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
+    def _name_consistency_cache_generation(self) -> int:
+        generation_resolver = getattr(self, "_audit_generation", None)
+        if callable(generation_resolver):
+            try:
+                resolved = generation_resolver("name_consistency")
+            except Exception:
+                resolved = None
+            if isinstance(resolved, (int, float, str)):
+                try:
+                    return int(resolved)
+                except Exception:
+                    pass
+        return int(getattr(self, "audit_cache_generation", 0))
+
     def _name_consistency_request_key(
         self,
         request: Optional[dict[str, Any]],
@@ -175,7 +189,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
     ) -> list[dict[str, Any]]:
         groups: list[dict[str, Any]] = []
         leading_translation_only: list[DialogueSegment] = []
-        for idx, segment in enumerate(list(session.segments), start=1):
+        for idx, segment in enumerate(session.segments, start=1):
             if bool(getattr(segment, "translation_only", False)):
                 if groups:
                     cast(list[DialogueSegment], groups[-1]["segments"]).append(segment)
@@ -735,7 +749,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
         only_discrepancies = bool(running_request.get("only_discrepancies", True))
         filter_text = str(running_request.get("filter_text", ""))
         sort_mode = str(running_request.get("sort_mode", "hits_desc"))
-        if generation != self.audit_cache_generation:
+        if generation != self._name_consistency_cache_generation():
             return
         if (
             self.audit_name_consistency_dialogue_only_check is None
@@ -1144,7 +1158,7 @@ class AuditNameConsistencyMixin(_AuditNameConsistencyHostTypingFallback):
             sort_data = self.audit_name_consistency_sort_combo.currentData()
             if isinstance(sort_data, str) and sort_data.strip():
                 sort_mode = sort_data
-        generation = int(getattr(self, "audit_cache_generation", 0))
+        generation = self._name_consistency_cache_generation()
         requested_key = (
             generation,
             dialogue_only,

@@ -17,6 +17,20 @@ class _AuditSanitizeHostTypingFallback:
 
 
 class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
+    def _sanitize_cache_generation(self) -> int:
+        generation_resolver = getattr(self, "_audit_generation", None)
+        if callable(generation_resolver):
+            try:
+                resolved = generation_resolver("sanitize")
+            except Exception:
+                resolved = None
+            if isinstance(resolved, (int, float, str)):
+                try:
+                    return int(resolved)
+                except Exception:
+                    pass
+        return int(getattr(self, "audit_cache_generation", 0))
+
     def _audit_display_index_for_segment(
         self,
         session: FileSession,
@@ -244,7 +258,7 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             rule_set.discard(key)
             if not rule_set:
                 self.audit_sanitize_ignored_entries_by_rule.pop(rule_id, None)
-        self._invalidate_audit_caches()
+        self._invalidate_audit_caches(domains={"sanitize"})
         self._refresh_audit_sanitize_panel()
 
     def _on_audit_sanitize_rules_context_menu(self, pos: Any) -> None:
@@ -523,7 +537,8 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         scope = self._audit_sanitize_scope()
         selected_rule_id = selected_payload["rule_id"] if selected_payload is not None else ""
         selected_find_text = selected_payload["find_text"] if selected_payload is not None else ""
-        requested_key = (self.audit_cache_generation, scope, selected_rule_id)
+        generation = self._sanitize_cache_generation()
+        requested_key = (generation, scope, selected_rule_id)
         if (
             self.audit_sanitize_display_complete
             and self.audit_sanitize_displayed_key == requested_key
@@ -536,9 +551,9 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
         self.audit_sanitize_display_complete = False
         self.audit_sanitize_displayed_key = None
 
-        counts_key = (self.audit_cache_generation, scope)
+        counts_key = (generation, scope)
         occurrence_key = (
-            (self.audit_cache_generation, scope, selected_rule_id)
+            (generation, scope, selected_rule_id)
             if selected_rule_id
             else None
         )
@@ -565,7 +580,7 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
                 cached_payload.update(
                     cast(dict[str, Any], occurrence_cached_payload))
             self._apply_audit_sanitize_payload(
-                generation=self.audit_cache_generation,
+                generation=generation,
                 scope=scope,
                 selected_rule_id=selected_rule_id,
                 selected_find_text=selected_find_text,
@@ -574,7 +589,7 @@ class AuditSanitizeUiMixin(_AuditSanitizeHostTypingFallback):
             return
 
         request: dict[str, Any] = {
-            "generation": self.audit_cache_generation,
+            "generation": generation,
             "scope": scope,
             "selected_rule_id": selected_rule_id,
             "selected_find_text": selected_find_text,

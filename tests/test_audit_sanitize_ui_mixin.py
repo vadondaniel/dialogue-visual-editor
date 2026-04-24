@@ -102,6 +102,7 @@ class _Harness(AuditSanitizeUiMixin):
         self.audit_render_batch_interval_ms = 7
         self.audit_sanitize_render_timer = _TimerStub()
         self.invalidate_cache_calls = 0
+        self.invalidate_cache_domains: list[object] = []
         self.refresh_panel_calls = 0
         self.hide_overlay_calls = 0
         self.stop_render_calls = 0
@@ -148,8 +149,9 @@ class _Harness(AuditSanitizeUiMixin):
             return int(raw)
         return None
 
-    def _invalidate_audit_caches(self) -> None:
+    def _invalidate_audit_caches(self, domains: object | None = None) -> None:
         self.invalidate_cache_calls += 1
+        self.invalidate_cache_domains.append(domains)
 
     def _refresh_audit_sanitize_panel(self) -> None:
         self.refresh_panel_calls += 1
@@ -428,6 +430,10 @@ class AuditSanitizeUiMixinTests(unittest.TestCase):
 
         self.assertFalse(harness._is_audit_sanitize_entry_ignored("r1", "Map001.json", "u1"))
         self.assertEqual(harness.invalidate_cache_calls, 2)
+        self.assertEqual(
+            harness.invalidate_cache_domains,
+            [{"sanitize"}, {"sanitize"}],
+        )
         self.assertEqual(harness.refresh_panel_calls, 2)
         self.assertEqual(harness.audit_sanitize_ignored_entries_by_rule, {})
 

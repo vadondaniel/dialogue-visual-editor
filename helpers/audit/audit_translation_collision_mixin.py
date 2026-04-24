@@ -22,6 +22,20 @@ class AuditTranslationCollisionMixin(
 ):
     _BLOCK_ENTRY_RE = re.compile(r"^Block\s+(\d+)$", re.IGNORECASE)
 
+    def _translation_collision_cache_generation(self) -> int:
+        generation_resolver = getattr(self, "_audit_generation", None)
+        if callable(generation_resolver):
+            try:
+                resolved = generation_resolver("translation_collision")
+            except Exception:
+                resolved = None
+            if isinstance(resolved, (int, float, str)):
+                try:
+                    return int(resolved)
+                except Exception:
+                    pass
+        return int(getattr(self, "audit_cache_generation", 0))
+
     def _translation_collision_request_key(
         self,
         request: Optional[dict[str, Any]],
@@ -286,7 +300,7 @@ class AuditTranslationCollisionMixin(
         generation = int(running_request.get("generation", -1))
         dialogue_only = bool(running_request.get("dialogue_only", True))
         only_translated = bool(running_request.get("only_translated", True))
-        if generation != self.audit_cache_generation:
+        if generation != self._translation_collision_cache_generation():
             return
         if (
             self.audit_translation_collision_dialogue_only_check is None
@@ -470,7 +484,7 @@ class AuditTranslationCollisionMixin(
         only_translated = (
             self.audit_translation_collision_only_translated_check.isChecked()
         )
-        generation = int(getattr(self, "audit_cache_generation", 0))
+        generation = self._translation_collision_cache_generation()
         requested_key = (
             generation,
             dialogue_only,

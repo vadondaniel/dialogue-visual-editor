@@ -17,6 +17,51 @@ class _AuditCoreHostTypingFallback:
 
 
 class AuditCoreMixin(_AuditCoreHostTypingFallback):
+    _AUDIT_CACHE_DOMAINS = frozenset(
+        {
+            "search",
+            "sanitize",
+            "control_mismatch",
+            "consistency",
+            "term_usage",
+            "translation_collision",
+            "name_consistency",
+        }
+    )
+
+    def _audit_generation(self, domain: str) -> int:
+        domain_key = domain.strip().casefold()
+        if not domain_key:
+            return int(getattr(self, "audit_cache_generation", 0))
+        current_generation = int(getattr(self, "audit_cache_generation", 0))
+        generations_raw = getattr(self, "audit_cache_generation_by_domain", None)
+        if not isinstance(generations_raw, dict):
+            seeded = {
+                key: current_generation for key in self._AUDIT_CACHE_DOMAINS
+            }
+            self.audit_cache_generation_by_domain = seeded
+            generations_raw = seeded
+        generation_raw = generations_raw.get(domain_key)
+        if isinstance(generation_raw, int):
+            return generation_raw
+        generations_raw[domain_key] = current_generation
+        return current_generation
+
+    def _audit_invalidation_domains(
+        self,
+        domains: Optional[set[str] | list[str] | tuple[str, ...]],
+    ) -> set[str]:
+        if domains is None:
+            return set(self._AUDIT_CACHE_DOMAINS)
+        resolved: set[str] = set()
+        for candidate in domains:
+            if not isinstance(candidate, str):
+                continue
+            normalized = candidate.strip().casefold()
+            if normalized in self._AUDIT_CACHE_DOMAINS:
+                resolved.add(normalized)
+        return resolved
+
     def _normalize_audit_translation_lines_for_segment(
         self,
         segment: Any,
@@ -211,61 +256,91 @@ class AuditCoreMixin(_AuditCoreHostTypingFallback):
         self.audit_term_hits_render_group_key = ""
         self._audit_term_hits_render_candidates = []
 
-    def _invalidate_audit_caches(self) -> None:
-        self.audit_cache_generation += 1
-        self.audit_search_cache_key = None
-        self.audit_search_cache_records = []
-        self.audit_sanitize_counts_cache_key = None
-        self.audit_sanitize_counts_cache = {}
-        self.audit_sanitize_occurrence_cache_key = None
-        self.audit_sanitize_occurrence_cache_payload = None
-        self.audit_sanitize_occurrence_cache_by_key = {}
-        self.audit_control_mismatch_cache_key = None
-        self.audit_control_mismatch_cache_records = []
-        self.audit_control_mismatch_cache_scanned_blocks = 0
-        self.audit_consistency_cache_key = None
-        self.audit_consistency_cache_groups = []
-        self.audit_search_displayed_key = None
-        self.audit_search_display_complete = False
-        self.audit_sanitize_displayed_key = None
-        self.audit_sanitize_display_complete = False
-        self.audit_sanitize_built_view_keys = set()
-        self.audit_sanitize_active_view_key = None
-        self.audit_control_mismatch_displayed_key = None
-        self.audit_control_mismatch_display_complete = False
-        self.audit_consistency_displayed_key = None
-        self.audit_consistency_display_complete = False
-        self.audit_term_cache_key = None
-        self.audit_term_cache_groups = []
-        self.audit_term_displayed_key = None
-        self.audit_term_display_complete = False
-        self.audit_term_suggestions_cache_key = None
-        self.audit_term_suggestions_jp = []
-        self.audit_term_suggestions_en = []
-        self.audit_translation_collision_cache_key = None
-        self.audit_translation_collision_cache_groups = []
-        self.audit_translation_collision_displayed_key = None
-        self.audit_translation_collision_display_complete = False
-        self.audit_name_consistency_base_cache_key = None
-        self.audit_name_consistency_base_payload = None
-        self.audit_name_consistency_cache_key = None
-        self.audit_name_consistency_cache_groups = []
-        self.audit_name_consistency_displayed_key = None
-        self.audit_name_consistency_display_complete = False
-        if self.audit_sanitize_occurrences_list is not None:
-            self.audit_sanitize_occurrences_list.clear()
-        self.audit_search_worker_pending_request = None
-        self.audit_sanitize_worker_pending_request = None
-        self.audit_control_worker_pending_request = None
-        self.audit_consistency_worker_pending_request = None
-        self.audit_term_worker_pending_request = None
-        self.audit_term_suggestions_worker_pending_request = None
-        self.audit_translation_collision_worker_pending_request = None
-        self.audit_name_consistency_worker_pending_request = None
-        self._stop_audit_search_render()
-        self._stop_audit_sanitize_render()
-        self._stop_audit_control_mismatch_render()
-        self._stop_audit_term_render()
+    def _invalidate_audit_caches(
+        self,
+        domains: Optional[set[str] | list[str] | tuple[str, ...]] = None,
+    ) -> None:
+        target_domains = self._audit_invalidation_domains(domains)
+        if not target_domains:
+            return
+
+        if target_domains == set(self._AUDIT_CACHE_DOMAINS):
+            self.audit_cache_generation += 1
+
+        for domain_key in target_domains:
+            current_generation = self._audit_generation(domain_key)
+            generations_raw = getattr(self, "audit_cache_generation_by_domain", None)
+            if not isinstance(generations_raw, dict):
+                generations_raw = {}
+                self.audit_cache_generation_by_domain = generations_raw
+            generations_raw[domain_key] = current_generation + 1
+
+        if "search" in target_domains:
+            self.audit_search_cache_key = None
+            self.audit_search_cache_records = []
+            self.audit_search_displayed_key = None
+            self.audit_search_display_complete = False
+            self.audit_search_worker_pending_request = None
+            self._stop_audit_search_render()
+
+        if "sanitize" in target_domains:
+            self.audit_sanitize_counts_cache_key = None
+            self.audit_sanitize_counts_cache = {}
+            self.audit_sanitize_occurrence_cache_key = None
+            self.audit_sanitize_occurrence_cache_payload = None
+            self.audit_sanitize_occurrence_cache_by_key = {}
+            self.audit_sanitize_displayed_key = None
+            self.audit_sanitize_display_complete = False
+            self.audit_sanitize_built_view_keys = set()
+            self.audit_sanitize_active_view_key = None
+            if self.audit_sanitize_occurrences_list is not None:
+                self.audit_sanitize_occurrences_list.clear()
+            self.audit_sanitize_worker_pending_request = None
+            self._stop_audit_sanitize_render()
+
+        if "control_mismatch" in target_domains:
+            self.audit_control_mismatch_cache_key = None
+            self.audit_control_mismatch_cache_records = []
+            self.audit_control_mismatch_cache_scanned_blocks = 0
+            self.audit_control_mismatch_displayed_key = None
+            self.audit_control_mismatch_display_complete = False
+            self.audit_control_worker_pending_request = None
+            self._stop_audit_control_mismatch_render()
+
+        if "consistency" in target_domains:
+            self.audit_consistency_cache_key = None
+            self.audit_consistency_cache_groups = []
+            self.audit_consistency_displayed_key = None
+            self.audit_consistency_display_complete = False
+            self.audit_consistency_worker_pending_request = None
+
+        if "term_usage" in target_domains:
+            self.audit_term_cache_key = None
+            self.audit_term_cache_groups = []
+            self.audit_term_displayed_key = None
+            self.audit_term_display_complete = False
+            self.audit_term_suggestions_cache_key = None
+            self.audit_term_suggestions_jp = []
+            self.audit_term_suggestions_en = []
+            self.audit_term_worker_pending_request = None
+            self.audit_term_suggestions_worker_pending_request = None
+            self._stop_audit_term_render()
+
+        if "translation_collision" in target_domains:
+            self.audit_translation_collision_cache_key = None
+            self.audit_translation_collision_cache_groups = []
+            self.audit_translation_collision_displayed_key = None
+            self.audit_translation_collision_display_complete = False
+            self.audit_translation_collision_worker_pending_request = None
+
+        if "name_consistency" in target_domains:
+            self.audit_name_consistency_base_cache_key = None
+            self.audit_name_consistency_base_payload = None
+            self.audit_name_consistency_cache_key = None
+            self.audit_name_consistency_cache_groups = []
+            self.audit_name_consistency_displayed_key = None
+            self.audit_name_consistency_display_complete = False
+            self.audit_name_consistency_worker_pending_request = None
 
     def _audit_highlight_style(self) -> str:
         if is_dark_palette():

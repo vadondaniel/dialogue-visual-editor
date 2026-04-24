@@ -13,6 +13,20 @@ class _AuditSanitizeHostTypingFallback:
 
 
 class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
+    def _sanitize_cache_generation(self) -> int:
+        generation_resolver = getattr(self, "_audit_generation", None)
+        if callable(generation_resolver):
+            try:
+                resolved = generation_resolver("sanitize")
+            except Exception:
+                resolved = None
+            if isinstance(resolved, (int, float, str)):
+                try:
+                    return int(resolved)
+                except Exception:
+                    pass
+        return int(getattr(self, "audit_cache_generation", 0))
+
     def _compute_audit_sanitize_payload_worker(
         self,
         path_sessions: list[tuple[Path, FileSession]],
@@ -29,7 +43,7 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
         selected_ignored = ignored_entries_by_rule.get(selected_rule_id, set())
 
         for path, session in path_sessions:
-            for idx, segment in enumerate(list(session.segments), start=1):
+            for idx, segment in enumerate(session.segments, start=1):
                 entry_text = self._audit_entry_text_for_segment(
                     session, segment, idx)
                 occurrences: list[dict[str, Any]] = []
@@ -106,7 +120,7 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
         entries = 0
 
         for path, session in path_sessions:
-            for idx, segment in enumerate(list(session.segments), start=1):
+            for idx, segment in enumerate(session.segments, start=1):
                 entry_text = self._audit_entry_text_for_segment(
                     session, segment, idx)
                 occurrences: list[dict[str, Any]] = []
@@ -250,7 +264,7 @@ class AuditSanitizeWorkerMixin(_AuditSanitizeHostTypingFallback):
         scope = str(running_request.get("scope", "original"))
         selected_rule_id = str(running_request.get("selected_rule_id", ""))
         selected_find_text = str(running_request.get("selected_find_text", ""))
-        if generation != self.audit_cache_generation:
+        if generation != self._sanitize_cache_generation():
             return
         if self._audit_sanitize_scope() != scope:
             return
