@@ -4202,15 +4202,7 @@ class DialogueBlockWidget(QFrame):
             resolved = self.speaker_display_resolver(inferred_name).strip()
             if resolved:
                 display_name = resolved
-        first_line = self._line1_inference_prefix_text().strip()
-
-        if (
-            self._line1_inference_is_forced()
-            or (first_line and looks_like_name_line(first_line))
-            or (display_name != inferred_name and looks_like_name_line(display_name))
-        ):
-            return f"{display_name} (line 1)"
-        return NO_SPEAKER_KEY
+        return f"{display_name} (line 1)"
 
     def _speaker_display_name_html(self) -> str:
         inferred_name = self._resolved_inferred_speaker_name()
@@ -4259,15 +4251,7 @@ class DialogueBlockWidget(QFrame):
             rendered = self.speaker_display_html_resolver(inferred_name).strip()
             if rendered:
                 display_html = rendered
-        first_line = self._line1_inference_prefix_text().strip()
-
-        if (
-            self._line1_inference_is_forced()
-            or (first_line and looks_like_name_line(first_line))
-            or (display_name != inferred_name and looks_like_name_line(display_name))
-        ):
-            return f"{display_html} (line 1)"
-        return html.escape(NO_SPEAKER_KEY)
+        return f"{display_html} (line 1)"
 
     def _refresh_meta_label(self) -> None:
         if self.actor_mode:

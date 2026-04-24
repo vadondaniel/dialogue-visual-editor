@@ -591,6 +591,27 @@ class DialogueBlockWidgetLazyEditorTests(unittest.TestCase):
         self.assertEqual(widget._speaker_display_name_html(), "Aki")
         widget.deleteLater()
 
+    def test_editor_mode_shows_inferred_line1_speaker_in_meta(self) -> None:
+        segment = _segment([r"\C[2]\N[1]\C[0]", "こんにちは"])
+
+        def infer_speaker(_: DialogueSegment) -> str:
+            return r"\C[2]\N[1]\C[0]"
+
+        widget = _widget_with_options(
+            segment,
+            translator_mode=False,
+            speaker_display_resolver=None,
+            speaker_display_html_resolver=None,
+            hidden_control_colored_line_resolver=None,
+            inferred_speaker_name_resolver=infer_speaker,
+        )
+
+        self.assertEqual(widget._speaker_display_name(), r"\C[2]\N[1]\C[0] (line 1)")
+        self.assertIn("(line 1)", widget._speaker_display_name_html())
+        self.assertIn("Speaker:", widget.meta_label.text())
+        self.assertIn("(line 1)", widget.meta_label.text())
+        widget.deleteLater()
+
     def test_translator_mode_source_hint_hides_inferred_speaker_line(self) -> None:
         segment = _segment(["Hero", "こんにちは"])
         segment.translation_lines = [""]

@@ -513,12 +513,13 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["speaker_key"], "Hero")
-        self.assertEqual(rows[0]["count"], 2)
+        self.assertEqual(rows[0]["count"], 1)
+        self.assertEqual(rows[0]["total_count"], 2)
         self.assertEqual(rows[0]["inferred_count"], 1)
         self.assertEqual(rows[0]["unresolved_count"], 1)
         self.assertEqual(rows[0]["suggested_translation"], "Aki")
         self.assertEqual(rows[0]["sample_path"], str(harness.path_a))
-        self.assertEqual(rows[0]["sample_uid"], "Map001:1")
+        self.assertEqual(rows[0]["sample_uid"], "Map001:2")
         self.assertIn("inferred_count", rows[0])
 
     def test_collect_candidates_omits_fully_inferred_keys(self) -> None:

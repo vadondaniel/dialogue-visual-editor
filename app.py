@@ -4892,22 +4892,29 @@ class DialogueVisualEditor(
                 if row is None:
                     row = {
                         "speaker_key": speaker_key,
-                        "count": 0,
-                        "sample_path": str(path),
-                        "sample_uid": segment.uid,
-                        "sample_context": segment.context,
+                        "total_count": 0,
+                        "unresolved_count": 0,
+                        "sample_path": "",
+                        "sample_uid": "",
+                        "sample_context": "",
                         "inferred_count": 0,
                         "translations": {},
                     }
                     rows_by_key[speaker_key] = row
 
-                row["count"] = int(row["count"]) + 1
+                row["total_count"] = int(row.get("total_count", 0)) + 1
                 inferred = self._inferred_speaker_from_segment_line1(
                     segment,
                     infer_speaker_enabled=True,
                 ).strip()
                 if inferred:
                     row["inferred_count"] = int(row.get("inferred_count", 0)) + 1
+                else:
+                    row["unresolved_count"] = int(row.get("unresolved_count", 0)) + 1
+                    if not str(row.get("sample_uid", "")).strip():
+                        row["sample_path"] = str(path)
+                        row["sample_uid"] = segment.uid
+                        row["sample_context"] = segment.context
 
         # Mine candidate translation names from all dialogue entries that map to
         # inferred speaker keys, so suggestions work even when only per-segment
@@ -4986,9 +4993,9 @@ class DialogueVisualEditor(
 
         rows: list[dict[str, Any]] = []
         for speaker_key, row in rows_by_key.items():
-            total_count = int(row.get("count", 0))
+            total_count = int(row.get("total_count", 0))
             inferred_count = int(row.get("inferred_count", 0))
-            unresolved_count = max(0, total_count - inferred_count)
+            unresolved_count = int(row.get("unresolved_count", 0))
             if unresolved_count <= 0:
                 continue
             suggested_translation = self._speaker_translation_for_key(speaker_key).strip()
@@ -5007,7 +5014,8 @@ class DialogueVisualEditor(
             rows.append(
                 {
                     "speaker_key": speaker_key,
-                    "count": total_count,
+                    "count": unresolved_count,
+                    "total_count": total_count,
                     "inferred_count": inferred_count,
                     "unresolved_count": unresolved_count,
                     "sample_path": str(row.get("sample_path", "")).strip(),
