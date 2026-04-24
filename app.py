@@ -724,7 +724,7 @@ class DialogueVisualEditor(
         page_size_spin.valueChanged.connect(
             self._sync_settings_pagination_menu_labels
         )
-        self.infer_speaker_check.toggled.connect(self._rerender_current_file)
+        self.infer_speaker_check.toggled.connect(self._on_infer_speaker_toggled)
         self.hide_control_codes_check.toggled.connect(
             self._on_hide_control_codes_toggled)
         self.editor_mode_combo.currentIndexChanged.connect(
@@ -4535,6 +4535,8 @@ class DialogueVisualEditor(
             self._refresh_translator_detail_panel()
 
         map_changed = previous != cleaned
+        if changed_blocks > 0 or map_changed:
+            self._refresh_after_speaker_or_inference_change()
 
         if changed_blocks > 0:
             value_display = cleaned if cleaned else "(blank)"
@@ -5082,6 +5084,7 @@ class DialogueVisualEditor(
             return 0
 
         changed_blocks = 0
+        map_or_color_changed = False
         for session in self.sessions.values():
             if self._is_name_index_session(session):
                 continue
@@ -5103,6 +5106,7 @@ class DialogueVisualEditor(
             if new_name not in self.speaker_custom_colors:
                 self.speaker_custom_colors[new_name] = self.speaker_custom_colors[old_name]
             del self.speaker_custom_colors[old_name]
+            map_or_color_changed = True
 
         if old_name in self.speaker_translation_map:
             if (
@@ -5111,12 +5115,16 @@ class DialogueVisualEditor(
             ):
                 self.speaker_translation_map[new_name] = self.speaker_translation_map[old_name]
             del self.speaker_translation_map[old_name]
+            map_or_color_changed = True
         self._invalidate_speaker_auto_color_cache()
 
         if self.current_path is not None:
             session = self.sessions.get(self.current_path)
             if session is not None:
                 self._render_session(session, preserve_scroll=True)
+
+        if changed_blocks > 0 or map_or_color_changed:
+            self._refresh_after_speaker_or_inference_change()
 
         if changed_blocks > 0:
             block_label = "block" if changed_blocks == 1 else "blocks"
@@ -5391,6 +5399,8 @@ class DialogueVisualEditor(
             current_session = self.sessions.get(self.current_path)
             if current_session is not None:
                 self._render_session(current_session, preserve_scroll=True)
+        if changed_entries > 0 or translated_entries > 0 or map_changed:
+            self._refresh_after_speaker_or_inference_change()
         if changed_entries > 0 or translated_entries > 0:
             entry_label = "entry" if changed_entries == 1 else "entries"
             message = (
@@ -8536,6 +8546,55 @@ class DialogueVisualEditor(
             return
         self._clear_cached_block_views()
         self._render_session(session)
+
+    def _on_infer_speaker_toggled(self, _checked: bool) -> None:
+        self._rerender_current_file()
+        self._refresh_after_speaker_or_inference_change()
+
+    def _refresh_after_speaker_or_inference_change(self) -> None:
+        invalidate_audit_caches = getattr(self, "_invalidate_audit_caches", None)
+        if callable(invalidate_audit_caches):
+            try:
+                invalidate_audit_caches(
+                    domains={
+                        "control_mismatch",
+                        "consistency",
+                        "term_usage",
+                        "translation_collision",
+                        "name_consistency",
+                    }
+                )
+            except TypeError:
+                invalidate_audit_caches()
+
+        refresh_file_items = getattr(self, "_refresh_all_file_item_text", None)
+        if callable(refresh_file_items):
+            refresh_file_items()
+
+        refresh_block_highlighting = getattr(
+            self,
+            "_refresh_block_control_mismatch_highlighting",
+            None,
+        )
+        if callable(refresh_block_highlighting):
+            refresh_block_highlighting()
+
+        refresh_translator_detail = getattr(self, "_refresh_translator_detail_panel", None)
+        if callable(refresh_translator_detail):
+            refresh_translator_detail()
+
+        audit_refresh_methods = (
+            "_refresh_audit_control_mismatch_panel",
+            "_refresh_audit_consistency_panel",
+            "_refresh_audit_term_panel",
+            "_refresh_audit_term_suggestions_panel",
+            "_refresh_audit_translation_collision_panel",
+            "_refresh_audit_name_consistency_panel",
+        )
+        for method_name in audit_refresh_methods:
+            refresh_method = getattr(self, method_name, None)
+            if callable(refresh_method):
+                refresh_method()
 
     def _on_layout_constraints_changed(self, _value: int) -> None:
         self._refresh_all_file_item_text()

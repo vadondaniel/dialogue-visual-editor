@@ -185,7 +185,20 @@ class _SpeakerInferenceCandidateHarness:
         self.current_path: Path | None = None
         self.open_calls: list[tuple[Path, str, str]] = []
         self.render_calls = 0
+        self.rerender_calls = 0
         self.refresh_dirty_paths: list[Path] = []
+        self.invalidate_domains: list[set[str]] = []
+        self.refresh_all_file_item_text_calls = 0
+        self.refresh_block_control_mismatch_highlighting_calls = 0
+        self.refresh_translator_detail_panel_calls = 0
+        self.audit_refresh_counts: dict[str, int] = {
+            "control_mismatch": 0,
+            "consistency": 0,
+            "term_usage": 0,
+            "term_suggestions": 0,
+            "translation_collision": 0,
+            "name_consistency": 0,
+        }
         self._status_messages: list[str] = []
         self.speaker_translation_map: dict[str, str] = {}
         segment_a = DialogueSegment(
@@ -358,8 +371,58 @@ class _SpeakerInferenceCandidateHarness:
     def _refresh_dirty_state(self, session: FileSession) -> None:
         self.refresh_dirty_paths.append(session.path)
 
+    def _invalidate_audit_caches(self, domains: object | None = None) -> None:
+        if isinstance(domains, set):
+            normalized = {
+                str(item).strip().casefold()
+                for item in domains
+                if isinstance(item, str)
+            }
+            self.invalidate_domains.append(normalized)
+
+    def _refresh_all_file_item_text(self) -> None:
+        self.refresh_all_file_item_text_calls += 1
+
+    def _refresh_block_control_mismatch_highlighting(self) -> None:
+        self.refresh_block_control_mismatch_highlighting_calls += 1
+
+    def _refresh_translator_detail_panel(self) -> None:
+        self.refresh_translator_detail_panel_calls += 1
+
+    def _refresh_audit_control_mismatch_panel(self) -> None:
+        self.audit_refresh_counts["control_mismatch"] += 1
+
+    def _refresh_audit_consistency_panel(self) -> None:
+        self.audit_refresh_counts["consistency"] += 1
+
+    def _refresh_audit_term_panel(self) -> None:
+        self.audit_refresh_counts["term_usage"] += 1
+
+    def _refresh_audit_term_suggestions_panel(self) -> None:
+        self.audit_refresh_counts["term_suggestions"] += 1
+
+    def _refresh_audit_translation_collision_panel(self) -> None:
+        self.audit_refresh_counts["translation_collision"] += 1
+
+    def _refresh_audit_name_consistency_panel(self) -> None:
+        self.audit_refresh_counts["name_consistency"] += 1
+
+    def _rerender_current_file(self) -> None:
+        self.rerender_calls += 1
+
+    def _refresh_after_speaker_or_inference_change(self) -> None:
+        _call_editor_method("_refresh_after_speaker_or_inference_change", self)
+
     def statusBar(self) -> Any:
         return SimpleNamespace(showMessage=lambda message: self._status_messages.append(message))
+
+
+class _SpeakerAuditFallbackHarness:
+    def __init__(self) -> None:
+        self.invalidate_calls = 0
+
+    def _invalidate_audit_caches(self) -> None:
+        self.invalidate_calls += 1
 
 
 class SpeakerKeyBehaviorTests(unittest.TestCase):
@@ -630,6 +693,64 @@ class SpeakerKeyBehaviorTests(unittest.TestCase):
         self.assertEqual(harness.speaker_translation_map.get("Hero", ""), "Aki")
         self.assertEqual(harness.refresh_dirty_paths, [harness.path_a])
         self.assertEqual(harness.render_calls, 1)
+        expected_domains = {
+            "control_mismatch",
+            "consistency",
+            "term_usage",
+            "translation_collision",
+            "name_consistency",
+        }
+        self.assertEqual(harness.invalidate_domains, [expected_domains])
+        self.assertEqual(harness.refresh_all_file_item_text_calls, 1)
+        self.assertEqual(harness.refresh_block_control_mismatch_highlighting_calls, 1)
+        self.assertEqual(harness.refresh_translator_detail_panel_calls, 1)
+        self.assertEqual(
+            harness.audit_refresh_counts,
+            {
+                "control_mismatch": 1,
+                "consistency": 1,
+                "term_usage": 1,
+                "term_suggestions": 1,
+                "translation_collision": 1,
+                "name_consistency": 1,
+            },
+        )
+
+    def test_on_infer_speaker_toggled_rerenders_and_refreshes_audits(self) -> None:
+        harness = _SpeakerInferenceCandidateHarness()
+
+        _call_editor_method("_on_infer_speaker_toggled", harness, True)
+
+        self.assertEqual(harness.rerender_calls, 1)
+        expected_domains = {
+            "control_mismatch",
+            "consistency",
+            "term_usage",
+            "translation_collision",
+            "name_consistency",
+        }
+        self.assertEqual(harness.invalidate_domains, [expected_domains])
+        self.assertEqual(harness.refresh_all_file_item_text_calls, 1)
+        self.assertEqual(harness.refresh_block_control_mismatch_highlighting_calls, 1)
+        self.assertEqual(harness.refresh_translator_detail_panel_calls, 1)
+        self.assertEqual(
+            harness.audit_refresh_counts,
+            {
+                "control_mismatch": 1,
+                "consistency": 1,
+                "term_usage": 1,
+                "term_suggestions": 1,
+                "translation_collision": 1,
+                "name_consistency": 1,
+            },
+        )
+
+    def test_refresh_after_speaker_change_falls_back_for_legacy_invalidate_signature(self) -> None:
+        harness = _SpeakerAuditFallbackHarness()
+
+        _call_editor_method("_refresh_after_speaker_or_inference_change", harness)
+
+        self.assertEqual(harness.invalidate_calls, 1)
 
     def test_jump_to_speaker_candidate_entry_opens_target_file(self) -> None:
         harness = _SpeakerInferenceCandidateHarness()
