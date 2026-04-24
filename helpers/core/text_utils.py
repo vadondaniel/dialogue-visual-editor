@@ -17,6 +17,7 @@ CONTROL_TOKEN_RE = re.compile(
 )
 CONTROL_CODE_WORD_CASE_RE = re.compile(r"\\([A-Za-z]+)(?=[\[<])")
 ELLIPSIS_DOT_RUN_RE = re.compile(r"(?<!\\)\.{4,}")
+SMART_QUOTE_WORD_CHAR_RE = re.compile(r"[A-Za-z0-9]")
 SIMILARITY_PUNCT_RE = re.compile(
     r"[\s\.,!?\"'`~:;()\[\]{}<>\/\\\-_|\+\*&\^%$#@=。、，．？！：；「」『』（）［］｛｝【】〈〉《》…・～〜]+"
 )
@@ -416,6 +417,188 @@ def normalize_control_code_word_case(text: str) -> tuple[str, int]:
 
     normalized = CONTROL_CODE_WORD_CASE_RE.sub(_replace, text)
     return normalized, replacements
+
+
+def _smart_quote_is_word_char(char: str) -> bool:
+    if not char:
+        return False
+    return bool(SMART_QUOTE_WORD_CHAR_RE.fullmatch(char))
+
+
+def _smart_quote_is_likely_opening_context(
+    previous_char: str,
+    previous_non_space: str,
+) -> bool:
+    if not previous_char:
+        return True
+    if previous_char.isspace():
+        return True
+    if previous_char in "([{<":
+        return True
+    return previous_non_space in ".!?;:,-\u2013\u2014"
+
+
+def _smart_quote_is_likely_closing_context(next_char: str) -> bool:
+    if not next_char:
+        return True
+    if next_char.isspace():
+        return True
+    if next_char in "\"'\u2018\u2019\u201C\u201D":
+        return True
+    if next_char in ")]}>":
+        return True
+    return next_char in ".!?;:,。！？、，：；"
+
+
+def _smart_quote_convert_segment(
+    text: str,
+    *,
+    previous_char: str,
+    previous_non_space: str,
+    double_depth: int,
+    single_depth: int,
+) -> tuple[str, int, str, str, int, int]:
+    result: list[str] = []
+    replacements = 0
+    idx = 0
+    while idx < len(text):
+        char = text[idx]
+        next_char = text[idx + 1] if idx + 1 < len(text) else ""
+
+        if char == '"':
+            run_end = idx + 1
+            while run_end < len(text) and text[run_end] == '"':
+                run_end += 1
+            run_length = run_end - idx
+            next_after_run = text[run_end] if run_end < len(text) else ""
+            opening_by_prev = _smart_quote_is_likely_opening_context(
+                previous_char,
+                previous_non_space,
+            )
+            closing_by_next = _smart_quote_is_likely_closing_context(next_after_run)
+            if opening_by_prev and not closing_by_next:
+                converted = "\u201C"
+            elif (not opening_by_prev) and closing_by_next:
+                converted = "\u201D"
+            else:
+                converted = "\u201D" if double_depth > 0 else "\u201C"
+
+            result.append(converted * run_length)
+            replacements += run_length
+            if converted == "\u201C":
+                double_depth += run_length
+            else:
+                double_depth = max(0, double_depth - run_length)
+            previous_char = converted
+            previous_non_space = converted
+            idx = run_end
+            continue
+
+        if char == "'":
+            if _smart_quote_is_word_char(previous_char) and _smart_quote_is_word_char(
+                next_char
+            ):
+                converted = "\u2019"
+            else:
+                opening_by_prev = _smart_quote_is_likely_opening_context(
+                    previous_char,
+                    previous_non_space,
+                )
+                closing_by_next = _smart_quote_is_likely_closing_context(next_char)
+                if opening_by_prev and not closing_by_next:
+                    converted = "\u2018"
+                elif (not opening_by_prev) and closing_by_next:
+                    converted = "\u2019"
+                else:
+                    converted = "\u2019" if single_depth > 0 else "\u2018"
+
+            result.append(converted)
+            replacements += 1
+            if converted == "\u2018":
+                single_depth += 1
+            else:
+                single_depth = max(0, single_depth - 1)
+            previous_char = converted
+            previous_non_space = converted
+            idx += 1
+            continue
+
+        result.append(char)
+        previous_char = char
+        if not char.isspace():
+            previous_non_space = char
+        idx += 1
+
+    return (
+        "".join(result),
+        replacements,
+        previous_char,
+        previous_non_space,
+        double_depth,
+        single_depth,
+    )
+
+
+def normalize_smart_quotes(text: str) -> tuple[str, int]:
+    if not text:
+        return "", 0
+
+    result_parts: list[str] = []
+    replacements = 0
+    previous_char = ""
+    previous_non_space = ""
+    double_depth = 0
+    single_depth = 0
+    cursor = 0
+
+    for match in CONTROL_TOKEN_RE.finditer(text):
+        if match.start() > cursor:
+            (
+                converted,
+                converted_replacements,
+                previous_char,
+                previous_non_space,
+                double_depth,
+                single_depth,
+            ) = _smart_quote_convert_segment(
+                text[cursor:match.start()],
+                previous_char=previous_char,
+                previous_non_space=previous_non_space,
+                double_depth=double_depth,
+                single_depth=single_depth,
+            )
+            result_parts.append(converted)
+            replacements += converted_replacements
+
+        token = match.group(0)
+        result_parts.append(token)
+        if token:
+            previous_char = token[-1]
+            for token_char in reversed(token):
+                if not token_char.isspace():
+                    previous_non_space = token_char
+                    break
+        cursor = match.end()
+
+    if cursor < len(text):
+        (
+            converted_tail,
+            tail_replacements,
+            _previous_char,
+            _previous_non_space,
+            _double_depth,
+            _single_depth,
+        ) = _smart_quote_convert_segment(
+            text[cursor:],
+            previous_char=previous_char,
+            previous_non_space=previous_non_space,
+            double_depth=double_depth,
+            single_depth=single_depth,
+        )
+        result_parts.append(converted_tail)
+        replacements += tail_replacements
+
+    return "".join(result_parts), replacements
 
 
 def trim_extra_ellipsis_runs(text: str) -> tuple[str, int]:

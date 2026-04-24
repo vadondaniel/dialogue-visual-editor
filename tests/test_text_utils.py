@@ -167,6 +167,48 @@ class TextUtilsTests(unittest.TestCase):
         self.assertEqual(normalized, r"\C[2]x\N[1]\V[3]")
         self.assertEqual(replacements, 2)
 
+    def test_normalize_smart_quotes_converts_double_and_apostrophe(self) -> None:
+        normalized, replacements = text_utils.normalize_smart_quotes(
+            "\"Hello\", don't panic."
+        )
+        self.assertEqual(normalized, "\u201CHello\u201D, don\u2019t panic.")
+        self.assertEqual(replacements, 3)
+
+    def test_normalize_smart_quotes_handles_nested_quotes(self) -> None:
+        normalized, replacements = text_utils.normalize_smart_quotes(
+            "\"She said 'go'.\""
+        )
+        self.assertEqual(
+            normalized,
+            "\u201CShe said \u2018go\u2019.\u201D",
+        )
+        self.assertEqual(replacements, 4)
+
+    def test_normalize_smart_quotes_uses_closing_context_for_punctuation(self) -> None:
+        normalized, replacements = text_utils.normalize_smart_quotes(
+            "He called it 'done'."
+        )
+        self.assertEqual(
+            normalized,
+            "He called it \u2018done\u2019.",
+        )
+        self.assertEqual(replacements, 2)
+
+    def test_normalize_smart_quotes_preserves_control_token_spans(self) -> None:
+        normalized, replacements = text_utils.normalize_smart_quotes(
+            r"Say \N[1] says \"Hi\" and \C[2]don't\C[0] end"
+        )
+        self.assertEqual(
+            normalized,
+            "Say \\N[1] says \\\"Hi\\\" and \\C[2]don\u2019t\\C[0] end",
+        )
+        self.assertEqual(replacements, 1)
+
+    def test_normalize_smart_quotes_noop_when_no_straight_quotes(self) -> None:
+        normalized, replacements = text_utils.normalize_smart_quotes("No changes here.")
+        self.assertEqual(normalized, "No changes here.")
+        self.assertEqual(replacements, 0)
+
     def test_visible_length_variable_token_allows_extra_args(self) -> None:
         base_length = text_utils.visible_length(r"\V[5]x")
         self.assertEqual(text_utils.visible_length(r"\V[5,4]x"), base_length)

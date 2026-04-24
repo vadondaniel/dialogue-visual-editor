@@ -20,10 +20,12 @@ class NormalizationsDialog(QDialog):
         *,
         on_normalize_codes: Callable[[], None],
         on_trim_extra_ellipses: Callable[[], None],
+        on_smart_quotes: Callable[[], None],
         on_smart_collapse_all: Callable[[], None],
         on_variable_lengths: Callable[[], None],
         count_normalize_codes: Callable[[], int],
         count_trim_extra_ellipses: Callable[[], int],
+        count_smart_quotes: Callable[[], int],
         count_smart_collapse_current_file: Callable[[], int],
         count_smart_collapse_all_files: Callable[[], int],
     ) -> None:
@@ -33,14 +35,17 @@ class NormalizationsDialog(QDialog):
         self.resize(420, 260)
         self._on_normalize_codes = on_normalize_codes
         self._on_trim_extra_ellipses = on_trim_extra_ellipses
+        self._on_smart_quotes = on_smart_quotes
         self._on_smart_collapse_all = on_smart_collapse_all
         self._on_variable_lengths = on_variable_lengths
         self._count_normalize_codes = count_normalize_codes
         self._count_trim_extra_ellipses = count_trim_extra_ellipses
+        self._count_smart_quotes = count_smart_quotes
         self._count_smart_collapse_current_file = count_smart_collapse_current_file
         self._count_smart_collapse_all_files = count_smart_collapse_all_files
         self._normalize_codes_base_text = "Normalize Codes..."
         self._trim_ellipses_base_text = "Trim Extra Ellipses..."
+        self._smart_quotes_base_text = "Smart Quotes..."
         self._smart_collapse_base_text = "Smart Collapse All..."
         self._variable_lengths_base_text = "Variable Lengths..."
 
@@ -66,6 +71,12 @@ class NormalizationsDialog(QDialog):
             self._run_trim_ellipses_and_refresh
         )
         layout.addWidget(self.trim_ellipses_btn)
+
+        self.smart_quotes_btn = QPushButton(self._smart_quotes_base_text)
+        self.smart_quotes_btn.clicked.connect(
+            self._run_smart_quotes_and_refresh
+        )
+        layout.addWidget(self.smart_quotes_btn)
 
         self.smart_collapse_btn = QPushButton(self._smart_collapse_base_text)
         self.smart_collapse_btn.clicked.connect(
@@ -105,6 +116,10 @@ class NormalizationsDialog(QDialog):
         except Exception:
             trim_count = 0
         try:
+            smart_quotes_count = int(self._count_smart_quotes())
+        except Exception:
+            smart_quotes_count = 0
+        try:
             smart_collapse_current_file_count = int(
                 self._count_smart_collapse_current_file()
             )
@@ -129,6 +144,12 @@ class NormalizationsDialog(QDialog):
                 trim_count,
             )
         )
+        self.smart_quotes_btn.setText(
+            self._button_text_with_fix_count(
+                self._smart_quotes_base_text,
+                smart_quotes_count,
+            )
+        )
         self.smart_collapse_btn.setText(
             self._smart_collapse_button_text(
                 smart_collapse_current_file_count,
@@ -143,6 +164,10 @@ class NormalizationsDialog(QDialog):
 
     def _run_trim_ellipses_and_refresh(self) -> None:
         self._on_trim_extra_ellipses()
+        self._refresh_counts()
+
+    def _run_smart_quotes_and_refresh(self) -> None:
+        self._on_smart_quotes()
         self._refresh_counts()
 
     def _run_smart_collapse_and_refresh(self) -> None:

@@ -75,6 +75,7 @@ try:
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
+        normalize_smart_quotes,
         parse_dialogue_data,
         parse_dialogue_file,
         strip_control_tokens,
@@ -115,6 +116,7 @@ except ImportError:
         looks_like_name_line,
         natural_sort_key,
         normalize_control_code_word_case,
+        normalize_smart_quotes,
         parse_dialogue_data,
         parse_dialogue_file,
         strip_control_tokens,
@@ -3213,6 +3215,187 @@ class DialogueVisualEditor(
             )
         )
 
+    @staticmethod
+    def _segment_is_safe_for_smart_quotes_normalization(segment: DialogueSegment) -> bool:
+        return segment.segment_kind in {
+            "dialogue",
+            "choice",
+            "script_message",
+            "tyrano_dialogue",
+        }
+
+    def _count_possible_smart_quote_normalizations(self) -> tuple[int, int]:
+        text_replacements = 0
+        speaker_replacements = 0
+        for session in self.sessions.values():
+            for segment in session.segments:
+                if not self._segment_is_safe_for_smart_quotes_normalization(segment):
+                    continue
+                tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                for line in tl_lines:
+                    _converted, count = normalize_smart_quotes(line)
+                    text_replacements += count
+
+                if segment.is_structural_dialogue:
+                    _converted_speaker, speaker_count = normalize_smart_quotes(
+                        segment.translation_speaker
+                    )
+                    speaker_replacements += speaker_count
+
+        return text_replacements, speaker_replacements
+
+    def _apply_smart_quote_normalization(self) -> tuple[int, int, int, int, set[Path]]:
+        text_replacements = 0
+        speaker_replacements = 0
+        changed_blocks = 0
+        changed_paths: set[Path] = set()
+
+        for path, session in self.sessions.items():
+            session_changed = False
+            for segment in session.segments:
+                if not self._segment_is_safe_for_smart_quotes_normalization(segment):
+                    continue
+
+                segment_changed = False
+                tl_lines = self._normalize_translation_lines(segment.translation_lines)
+                normalized_tl_lines: list[str] = []
+                segment_tl_replacements = 0
+                for line in tl_lines:
+                    normalized_line, count = normalize_smart_quotes(line)
+                    normalized_tl_lines.append(normalized_line)
+                    segment_tl_replacements += count
+                if (
+                    segment_tl_replacements > 0
+                    and normalized_tl_lines != tl_lines
+                ):
+                    segment.translation_lines = list(normalized_tl_lines)
+                    text_replacements += segment_tl_replacements
+                    segment_changed = True
+
+                if segment.is_structural_dialogue:
+                    normalized_speaker, segment_speaker_replacements = normalize_smart_quotes(
+                        segment.translation_speaker
+                    )
+                    if (
+                        segment_speaker_replacements > 0
+                        and normalized_speaker != segment.translation_speaker
+                    ):
+                        segment.translation_speaker = normalized_speaker
+                        cleaned_speaker = normalized_speaker.strip()
+                        if cleaned_speaker:
+                            speaker_key = self._speaker_key_for_segment(segment)
+                            if speaker_key != NO_SPEAKER_KEY:
+                                self.speaker_translation_map[speaker_key] = cleaned_speaker
+                        speaker_replacements += segment_speaker_replacements
+                        segment_changed = True
+
+                if segment_changed:
+                    changed_blocks += 1
+                    session_changed = True
+
+            if session_changed:
+                changed_paths.add(path)
+                self._refresh_dirty_state(session)
+
+        if self.current_path is not None and self.current_path in changed_paths:
+            current_session = self.sessions.get(self.current_path)
+            if current_session is not None:
+                self._render_session(current_session, preserve_scroll=True)
+
+        total = text_replacements + speaker_replacements
+        return (
+            total,
+            text_replacements,
+            speaker_replacements,
+            changed_blocks,
+            changed_paths,
+        )
+
+    def _open_smart_quotes_dialog(self) -> None:
+        if not self.sessions:
+            QMessageBox.information(
+                self,
+                "Smart Quotes",
+                "Load files first.",
+            )
+            return
+
+        text_count, speaker_count = self._count_possible_smart_quote_normalizations()
+        total_count = text_count + speaker_count
+        if total_count <= 0:
+            QMessageBox.information(
+                self,
+                "Smart Quotes",
+                (
+                    "No straight quote/apostrophe smart-quote conversions found.\n\n"
+                    "This action only applies to translation text for dialogue-facing entries "
+                    "and translation speaker fields for structural dialogue."
+                ),
+            )
+            return
+
+        prompt = QMessageBox(self)
+        prompt.setIcon(QMessageBox.Icon.Question)
+        prompt.setWindowTitle("Smart Quotes")
+        prompt.setText(
+            (
+                "Convert straight quotes/apostrophes to curly smart quotes?\n\n"
+                "Scope:\n"
+                "- Translation text for dialogue, choices, script messages, and Tyrano dialogue\n"
+                "- Translation speaker for structural dialogue entries\n"
+                "- Plugin/code-like text entries are skipped\n\n"
+                f"Possible conversions: {total_count}\n"
+                f"Translation text: {text_count}\n"
+                f"Translation speaker: {speaker_count}"
+            )
+        )
+        persist_checkbox = QCheckBox(
+            "Persist immediately (save changed files)",
+            prompt,
+        )
+        persist_checkbox.setChecked(True)
+        prompt.setCheckBox(persist_checkbox)
+        prompt.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        prompt.setDefaultButton(QMessageBox.StandardButton.Yes)
+        if prompt.exec() != int(QMessageBox.StandardButton.Yes):
+            return
+        persist_immediately = bool(persist_checkbox.isChecked())
+
+        (
+            applied_total,
+            applied_text,
+            applied_speaker,
+            changed_blocks,
+            changed_paths,
+        ) = self._apply_smart_quote_normalization()
+        if applied_total <= 0:
+            self.statusBar().showMessage("Smart Quotes: no changes applied.")
+            return
+
+        persist_suffix = ""
+        if persist_immediately:
+            saved_files, failed_files = self._persist_sessions_for_paths(changed_paths)
+            saved_label = "file" if saved_files == 1 else "files"
+            if failed_files > 0:
+                failed_label = "file" if failed_files == 1 else "files"
+                persist_suffix = (
+                    f" Persisted {saved_files} {saved_label}; "
+                    f"{failed_files} {failed_label} failed."
+                )
+            else:
+                persist_suffix = f" Persisted {saved_files} {saved_label}."
+
+        block_label = "block" if changed_blocks == 1 else "blocks"
+        self.statusBar().showMessage(
+            (
+                f"Converted {applied_total} quote/apostrophe occurrences to smart quotes "
+                f"(TL text {applied_text}, TL speaker {applied_speaker}) "
+                f"across {changed_blocks} {block_label}.{persist_suffix}"
+            )
+        )
+
     def _focused_text_editor(self) -> Optional[QPlainTextEdit]:
         focus = QApplication.focusWidget()
         widget = focus
@@ -5316,6 +5499,12 @@ class DialogueVisualEditor(
             return 0
         return max(0, int(self._count_possible_extra_ellipsis_trims()))
 
+    def _normalizations_count_possible_smart_quotes(self) -> int:
+        if not self.sessions:
+            return 0
+        text_count, speaker_count = self._count_possible_smart_quote_normalizations()
+        return max(0, int(text_count + speaker_count))
+
     def _normalizations_count_possible_smart_collapse_changes_for_scope(
         self,
         *,
@@ -5372,10 +5561,12 @@ class DialogueVisualEditor(
             self,
             on_normalize_codes=self._open_normalize_codes_dialog,
             on_trim_extra_ellipses=self._open_trim_extra_ellipses_dialog,
+            on_smart_quotes=self._open_smart_quotes_dialog,
             on_smart_collapse_all=self._smart_collapse_all_dialogue_blocks,
             on_variable_lengths=self._open_variable_length_manager,
             count_normalize_codes=self._normalizations_count_possible_code_normalizations,
             count_trim_extra_ellipses=self._normalizations_count_possible_ellipsis_trims,
+            count_smart_quotes=self._normalizations_count_possible_smart_quotes,
             count_smart_collapse_current_file=self._normalizations_count_possible_smart_collapse_changes,
             count_smart_collapse_all_files=self._normalizations_count_possible_smart_collapse_changes_all_files,
         )
