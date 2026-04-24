@@ -120,6 +120,8 @@ class _SplitOverflowHarness(StructuralEditingMixin):
         self.sessions: dict[Path, FileSession] = {}
         self.current_segment_lookup: dict[str, DialogueSegment] = {}
         self.infer_speaker_check = _Check(False)
+        self.thin_width_spin = _Spin(47)
+        self.wide_width_spin = _Spin(60)
         self.max_lines_spin = _Spin(3)
         self.structural_undo_stack: list[Any] = []
         self.structural_redo_stack: list[Any] = []
@@ -171,6 +173,27 @@ class _SplitOverflowHarness(StructuralEditingMixin):
         preserve_scroll: bool,
     ) -> bool:
         _ = (focus_uid, preserve_scroll)
+        return True
+
+    def _refresh_after_remove_without_full_rerender(
+        self,
+        _session: FileSession,
+        *,
+        removed_uid: str,
+        updated_uids: set[str] | None = None,
+        focus_uid: str | None = None,
+        preserve_scroll: bool = True,
+    ) -> bool:
+        _ = (removed_uid, updated_uids, focus_uid, preserve_scroll)
+        return True
+
+    def _refresh_after_text_reset_without_full_rerender(
+        self,
+        _session: FileSession,
+        *,
+        uid: str,
+    ) -> bool:
+        _ = uid
         return True
 
     @staticmethod
@@ -417,6 +440,84 @@ class SplitOverflowColorContinuityTests(unittest.TestCase):
         moved = session.segments[1]
         self.assertEqual(kept.translation_lines[-1], "stay sharp.”")
         self.assertEqual(moved.translation_lines[0], "“Still ready.”")
+
+    def test_translator_merge_reverses_split_quote_clone_boundary(self) -> None:
+        harness = _SplitOverflowHarness()
+        harness.max_lines_spin = _Spin(2)
+        source_lines = ["JP line 1", "JP line 2", "JP line 3", "JP line 4"]
+        original_translation_lines = [
+            "“That is why I need you to act as me as much as",
+            "possible, Rion.",
+            "Though asking a man like you to play the Saint is a",
+            "cruel request...”",
+        ]
+        anchor = DialogueSegment(
+            uid="Map001.json:L0:0",
+            context="ctx",
+            code101={},
+            lines=list(source_lines),
+            original_lines=list(source_lines),
+            source_lines=list(source_lines),
+            code401_template={},
+            translation_lines=list(original_translation_lines),
+            original_translation_lines=list(original_translation_lines),
+            segment_kind="dialogue",
+        )
+        assert harness.current_path is not None
+        session = FileSession(
+            path=harness.current_path,
+            data={},
+            bundles=[],
+            segments=[anchor],
+        )
+        harness.sessions[session.path] = session
+        harness.current_segment_lookup = {anchor.uid: anchor}
+
+        harness._on_split_overflow_requested(anchor.uid)
+        self.assertEqual(len(session.segments), 2)
+        left_after_split = session.segments[0]
+        right_after_split = session.segments[1]
+        self.assertTrue(left_after_split.translation_lines[-1].endswith(".”"))
+        self.assertTrue(right_after_split.translation_lines[0].startswith("“"))
+
+        harness._on_merge_pair_requested(left_after_split.uid, right_after_split.uid)
+        self.assertEqual(len(session.segments), 1)
+        merged = session.segments[0]
+        self.assertNotIn(".”\n“", "\n".join(merged.translation_lines))
+        self.assertEqual(merged.original_translation_lines, original_translation_lines)
+
+    def test_translator_reset_after_split_merge_restores_original_translation(self) -> None:
+        harness = _SplitOverflowHarness()
+        original_translation_lines = [
+            "“line one",
+            "line two”",
+        ]
+        segment = DialogueSegment(
+            uid="Map001.json:L0:0",
+            context="ctx",
+            code101={},
+            lines=["JP1", "JP2"],
+            original_lines=["JP1", "JP2"],
+            source_lines=["JP1", "JP2"],
+            code401_template={},
+            translation_lines=["“line one”", "“line two”"],
+            original_translation_lines=list(original_translation_lines),
+            segment_kind="dialogue",
+        )
+        assert harness.current_path is not None
+        session = FileSession(
+            path=harness.current_path,
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+        harness.sessions[session.path] = session
+        harness.current_segment_lookup = {segment.uid: segment}
+
+        harness._on_reset_requested(segment.uid)
+
+        self.assertEqual(segment.translation_lines, original_translation_lines)
+        self.assertEqual(harness.statusBar().messages[-1], "Reset translation block.")
 
     def test_projected_smart_collapse_count_respects_scope(self) -> None:
         harness = _ProjectionHarness()

@@ -1299,6 +1299,12 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
         insert_at = insert_after + 1
         return f"{line[:insert_at]}{quote_char}{line[insert_at:]}"
 
+    @staticmethod
+    def _remove_char_at_index(line: str, index: int) -> str:
+        if index < 0 or index >= len(line):
+            return line
+        return f"{line[:index]}{line[index + 1:]}"
+
     def _apply_split_overflow_quote_continuity(
         self,
         kept_lines: list[str],
@@ -1362,6 +1368,56 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
                 opening_char,
             )
         return kept_lines, moved_lines
+
+    def _strip_split_wrapper_boundary_for_merge(
+        self,
+        left_lines: list[str],
+        right_lines: list[str],
+    ) -> tuple[list[str], list[str]]:
+        if not left_lines or not right_lines:
+            return left_lines, right_lines
+
+        normalized_left = list(left_lines)
+        normalized_right = list(right_lines)
+        combined_lines = normalized_left + normalized_right
+        opening_boundary = self._first_visible_content_char_position(combined_lines)
+        closing_boundary = self._last_visible_content_char_position(combined_lines)
+        if opening_boundary is None or closing_boundary is None:
+            return normalized_left, normalized_right
+
+        opening_char = opening_boundary[2]
+        closing_char = closing_boundary[2]
+        wrapper_variant = next(
+            (
+                (candidate_openers, candidate_closers)
+                for candidate_openers, candidate_closers in self._SPLIT_WRAPPER_VARIANTS
+                if (opening_char in candidate_openers and closing_char in candidate_closers)
+            ),
+            None,
+        )
+        if wrapper_variant is None:
+            return normalized_left, normalized_right
+        opening_set, closing_set = wrapper_variant
+
+        left_boundary = self._last_visible_content_char_position(normalized_left)
+        right_boundary = self._first_visible_content_char_position(normalized_right)
+        if left_boundary is None or right_boundary is None:
+            return normalized_left, normalized_right
+
+        left_line_idx, left_char_idx, left_tail_char = left_boundary
+        right_line_idx, right_char_idx, right_head_char = right_boundary
+        if left_tail_char not in closing_set or right_head_char not in opening_set:
+            return normalized_left, normalized_right
+
+        normalized_left[left_line_idx] = self._remove_char_at_index(
+            normalized_left[left_line_idx],
+            left_char_idx,
+        )
+        normalized_right[right_line_idx] = self._remove_char_at_index(
+            normalized_right[right_line_idx],
+            right_char_idx,
+        )
+        return normalized_left, normalized_right
 
     def _sync_source_split_color_continuity_from_translation(
         self,
@@ -2880,28 +2936,39 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             left_segment.translation_lines)
         left_speaker_translation_before = left_segment.translation_speaker
         source_affected = not translator_mode
+        left_lines_for_merge = list(left_segment.lines)
         right_lines_for_merge = self._dedupe_leading_inferred_marker_for_merge(
             left_segment,
             right_segment,
             right_segment.lines,
         )
+        left_lines_for_merge, right_lines_for_merge = self._strip_split_wrapper_boundary_for_merge(
+            left_lines_for_merge,
+            right_lines_for_merge,
+        )
         merged_lines = (
             smart_collapse_lines(
-                list(left_segment.lines) + list(right_lines_for_merge),
+                left_lines_for_merge + list(right_lines_for_merge),
                 self._segment_line_width(left_segment),
                 infer_name_from_first_line=self.infer_speaker_check.isChecked(),
             )
             if source_affected
             else list(left_segment.lines)
         )
+        left_tl_lines_for_merge = self._normalize_translation_lines(
+            left_segment.translation_lines
+        )
         right_tl_lines_for_merge = self._dedupe_leading_inferred_marker_for_merge(
             left_segment,
             right_segment,
             self._normalize_translation_lines(right_segment.translation_lines),
         )
+        left_tl_lines_for_merge, right_tl_lines_for_merge = self._strip_split_wrapper_boundary_for_merge(
+            left_tl_lines_for_merge,
+            right_tl_lines_for_merge,
+        )
         merged_tl_lines = smart_collapse_lines(
-            self._normalize_translation_lines(left_segment.translation_lines)
-            + right_tl_lines_for_merge,
+            left_tl_lines_for_merge + right_tl_lines_for_merge,
             self._segment_line_width(left_segment),
             infer_name_from_first_line=self.infer_speaker_check.isChecked(),
         )
