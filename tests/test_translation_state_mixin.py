@@ -1206,6 +1206,53 @@ class TranslationStateMixinTests(unittest.TestCase):
         self.assertEqual(session.segments[0].tl_uid, "T_uid_fallback")
         self.assertEqual(session.segments[0].translation_lines, ["TL line"])
 
+    def test_apply_state_tyrano_parser_upgrade_does_not_shift_translations(self) -> None:
+        harness = _Harness()
+        inserted = _segment("scene.ks:K:1", "新しく検出された地の文")
+        first = _segment("scene.ks:K:2", "既存の一行目")
+        second = _segment("scene.ks:K:3", "既存の二行目")
+        for segment in (inserted, first, second):
+            segment.segment_kind = "tyrano_dialogue"
+        session = FileSession(
+            path=Path("scene.ks"),
+            data=[],
+            bundles=[],
+            segments=[inserted, first, second],
+        )
+        setattr(session, "tyrano_parser_structure_upgraded", True)
+
+        old_first = _segment("scene.ks:K:1", "既存の一行目")
+        old_second = _segment("scene.ks:K:2", "既存の二行目")
+        for segment in (old_first, old_second):
+            segment.segment_kind = "tyrano_dialogue"
+        harness.translation_state["files"] = {
+            "scene.ks": {
+                "order": ["T_first", "T_second"],
+                "entries": {
+                    "T_first": {
+                        "source_uid": old_first.uid,
+                        "source_hash": harness._segment_source_hash(old_first),
+                        "source_lines": list(old_first.lines),
+                        "translation_lines": ["First translation"],
+                    },
+                    "T_second": {
+                        "source_uid": old_second.uid,
+                        "source_hash": harness._segment_source_hash(old_second),
+                        "source_lines": list(old_second.lines),
+                        "translation_lines": ["Second translation"],
+                    },
+                },
+            }
+        }
+
+        harness._apply_translation_state_to_session(session)
+
+        self.assertEqual(inserted.translation_lines, [""])
+        self.assertEqual(first.translation_lines, ["First translation"])
+        self.assertEqual(second.translation_lines, ["Second translation"])
+        self.assertEqual(first.tl_uid, "T_first")
+        self.assertEqual(second.tl_uid, "T_second")
+
     def test_apply_state_legacy_list_direct_uid_match_uses_source_preview_not_translation_text(self) -> None:
         harness = _Harness()
         session_segment = _segment(

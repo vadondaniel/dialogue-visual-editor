@@ -558,6 +558,18 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         entry: dict[str, Any],
         source_hash_candidates: list[str],
     ) -> bool:
+        parser_structure_upgraded = bool(
+            getattr(session, "tyrano_parser_structure_upgraded", False)
+        )
+        if parser_structure_upgraded and segment.segment_kind == "tyrano_dialogue":
+            entry_hash_raw = entry.get("source_hash")
+            entry_hash = entry_hash_raw.strip() if isinstance(entry_hash_raw, str) else ""
+            if entry_hash and entry_hash in source_hash_candidates:
+                return True
+            source_text = self._segment_source_text_for_mapping(segment).strip()
+            entry_text = self._translation_entry_source_text_for_recovery(entry)
+            return bool(entry_text) and source_text == entry_text
+
         segment_parts = self._legacy_list_uid_parts(
             segment.uid,
             expected_file_name=session.path.name,
@@ -1047,12 +1059,16 @@ class TranslationStateMixin(_EditorHostTypingFallback):
 
         unused = set(entries.keys())
         hash_buckets: dict[str, list[str]] = {}
+        source_text_buckets: dict[str, list[str]] = {}
         source_uid_buckets: dict[str, list[str]] = {}
         legacy_source_uid_parts_by_entry_uid: dict[str, tuple[str, int]] = {}
         for uid, entry in entries.items():
             source_hash = entry.get("source_hash")
             if isinstance(source_hash, str) and source_hash:
                 hash_buckets.setdefault(source_hash, []).append(uid)
+            source_text = self._translation_entry_source_text_for_recovery(entry)
+            if source_text:
+                source_text_buckets.setdefault(source_text, []).append(uid)
             source_uid = entry.get("source_uid")
             if isinstance(source_uid, str) and source_uid:
                 source_uid_buckets.setdefault(source_uid, []).append(uid)
@@ -1118,6 +1134,18 @@ class TranslationStateMixin(_EditorHostTypingFallback):
                             unused.remove(candidate_uid)
                             break
                     if chosen_uid:
+                        break
+
+            if (
+                not chosen_uid
+                and bool(getattr(session, "tyrano_parser_structure_upgraded", False))
+                and segment.segment_kind == "tyrano_dialogue"
+            ):
+                source_text = self._segment_source_text_for_mapping(segment).strip()
+                for candidate_uid in source_text_buckets.get(source_text, []):
+                    if candidate_uid in unused:
+                        chosen_uid = candidate_uid
+                        unused.remove(candidate_uid)
                         break
 
             if not chosen_uid and (not is_name_index_session):

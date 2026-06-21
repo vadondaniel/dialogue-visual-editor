@@ -67,6 +67,8 @@ _PLUGINS_JS_DEFAULT_PREFIX = "var $plugins =\n"
 _PLUGINS_JS_DEFAULT_SUFFIX = ";\n"
 _TYRANO_SCRIPT_MARKER_KEY = "__dve_tyrano_script_marker__"
 _TYRANO_SCRIPT_MARKER_VALUE = "tyrano_script"
+_TYRANO_SCRIPT_FORMAT_VERSION_KEY = "__dve_tyrano_script_format_version__"
+_TYRANO_SCRIPT_FORMAT_VERSION = 2
 _TYRANO_SCRIPT_NEWLINE_KEY = "__dve_tyrano_script_newline__"
 _TYRANO_SCRIPT_HAS_TRAILING_NEWLINE_KEY = "__dve_tyrano_script_has_trailing_newline__"
 _TYRANO_SCRIPT_CHUNKS_KEY = "__dve_tyrano_script_chunks__"
@@ -832,6 +834,7 @@ def _parse_tyrano_script_source(source: str) -> dict[str, Any]:
 
     return {
         _TYRANO_SCRIPT_MARKER_KEY: _TYRANO_SCRIPT_MARKER_VALUE,
+        _TYRANO_SCRIPT_FORMAT_VERSION_KEY: _TYRANO_SCRIPT_FORMAT_VERSION,
         _TYRANO_SCRIPT_NEWLINE_KEY: newline,
         _TYRANO_SCRIPT_HAS_TRAILING_NEWLINE_KEY: has_trailing_newline,
         _TYRANO_SCRIPT_CHUNKS_KEY: chunks,
@@ -995,6 +998,21 @@ def tyrano_script_source_from_data(data: Any) -> str:
     if has_trailing_newline and rebuilt_lines:
         rebuilt += newline
     return rebuilt
+
+
+def _upgrade_tyrano_script_data(data: dict[str, Any]) -> dict[str, Any]:
+    version_raw = data.get(_TYRANO_SCRIPT_FORMAT_VERSION_KEY, 1)
+    version = version_raw if isinstance(version_raw, int) else 1
+    if version >= _TYRANO_SCRIPT_FORMAT_VERSION:
+        return data
+    source = tyrano_script_source_from_data(data)
+    return _parse_tyrano_script_source(source)
+
+
+def _tyrano_script_data_needs_upgrade(data: dict[str, Any]) -> bool:
+    version_raw = data.get(_TYRANO_SCRIPT_FORMAT_VERSION_KEY, 1)
+    version = version_raw if isinstance(version_raw, int) else 1
+    return version < _TYRANO_SCRIPT_FORMAT_VERSION
 
 
 def tyrano_config_source_from_data(data: Any) -> str:
@@ -1917,6 +1935,8 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
         return plugin_session
 
     if is_tyrano_script_data(data):
+        parser_structure_upgraded = _tyrano_script_data_needs_upgrade(data)
+        data = _upgrade_tyrano_script_data(data)
         dialogue_segments = _build_tyrano_dialogue_segments(path, data)
         choice_segments, choice_chunk_indexes = _build_tyrano_choice_segments(path, data)
         tag_text_segments = _build_tyrano_tag_text_segments(
@@ -1948,6 +1968,11 @@ def parse_dialogue_data(path: Path, data: Any) -> FileSession:
             data=data,
             bundles=[],
             segments=tyrano_segments,
+        )
+        setattr(
+            tyrano_session,
+            "tyrano_parser_structure_upgraded",
+            parser_structure_upgraded,
         )
         return tyrano_session
 

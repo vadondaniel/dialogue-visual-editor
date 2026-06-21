@@ -690,6 +690,41 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(tyrano_script_source_from_data(session.data), source)
 
+    def test_parse_tyrano_script_data_upgrades_stale_snapshot_structure(self) -> None:
+        source = (
+            "#\n"
+            "美少女になった自分の姿を鏡で眺めていると、\n"
+            "\n"
+            "@jump target=\"終了\"\n"
+        )
+        stale_data = {
+            "__dve_tyrano_script_marker__": "tyrano_script",
+            "__dve_tyrano_script_newline__": "\n",
+            "__dve_tyrano_script_has_trailing_newline__": True,
+            "__dve_tyrano_script_chunks__": [
+                {"kind": "raw_line", "line": line}
+                for line in source.splitlines()
+            ],
+        }
+
+        session = parse_dialogue_data(Path("scene_stale_snapshot.ks"), stale_data)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(len(dialogue_segments), 1)
+        self.assertEqual(
+            dialogue_segments[0].lines,
+            ["美少女になった自分の姿を鏡で眺めていると、"],
+        )
+        self.assertEqual(
+            session.data["__dve_tyrano_script_format_version__"],
+            2,
+        )
+        self.assertEqual(tyrano_script_source_from_data(session.data), source)
+
     def test_parse_tyrano_script_file_extracts_iscript_translatable_assignment_strings(self) -> None:
         source = (
             "[macro name=\"titlebutton\"]\n"
