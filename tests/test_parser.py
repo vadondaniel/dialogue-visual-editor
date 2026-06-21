@@ -641,6 +641,55 @@ class ParserTests(unittest.TestCase):
         ]
         self.assertEqual(dialogue_segments, [])
 
+    def test_parse_tyrano_script_file_extracts_markerless_empty_hash_narration(self) -> None:
+        source = (
+            "#\n"
+            "巨大化した自分の乳房を途方に暮れながら見下ろしていると、\n"
+            "\n"
+            "@jump target=\"終了\"\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_markerless_narration.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(len(dialogue_segments), 1)
+        self.assertEqual(
+            dialogue_segments[0].lines,
+            ["巨大化した自分の乳房を途方に暮れながら見下ろしていると、"],
+        )
+        self.assertEqual(tyrano_script_source_from_data(session.data), source)
+
+    def test_parse_tyrano_script_file_extracts_formatted_l_wait_narration(self) -> None:
+        source = (
+            "#\n"
+            "[font bold=\"true\"]\n"
+            "≪バーを青いゾーンで止めて、魔法を成功させよう！≫[l]\n"
+            "[resetfont]\n"
+            "@qte_gauge params=\"&tf.params\"\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scene_formatted_narration.ks"
+            path.write_text(source, encoding="utf-8")
+            session = parse_dialogue_file(path)
+
+        dialogue_segments = [
+            segment
+            for segment in session.segments
+            if segment.segment_kind == "tyrano_dialogue"
+        ]
+        self.assertEqual(len(dialogue_segments), 1)
+        self.assertEqual(
+            dialogue_segments[0].lines,
+            ["≪バーを青いゾーンで止めて、魔法を成功させよう！≫"],
+        )
+        self.assertEqual(tyrano_script_source_from_data(session.data), source)
+
     def test_parse_tyrano_script_file_extracts_iscript_translatable_assignment_strings(self) -> None:
         source = (
             "[macro name=\"titlebutton\"]\n"

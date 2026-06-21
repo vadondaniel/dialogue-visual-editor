@@ -82,11 +82,15 @@ _MAP_FILE_NAME_RE = re.compile(r"^map\d+\.json$", re.IGNORECASE)
 _TYRANO_PAGE_BREAK_TAG_RE = re.compile(r"\[\s*p(?:\s+[^\]]*)?\s*\]", re.IGNORECASE)
 _TYRANO_INLINE_LINE_BREAK_TAG_RE = re.compile(r"\[\s*r\s*\]", re.IGNORECASE)
 _TYRANO_STANDALONE_DIALOGUE_MARKER_RE = re.compile(
-    r"^\[\s*(?:p(?:\s+[^\]]*)?|r)\s*\]$",
+    r"^\[\s*(?:p(?:\s+[^\]]*)?|[rl])\s*\]$",
     re.IGNORECASE,
 )
 _TYRANO_TRAILING_DIALOGUE_MARKERS_RE = re.compile(
-    r"(?:\s*\[\s*(?:p|r)\s*\]\s*)+$",
+    r"(?:\s*\[\s*(?:p|r|l)\s*\]\s*)+$",
+    re.IGNORECASE,
+)
+_TYRANO_DIALOGUE_PRESENTATION_TAG_RE = re.compile(
+    r"^\[\s*(?:font\b[^\]]*|resetfont)\s*\]$",
     re.IGNORECASE,
 )
 _TYRANO_ISCRIPT_START_RE = re.compile(r"^\[\s*iscript(?:\s+[^\]]*)?\s*\]$", re.IGNORECASE)
@@ -318,7 +322,12 @@ def _line_has_tyrano_dialogue_marker(line: str) -> bool:
     return bool(
         _TYRANO_PAGE_BREAK_TAG_RE.search(line)
         or _TYRANO_INLINE_LINE_BREAK_TAG_RE.search(line)
+        or re.search(r"\[\s*l\s*\]", line, re.IGNORECASE)
     )
+
+
+def _is_tyrano_dialogue_presentation_tag_line(line: str) -> bool:
+    return bool(_TYRANO_DIALOGUE_PRESENTATION_TAG_RE.match(line.strip()))
 
 
 def split_tyrano_dialogue_line_and_suffix(line: str) -> tuple[str, str]:
@@ -658,6 +667,7 @@ def _collect_tyrano_implicit_dialogue_block(
     # lines without wrapping `[tb_start_text]` tags.
     if stripped_start.startswith("#"):
         body_items: list[dict[str, str]] = [{"kind": "speaker", "line": start_line}]
+        has_empty_narrator_cue = stripped_start == "#"
         has_text_items = False
         has_dialogue_marker = False
         flow_depth = 0
@@ -689,6 +699,10 @@ def _collect_tyrano_implicit_dialogue_block(
                 flow_depth = max(0, flow_depth + _tyrano_flow_depth_delta(candidate))
                 next_index += 1
                 continue
+            if _is_tyrano_dialogue_presentation_tag_line(candidate):
+                body_items.append({"kind": "raw", "line": candidate})
+                next_index += 1
+                continue
             if not _is_tyrano_dialogue_text_line(candidate):
                 break
             body_items.append({"kind": "text", "line": candidate})
@@ -698,12 +712,13 @@ def _collect_tyrano_implicit_dialogue_block(
             next_index += 1
         if not has_text_items:
             return None
-        if not has_dialogue_marker and not _is_tyrano_conditional_dialogue_window(
-            source_lines,
-            start_index + 1,
-            next_index,
-        ):
-            return None
+        if not has_dialogue_marker and not has_empty_narrator_cue:
+            if not _is_tyrano_conditional_dialogue_window(
+                source_lines,
+                start_index + 1,
+                next_index,
+            ):
+                return None
         return body_items, next_index
 
     if not _is_tyrano_dialogue_text_line(start_line):
