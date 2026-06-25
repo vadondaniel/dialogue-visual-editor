@@ -11,6 +11,12 @@ _GAME_MESSAGE_BACKGROUND_PREFIX_RE = re.compile(
 _GAME_MESSAGE_POSITION_PREFIX_RE = re.compile(
     r"^\s*\$gameMessage\.setPositionType\s*\(")
 _GAME_MESSAGE_EXPR_PLACEHOLDER_RE = re.compile(r"\{\{EXPR(\d+)\}\}")
+_ACTOR_NAME_EXPR_RE = re.compile(
+    r"^\s*\$gameActors\.actor\(\s*(\d+)\s*\)\.name\(\s*\)\s*$"
+)
+_VARIABLE_VALUE_EXPR_RE = re.compile(
+    r"^\s*\$gameVariables\.value\(\s*(\d+)\s*\)\s*$"
+)
 _HEX_DIGITS = set("0123456789abcdefABCDEF")
 
 
@@ -497,3 +503,40 @@ def build_game_message_templated_call(
         parts.append(_encode_js_string_term("", quote))
     joined_args = " + ".join(parts)
     return f"$gameMessage.{call_kind}({joined_args});"
+
+
+def display_label_for_expression_term(expression: str) -> str:
+    term = expression.strip()
+    if not term:
+        return "dynamic value"
+    actor_match = _ACTOR_NAME_EXPR_RE.match(term)
+    if actor_match is not None:
+        return f"actor {actor_match.group(1)} name"
+    variable_match = _VARIABLE_VALUE_EXPR_RE.match(term)
+    if variable_match is not None:
+        return f"variable {variable_match.group(1)}"
+    return f"expr: {term}"
+
+
+def display_text_for_expression_placeholders(
+    text: str,
+    expression_terms: list[str] | None,
+) -> str:
+    terms = [
+        term.strip()
+        for term in (expression_terms or [])
+        if isinstance(term, str) and term.strip()
+    ]
+    if not terms or "{{EXPR" not in text:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        try:
+            index = int(match.group(1)) - 1
+        except Exception:
+            index = -1
+        if 0 <= index < len(terms):
+            return "{" + display_label_for_expression_term(terms[index]) + "}"
+        return match.group(0)
+
+    return _GAME_MESSAGE_EXPR_PLACEHOLDER_RE.sub(replace, text)

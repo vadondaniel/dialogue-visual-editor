@@ -299,6 +299,78 @@ class TranslationStateMixin(_EditorHostTypingFallback):
         else:
             code401_template = {"code": 401, "indent": 0, "parameters": [""]}
 
+        segment_kind_raw = entry.get("segment_kind")
+        if isinstance(segment_kind_raw, str) and segment_kind_raw.strip():
+            segment_kind = segment_kind_raw.strip()
+        elif template is not None:
+            segment_kind = template.segment_kind
+        else:
+            segment_kind = "dialogue"
+
+        script_entries_template_raw = entry.get("script_entries_template")
+        if isinstance(script_entries_template_raw, list):
+            script_entries_template = [
+                copy.deepcopy(item)
+                for item in script_entries_template_raw
+                if isinstance(item, dict)
+            ]
+        elif template is not None:
+            script_entries_template = copy.deepcopy(template.script_entries_template)
+        else:
+            script_entries_template = []
+
+        script_entry_roles_raw = entry.get("script_entry_roles")
+        if isinstance(script_entry_roles_raw, list):
+            script_entry_roles = [
+                role for role in script_entry_roles_raw if isinstance(role, str)
+            ]
+        elif template is not None:
+            script_entry_roles = list(template.script_entry_roles)
+        else:
+            script_entry_roles = []
+
+        script_entry_quotes_raw = entry.get("script_entry_quotes")
+        if isinstance(script_entry_quotes_raw, list):
+            script_entry_quotes = [
+                quote for quote in script_entry_quotes_raw if isinstance(quote, str)
+            ]
+        elif template is not None:
+            script_entry_quotes = list(template.script_entry_quotes)
+        else:
+            script_entry_quotes = []
+
+        script_expr_templates_raw = entry.get("script_entry_expression_templates")
+        if isinstance(script_expr_templates_raw, list):
+            script_entry_expression_templates = [
+                copy.deepcopy(item) if isinstance(item, dict) else None
+                for item in script_expr_templates_raw
+            ]
+        elif template is not None:
+            script_entry_expression_templates = copy.deepcopy(
+                template.script_entry_expression_templates
+            )
+        else:
+            script_entry_expression_templates = []
+
+        line_entry_code_raw = entry.get("line_entry_code")
+        if isinstance(line_entry_code_raw, int):
+            line_entry_code = line_entry_code_raw
+        elif template is not None:
+            line_entry_code = template.line_entry_code
+        else:
+            line_entry_code = 401
+
+        if segment_kind == "script_message" and template is not None:
+            code101 = copy.deepcopy(template.code101)
+            code401_template = copy.deepcopy(template.code401_template)
+            script_entries_template = copy.deepcopy(template.script_entries_template)
+            script_entry_roles = list(template.script_entry_roles)
+            script_entry_quotes = list(template.script_entry_quotes)
+            script_entry_expression_templates = copy.deepcopy(
+                template.script_entry_expression_templates
+            )
+            line_entry_code = template.line_entry_code
+
         source_lines = self._normalize_translation_lines(entry.get("source_lines"))
         if not source_lines and template is not None:
             source_lines = list(
@@ -337,6 +409,12 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             original_lines=list(original_lines),
             source_lines=list(source_lines),
             code401_template=code401_template,
+            segment_kind=segment_kind,
+            line_entry_code=line_entry_code,
+            script_entries_template=script_entries_template,
+            script_entry_roles=script_entry_roles,
+            script_entry_quotes=script_entry_quotes,
+            script_entry_expression_templates=script_entry_expression_templates,
             tl_uid=tl_uid,
             translation_lines=list(tl_lines),
             original_translation_lines=list(tl_lines),
@@ -1394,8 +1472,19 @@ class TranslationStateMixin(_EditorHostTypingFallback):
             if segment.translation_only:
                 entry["segment_uid"] = segment.uid
                 entry["context"] = segment.context
+                entry["segment_kind"] = segment.segment_kind
                 entry["code101"] = copy.deepcopy(segment.code101)
                 entry["code401_template"] = copy.deepcopy(segment.code401_template)
+                entry["line_entry_code"] = segment.line_entry_code
+                if segment.segment_kind == "script_message":
+                    entry["script_entries_template"] = copy.deepcopy(
+                        segment.script_entries_template
+                    )
+                    entry["script_entry_roles"] = list(segment.script_entry_roles)
+                    entry["script_entry_quotes"] = list(segment.script_entry_quotes)
+                    entry["script_entry_expression_templates"] = copy.deepcopy(
+                        segment.script_entry_expression_templates
+                    )
                 entry["source_lines"] = source_lines
                 entry["original_lines"] = list(segment.original_lines or source_lines)
             entries[segment.tl_uid] = entry

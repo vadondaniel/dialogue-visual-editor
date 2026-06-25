@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import copy
 import tempfile
 import unittest
 from pathlib import Path
@@ -1096,6 +1097,88 @@ class TranslationStateMixinTests(unittest.TestCase):
 
         self.assertEqual(session.segments[0].translation_lines, ["TL line"])
         self.assertEqual(session.segments[0].tl_uid, "T_legacy")
+
+    def test_apply_state_translation_only_script_message_inherits_template_metadata(self) -> None:
+        harness = _Harness()
+        anchor = _segment("Map010.json:L0:0", "JP line", r"\C[2]{{EXPR1}}")
+        anchor.segment_kind = "script_message"
+        anchor.line_entry_code = 655
+        anchor.code401_template = {
+            "code": 655,
+            "indent": 0,
+            "parameters": ["$gameMessage.add(\"\");"],
+        }
+        anchor.script_entries_template = [
+            {
+                "code": 655,
+                "indent": 0,
+                "parameters": [
+                    '$gameMessage.setSpeakerName("\\\\C[2]" + $gameActors.actor(1).name());'
+                ],
+            },
+            {"code": 655, "indent": 0, "parameters": ['$gameMessage.add("JP line");']},
+            {"code": 655, "indent": 0, "parameters": ["this.setWaitMode('message');"]},
+        ]
+        anchor.script_entry_roles = ["speaker", "add", "other"]
+        anchor.script_entry_quotes = ['"', '"', '"']
+        anchor.script_entry_expression_templates = [
+            {"kind": "setSpeakerName", "expr_terms": ["$gameActors.actor(1).name()"]},
+            None,
+            None,
+        ]
+        session = FileSession(
+            path=Path("Map010.json"),
+            data=[],
+            bundles=[],
+            segments=[anchor],
+        )
+        harness.translation_state["files"] = {
+            "Map010.json": {
+                "order": ["T_anchor", "T_followup"],
+                "entries": {
+                    "T_anchor": {
+                        "source_uid": anchor.uid,
+                        "source_hash": harness._segment_source_hash(anchor),
+                        "translation_lines": ["TL anchor"],
+                    },
+                    "T_followup": {
+                        "source_uid": "Map010.json:I:1",
+                        "translation_only": True,
+                        "segment_uid": "Map010.json:I:1",
+                        "code101": {
+                            "code": 101,
+                            "indent": 0,
+                            "parameters": [
+                                '"s-female0"+$gameVariables.value(5)',
+                                0,
+                                0,
+                                2,
+                                r"\C[2]{{EXPR1}}",
+                            ],
+                        },
+                        "code401_template": copy.deepcopy(anchor.code401_template),
+                        "source_lines": [""],
+                        "original_lines": [""],
+                        "translation_lines": ["TL followup"],
+                    },
+                },
+            }
+        }
+
+        harness._apply_translation_state_to_session(session)
+
+        self.assertEqual(len(session.segments), 2)
+        followup = session.segments[1]
+        self.assertTrue(followup.translation_only)
+        self.assertEqual(followup.segment_kind, "script_message")
+        self.assertEqual(followup.code101, anchor.code101)
+        self.assertEqual(followup.line_entry_code, 655)
+        self.assertEqual(followup.script_entries_template, anchor.script_entries_template)
+        self.assertEqual(followup.script_entry_roles, anchor.script_entry_roles)
+        self.assertEqual(
+            followup.script_entry_expression_templates,
+            anchor.script_entry_expression_templates,
+        )
 
     def test_apply_state_tyrano_dialogue_legacy_indented_hash_still_matches(self) -> None:
         harness = _Harness()

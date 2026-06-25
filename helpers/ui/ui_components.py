@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.models import NO_SPEAKER_KEY, DialogueSegment
+from ..core.script_message_utils import display_text_for_expression_placeholders
 from ..core.text_utils import (
     CONTROL_TOKEN_RE,
     collapse_lines_join_paragraphs,
@@ -3627,6 +3628,10 @@ class DialogueBlockWidget(QFrame):
 
     def _masked_lines_from_raw(self, lines: list[str]) -> list[str]:
         source_lines = lines or [""]
+        source_lines = [
+            self._display_text_for_expression_placeholders(line, role_name="add")
+            for line in source_lines
+        ]
         if self.hidden_control_colored_line_resolver is not None:
             joined = "\n".join(source_lines)
             prefix_text = ""
@@ -3653,6 +3658,36 @@ class DialogueBlockWidget(QFrame):
                 spans_per_line.append([])
         self._masked_color_spans = spans_per_line
         return masked or [""]
+
+    def _expression_terms_for_role(self, role_name: str) -> list[str]:
+        roles = list(getattr(self.segment, "script_entry_roles", []))
+        templates = list(getattr(self.segment, "script_entry_expression_templates", []))
+        for idx, role in enumerate(roles):
+            if role != role_name or idx >= len(templates):
+                continue
+            payload = templates[idx]
+            if not isinstance(payload, dict):
+                continue
+            expr_terms_raw = payload.get("expr_terms")
+            if not isinstance(expr_terms_raw, list):
+                continue
+            return [
+                term.strip()
+                for term in expr_terms_raw
+                if isinstance(term, str) and term.strip()
+            ]
+        return []
+
+    def _display_text_for_expression_placeholders(
+        self,
+        text: str,
+        *,
+        role_name: str,
+    ) -> str:
+        if self.segment.segment_kind != "script_message":
+            return text
+        terms = self._expression_terms_for_role(role_name)
+        return display_text_for_expression_placeholders(text, terms)
 
     def _should_show_raw_codes(self) -> bool:
         if not self.hide_control_codes_when_unfocused:
@@ -4190,6 +4225,10 @@ class DialogueBlockWidget(QFrame):
                 return translated
         explicit = self.segment.speaker_name
         if explicit != NO_SPEAKER_KEY:
+            explicit = self._display_text_for_expression_placeholders(
+                explicit,
+                role_name="speaker",
+            )
             if self.speaker_display_resolver is not None:
                 resolved = self.speaker_display_resolver(explicit)
                 if resolved.strip():
@@ -4228,6 +4267,10 @@ class DialogueBlockWidget(QFrame):
 
         explicit = self.segment.speaker_name
         if explicit != NO_SPEAKER_KEY:
+            explicit = self._display_text_for_expression_placeholders(
+                explicit,
+                role_name="speaker",
+            )
             if self.speaker_display_html_resolver is not None:
                 rendered = self.speaker_display_html_resolver(explicit).strip()
                 if rendered:

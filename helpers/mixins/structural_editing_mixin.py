@@ -2707,6 +2707,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             script_entries_template=copy.deepcopy(source_segment.script_entries_template),
             script_entry_roles=list(source_segment.script_entry_roles),
             script_entry_quotes=list(source_segment.script_entry_quotes),
+            script_entry_expression_templates=copy.deepcopy(
+                source_segment.script_entry_expression_templates
+            ),
             tl_uid=self._new_translation_uid(),
             translation_lines=list(new_translation_lines),
             original_translation_lines=list(new_translation_lines),
@@ -2886,6 +2889,9 @@ class StructuralEditingMixin(_EditorHostTypingFallback):
             script_entries_template=copy.deepcopy(source_segment.script_entries_template),
             script_entry_roles=list(source_segment.script_entry_roles),
             script_entry_quotes=list(source_segment.script_entry_quotes),
+            script_entry_expression_templates=copy.deepcopy(
+                source_segment.script_entry_expression_templates
+            ),
             tl_uid=self._new_translation_uid(),
             translation_lines=list(moved_tl_lines),
             original_translation_lines=list(moved_tl_lines),

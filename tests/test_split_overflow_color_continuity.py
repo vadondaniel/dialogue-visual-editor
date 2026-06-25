@@ -211,6 +211,71 @@ class _SplitOverflowHarness(StructuralEditingMixin):
 
 
 class SplitOverflowColorContinuityTests(unittest.TestCase):
+    def test_translator_split_overflow_preserves_script_expression_templates(self) -> None:
+        harness = _SplitOverflowHarness()
+        segment = DialogueSegment(
+            uid="Map001.json:L0:0",
+            context="ctx",
+            code101={
+                "code": 101,
+                "indent": 0,
+                "parameters": ["", 0, 0, 2, r"\C[2]{{EXPR1}}"],
+            },
+            lines=["JP line"],
+            original_lines=["JP line"],
+            source_lines=["JP line"],
+            code401_template={
+                "code": 655,
+                "indent": 0,
+                "parameters": ["$gameMessage.add(\"\");"],
+            },
+            segment_kind="script_message",
+            line_entry_code=655,
+            script_entries_template=[
+                {
+                    "code": 655,
+                    "indent": 0,
+                    "parameters": [
+                        '$gameMessage.setSpeakerName("\\\\C[2]" + $gameActors.actor(1).name());'
+                    ],
+                },
+                {"code": 655, "indent": 0, "parameters": ['$gameMessage.add("JP line");']},
+                {"code": 655, "indent": 0, "parameters": ["this.setWaitMode('message');"]},
+            ],
+            script_entry_roles=["speaker", "add", "other"],
+            script_entry_quotes=['"', '"', '"'],
+            script_entry_expression_templates=[
+                {"kind": "setSpeakerName", "expr_terms": ["$gameActors.actor(1).name()"]},
+                None,
+                None,
+            ],
+            translation_lines=[
+                "First translated sentence.",
+                "Second translated sentence.",
+                "Third translated sentence.",
+                "Fourth translated sentence.",
+            ],
+        )
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={},
+            bundles=[],
+            segments=[segment],
+        )
+        harness.sessions[session.path] = session
+        harness.current_path = session.path
+        harness.current_segment_lookup = {segment.uid: segment}
+
+        harness._on_split_overflow_requested(segment.uid)
+
+        self.assertEqual(len(session.segments), 2)
+        moved = session.segments[1]
+        self.assertEqual(moved.segment_kind, "script_message")
+        self.assertEqual(
+            moved.script_entry_expression_templates,
+            segment.script_entry_expression_templates,
+        )
+
     def test_translator_split_overflow_keeps_anchor_source_lines_unsplit(self) -> None:
         harness = _SplitOverflowHarness()
         source_lines = ["JP line 1", "JP line 2", "JP line 3", "JP line 4"]

@@ -14,6 +14,7 @@ from helpers.core.script_message_utils import (
     _split_top_level_plus_expression,
     build_game_message_call,
     build_game_message_templated_call,
+    display_text_for_expression_placeholders,
     parse_game_message_call,
     parse_game_message_templated_call,
     parse_game_message_set_background_call,
@@ -298,6 +299,29 @@ class ScriptMessageUtilsTests(unittest.TestCase):
                 expression_terms=["exprA"],
             )
         self.assertEqual(built, '$gameMessage.add("");')
+
+    def test_display_text_for_expression_placeholders_uses_readable_labels(self) -> None:
+        self.assertEqual(
+            display_text_for_expression_placeholders(
+                r"\C[2]{{EXPR1}}",
+                ["$gameActors.actor(1).name()"],
+            ),
+            r"\C[2]{actor 1 name}",
+        )
+        self.assertEqual(
+            display_text_for_expression_placeholders(
+                "Value {{EXPR1}}",
+                ["$gameVariables.value(5)"],
+            ),
+            "Value {variable 5}",
+        )
+        self.assertEqual(
+            display_text_for_expression_placeholders(
+                "Other {{EXPR1}}",
+                ["customExpression()"],
+            ),
+            "Other {expr: customExpression()}",
+        )
 
 
 if __name__ == "__main__":

@@ -3320,11 +3320,21 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                     list(orphan_tl_uids) + tl_followups_by_source_uid[first_source_uid]
                 )
 
+        absorbed_followup_uids: set[str] = set()
         for export_segment in exported_session.segments:
             source_segment = source_lookup.get(export_segment.uid)
             if source_segment is None:
                 continue
             export_segment.lines = self._translated_export_lines_for_segment(source_segment)
+            if source_segment.segment_kind == "script_message":
+                for followup_uid in tl_followups_by_source_uid.get(source_segment.uid, []):
+                    followup_source = source_lookup.get(followup_uid)
+                    if followup_source is None:
+                        continue
+                    export_segment.lines.extend(
+                        self._translated_export_lines_for_segment(followup_source)
+                    )
+                    absorbed_followup_uids.add(followup_uid)
 
             speaker_en = source_segment.translation_speaker.strip()
             if not speaker_en:
@@ -3387,6 +3397,8 @@ class PersistenceExportMixin(_EditorHostTypingFallback):
                         continue
                     inserted_tokens: list[CommandToken] = []
                     for followup_uid in followup_uids:
+                        if followup_uid in absorbed_followup_uids:
+                            continue
                         followup_segment = export_lookup.get(followup_uid)
                         if followup_segment is None:
                             continue

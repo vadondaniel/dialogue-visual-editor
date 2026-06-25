@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import tempfile
 import unittest
 from pathlib import Path
@@ -1292,6 +1293,54 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual(rebuilt_lines[0], "var seed = 1;")
         self.assertEqual(rebuilt_lines[1], '$gameMessage.add("TL " + m + " done");')
 
+    def test_build_entries_for_script_message_segment_preserves_speaker_expression_terms(self) -> None:
+        harness = _Harness()
+        segment = DialogueSegment(
+            uid="Map011.json:L0:0",
+            context="ctx",
+            code101={
+                "code": 101,
+                "indent": 0,
+                "parameters": ["", 0, 0, 2, r"\C[2]{{EXPR1}}"],
+            },
+            lines=["JP"],
+            original_lines=["JP"],
+            source_lines=["JP"],
+            code401_template={"code": 655, "indent": 0, "parameters": ["$gameMessage.add(\"\");"]},
+            segment_kind="script_message",
+            line_entry_code=655,
+            script_entries_template=[
+                {
+                    "code": 655,
+                    "indent": 0,
+                    "parameters": [
+                        '$gameMessage.setSpeakerName("\\\\C[2]" + $gameActors.actor(1).name());'
+                    ],
+                },
+                {"code": 655, "indent": 0, "parameters": ['$gameMessage.add("JP");']},
+                {"code": 655, "indent": 0, "parameters": ["this.setWaitMode('message');"]},
+            ],
+            script_entry_roles=["speaker", "add", "other"],
+            script_entry_quotes=['"', '"', '"'],
+            script_entry_expression_templates=[
+                {"kind": "setSpeakerName", "expr_terms": ["$gameActors.actor(1).name()"]},
+                None,
+                None,
+            ],
+        )
+
+        rebuilt = harness._build_entries_for_script_message_segment(
+            segment,
+            ["TL"],
+        )
+
+        rebuilt_lines = [entry["parameters"][0] for entry in rebuilt]
+        self.assertEqual(
+            rebuilt_lines[0],
+            '$gameMessage.setSpeakerName("\\\\C[2]" + $gameActors.actor(1).name());',
+        )
+        self.assertNotIn("{{EXPR1}}", "\n".join(rebuilt_lines))
+
     def test_build_source_data_for_session_rebuilds_without_mutating_original(self) -> None:
         harness = _Harness()
         commands_ref: list[Any] = [
@@ -1389,6 +1438,94 @@ class PersistenceExportMixinTests(unittest.TestCase):
         self.assertEqual([entry["code"] for entry in rebuilt], [101, 401, 101, 401])
         self.assertEqual(rebuilt[1]["parameters"][0], "TL main")
         self.assertEqual(rebuilt[3]["parameters"][0], "TL extra")
+
+    def test_export_translated_data_folds_script_message_followups_into_source_block(self) -> None:
+        harness = _Harness()
+        commands_ref: list[Any] = [
+            {"code": 355, "indent": 0, "parameters": ["$gameMessage.newPage();"]},
+            {
+                "code": 655,
+                "indent": 0,
+                "parameters": [
+                    '$gameMessage.setSpeakerName("\\\\C[2]" + $gameActors.actor(1).name());'
+                ],
+            },
+            {"code": 655, "indent": 0, "parameters": ['$gameMessage.add("JP main");']},
+            {"code": 655, "indent": 0, "parameters": ["this.setWaitMode('message');"]},
+        ]
+        source = DialogueSegment(
+            uid="src",
+            context="ctx",
+            code101={
+                "code": 101,
+                "indent": 0,
+                "parameters": ["", 0, 0, 2, r"\C[2]{{EXPR1}}"],
+            },
+            lines=["JP main"],
+            original_lines=["JP main"],
+            source_lines=["JP main"],
+            code401_template={"code": 655, "indent": 0, "parameters": ['$gameMessage.add("");']},
+            segment_kind="script_message",
+            line_entry_code=655,
+            script_entries_template=copy.deepcopy(commands_ref),
+            script_entry_roles=["other", "speaker", "add", "other"],
+            script_entry_quotes=['"', '"', '"', '"'],
+            script_entry_expression_templates=[
+                None,
+                {"kind": "setSpeakerName", "expr_terms": ["$gameActors.actor(1).name()"]},
+                None,
+                None,
+            ],
+            translation_lines=["TL main"],
+            original_translation_lines=[""],
+        )
+        followup = DialogueSegment(
+            uid="followup",
+            context="ctx",
+            code101=copy.deepcopy(source.code101),
+            lines=[""],
+            original_lines=[""],
+            source_lines=[""],
+            code401_template=copy.deepcopy(source.code401_template),
+            segment_kind="script_message",
+            line_entry_code=655,
+            script_entries_template=copy.deepcopy(source.script_entries_template),
+            script_entry_roles=list(source.script_entry_roles),
+            script_entry_quotes=list(source.script_entry_quotes),
+            script_entry_expression_templates=copy.deepcopy(
+                source.script_entry_expression_templates
+            ),
+            translation_only=True,
+            translation_lines=["TL followup"],
+            original_translation_lines=[""],
+        )
+
+        bundle = CommandBundle(
+            context="ctx",
+            commands_ref=commands_ref,
+            tokens=[CommandToken(kind="dialogue", segment=source)],
+        )
+        session = FileSession(
+            path=Path("Map001.json"),
+            data={"list": commands_ref},
+            bundles=[bundle],
+            segments=[source, followup],
+        )
+
+        exported = harness._export_translated_data_for_session(session)
+        rebuilt = exported["list"]
+        rebuilt_lines = [entry["parameters"][0] for entry in rebuilt]
+
+        self.assertEqual([entry["code"] for entry in rebuilt], [355, 655, 655, 655, 655])
+        self.assertEqual(
+            rebuilt_lines[1],
+            '$gameMessage.setSpeakerName("\\\\C[2]" + $gameActors.actor(1).name());',
+        )
+        self.assertEqual(rebuilt_lines[2], '$gameMessage.add("TL main");')
+        self.assertEqual(rebuilt_lines[3], '$gameMessage.add("TL followup");')
+        self.assertEqual(rebuilt_lines[4], "this.setWaitMode('message');")
+        self.assertNotIn("{{EXPR1}}", "\n".join(rebuilt_lines))
+        self.assertFalse(any(entry.get("code") == 101 for entry in rebuilt))
 
     def test_export_translated_data_does_not_write_101_speaker_for_forced_line1_inference(self) -> None:
         harness = _Harness()
